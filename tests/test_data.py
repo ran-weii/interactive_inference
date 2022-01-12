@@ -46,10 +46,16 @@ def test_data(arglist):
     df_track["vx_error"] = np.abs(df_track["x_grad"] - df_track["vx"])
     df_track["vy_error"] = np.abs(df_track["y_grad"] - df_track["vy"])
     
-    print(10 * "=" + " velocity grad summary " + 10 * "=")
+    # get yaw angle
+    yaw = np.arctan2(df_track["vy"], df_track["vx"])
+    df_track["yaw_error"] = np.abs(yaw - df_track["psi_rad"])
+    
+    # note: yaw error with track 518 with vx=0, vy=0, psi_rad=-3.103
+    
+    print(10 * "=" + " velocity grad & yaw summary " + 10 * "=")
     print(df_track[
-        ["x_grad", "vx", "vx_error", "y_grad", "vy", "vy_error"]
-    ].describe().drop(index="count").round(4))
+        ["x_grad", "vx", "vx_error", "y_grad", "vy", "vy_error", "yaw_error"]
+    ].describe().drop(index="count").round(4))    
     
     # avg speed test
     avg_vx = np.abs(df_track_diff["x"] / df_track_diff["timestamp_ms"] * 1000)
