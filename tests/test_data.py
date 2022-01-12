@@ -25,7 +25,7 @@ def test_data(arglist):
         "vehicle_tracks_000.csv"
     )
     df_track = pd.read_csv(file_path)
-    dt = df_track.groupby("track_id")["timestamp_ms"].diff().mean()
+    dt = df_track.groupby("track_id")["timestamp_ms"].diff().mean() / 1000
     
     # get distance traveled
     df_track_head = df_track.groupby(["track_id"]).head(1).\
@@ -40,7 +40,7 @@ def test_data(arglist):
     ).round(4))
     
     # differentiate pos
-    f_grad = lambda x: pd.DataFrame(np.gradient(x, dt), index=x.index) * 1000
+    f_grad = lambda x: pd.DataFrame(np.gradient(x, dt), index=x.index) 
     df_track["x_grad"] = df_track.groupby("track_id")["x"].apply(f_grad)
     df_track["y_grad"] = df_track.groupby("track_id")["y"].apply(f_grad)
     df_track["vx_error"] = np.abs(df_track["x_grad"] - df_track["vx"])
