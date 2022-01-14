@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from src.data.kalman_filter import BatchKalmanFilter
+from src.data.utils import derive_acc, normalize_pos
 
 # set pandas display option
 pd.set_option('display.max_columns', None)
@@ -34,20 +35,6 @@ def parse_args():
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
-
-def derive_acc(df, dt):
-    """ differentiate vel """
-    f_grad = lambda x: pd.DataFrame(np.gradient(x, dt), index=x.index)
-    df["vx_grad"] = df.groupby("track_id")["vx"].apply(f_grad)
-    df["vy_grad"] = df.groupby("track_id")["vy"].apply(f_grad)
-    return df
-
-def normalize_pos(df):
-    """ subtrack all pos by initial pos """
-    f_norm = lambda x: x - x.iloc[0]
-    df["x"] = df.groupby("track_id")["x"].apply(f_norm)
-    df["y"] = df.groupby("track_id")["y"].apply(f_norm)
-    return df
 
 def prepare_data(df_all_tracks, dt, num_train, num_test, max_len):
     # random sample train and test sequences
