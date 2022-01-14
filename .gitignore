@@ -1,1 +1,5 @@
 *.pyc
+doc/*
+exp/*
+interaction-dataset-master/*
+src.egg-info/*
