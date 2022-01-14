@@ -3,6 +3,7 @@ from pykalman import KalmanFilter
 from pykalman.standard import _filter, _smooth, _smooth_pair, _em
 
 class BatchKalmanFilter(KalmanFilter):
+    """ pykalman subclass with batch EM training and loglikelihood """
     def __init__(self, transition_matrices=None, observation_matrices=None,
             transition_covariance=None, observation_covariance=None,
             transition_offsets=None, observation_offsets=None,
@@ -21,9 +22,22 @@ class BatchKalmanFilter(KalmanFilter):
     
     def batch_em(self, X, n_iter=1, em_vars=None):
         """ Apply the EM algorithm in batch
-
+        
+        This is a crude version of batch EM. It works decently for estimating 
+        covariances but not so well for transition and observation weights.
+        
+        Steps:
+            Run forward-backward algorithm for each sequence in batch separately
+            Compute EM estimates for each sequence
+            Average estimates
+        
         Args:
             X (np.array): [batch_size, T, obs_dim]
+            n_iter (int): number of iterations
+            em_vars (list, optional): vars to be estimated. If none use init. Default=None
+        
+        Returns:
+            self (object): KalmanFilter object
         """
         Z = X
         
@@ -107,7 +121,8 @@ class BatchKalmanFilter(KalmanFilter):
                 observation_covariance.append(out[5])
                 initial_state_mean.append(out[6])
                 initial_state_covariance.append(out[7])
-                
+            
+            # average estimates over batch
             self.transition_matrices = np.stack(transition_matrices).mean(0)
             self.observation_matrices = np.stack(observation_matrices).mean(0)
             self.transition_offsets = np.stack(transition_offsets).mean(0)
@@ -120,6 +135,14 @@ class BatchKalmanFilter(KalmanFilter):
         return self
     
     def batch_loglikelihood(self, X):
+        """ Compute average loglikelihood over batch
+
+        Args:
+            X (np.array): [batch_size, T, obs_dim]
+
+        Returns:
+            ll (float): average loglikelihood
+        """
         ll = 0
         for i, x in enumerate(X):
             ll += self.loglikelihood(x)
