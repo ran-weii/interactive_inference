@@ -1,6 +1,8 @@
 import argparse
 import os
 import glob
+import json
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -18,14 +20,18 @@ def parse_args():
     parser.add_argument(
         "--data_path", type=str, default="../interaction-dataset-master"
     )
+    parser.add_argument(
+        "--save_path", type=str, default="../exp/kalman_filter"
+    )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--num_files", type=int, default=3, help="number of files used to sample trajectories, default=3")
     parser.add_argument("--min_len", type=int, default=100, help="min track length, default=100")
     parser.add_argument("--num_train", type=int, default=50, help="number of tracks used to train kalman filter, default=50")
     parser.add_argument("--num_test", type=int, default=10, help="number of tracks used to test kalman filter, default=10")
-    parser.add_argument("--epochs", type=int, default=10, help="number of em epochs, default=25")
+    parser.add_argument("--epochs", type=int, default=25, help="number of em epochs, default=25")
     parser.add_argument("--plot_history", type=bool_, default=True, help="plot em learning curve, default=True")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
 
@@ -141,17 +147,6 @@ def main(arglist):
         arglist.min_len
     )
     
-    # check interpolation quality
-    # fig, ax = plt.subplots(3, 2, figsize=(6, 6))
-    # ax[0, 0].plot(df_train["x"])
-    # ax[0, 1].plot(df_train["y"])
-    # ax[1, 0].plot(df_train["vx"])
-    # ax[1, 1].plot(df_train["vy"])
-    # ax[2, 0].plot(df_train["vx_grad"])
-    # ax[2, 1].plot(df_train["vy_grad"])
-    # plt.tight_layout()
-    # plt.show()
-    
     # pack observations
     obs_cols = ["x", "y", "vx", "vy", "vx_grad", "vy_grad"]
     f_df_to_batch = lambda df: df.groupby("track_id")[obs_cols].\
@@ -216,12 +211,34 @@ def main(arglist):
         
     df_history = pd.DataFrame(history)
     
-    fig_params = plot_kf_params(kf)
+    # plot results
     fig_history = plot_history(df_history)
-    
-    plt.show()
-    return 
-
+    fig_params = plot_kf_params(kf) 
+        
+    if arglist.save:
+        if not os.path.exists(arglist.save_path):
+            os.mkdir(arglist.save_path)
+        
+        # save args
+        with open(os.path.join(arglist.save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+        
+        # save model
+        with open(os.path.join(arglist.save_path, "model.p"), "wb") as f:
+            pickle.dump(kf, f)
+            
+        # save history
+        df_history.to_csv(
+            os.path.join(arglist.save_path, "history.csv"), index=False
+        )
+        
+        # save figures
+        dpi = 100
+        fig_history.savefig(os.path.join(arglist.save_path, "history.png"), dpi=dpi)
+        fig_params.savefig(os.path.join(arglist.save_path, "params.png"), dpi=dpi) 
+        
+        print("model saved")
+        
 if __name__ == "__main__":
     arglist = parse_args()
     main(arglist)
