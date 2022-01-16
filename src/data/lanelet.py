@@ -169,9 +169,83 @@ def find_all_relations(element, way_dict):
     for i, relation in enumerate(element.findall("relation")):
         relation_id = relation.get("id")
         way_ids = get_way_id(relation)
-        # relation_dict[relation_id] = [way_dict[i] for i in way_ids]
         relation_dict[relation_id] = {i: way_dict[i] for i in way_ids}
     return relation_dict
+
+def find_all_lanes(way_dict):
+    # find all way types
+    way_types = []
+    for way_id, way_val in way_dict.items():
+        way_types.append(
+            "_".join([way_val["type"], str(way_val["subtype"])])
+        )
+    way_types = np.unique(way_types)
+    
+    def is_connected(nd1, nd2):
+        """ Check if two nodes are connected """
+        # nd1 <-> nd2
+        start_connected = all((
+            nd1["x"][-1] == nd2["x"][0],
+            nd1["y"][-1] == nd2["y"][0]
+        ))
+        # nd2 <-> nd1
+        end_connected = all((
+            nd1["x"][0] == nd2["x"][-1],
+            nd1["x"][0] == nd2["y"][-1]
+        ))
+        if start_connected:
+            return True
+        elif end_connected:
+            return True
+        else:
+            return False
+        
+    def add_all_nodes(G, way_dict, way_type):
+        for i, (way_id, way_val) in enumerate(way_dict.items()):
+            cur_way_type = "_".join([way_val["type"], str(way_val["subtype"])])
+            if cur_way_type == way_type:
+                G.add_nodes_from([(way_id, way_val)])
+        return G
+    
+    def add_all_edges(G):
+        node_list = list(G.nodes)
+        for i, n1_id in enumerate(node_list):
+            for j, n2_id in enumerate(node_list):
+                if is_connected(G.nodes[n1_id], G.nodes[n2_id]):
+                    G.add_edge(n1_id, n2_id)
+                    G.add_edge(n2_id, n1_id)
+        return G
+            
+    # find all lanes by searching reachable nodes
+    lane_dict = {}
+    lane_num = 0
+    for way_type in way_types:
+        G = nx.Graph()
+        G = add_all_nodes(G, way_dict, way_type)
+        G = add_all_edges(G)
+        
+        node_list = list(G.nodes)
+        counter = 0
+        while len(node_list) > 0:
+            cur_nodes = list(nx.descendants(G, node_list[0]))
+            cur_nodes.append(node_list[0])
+            
+            lane_dict[lane_num] = {
+                "type": G.nodes[cur_nodes[0]]["type"],
+                "subtype": G.nodes[cur_nodes[0]]["subtype"],
+                "len": len(cur_nodes),
+                "way_dict": {n_id: G.nodes[n_id] for n_id in cur_nodes}
+            }
+            
+            # remove all nodes found on the lane
+            for n_id in cur_nodes:
+                node_list.remove(n_id)
+            
+            lane_num += 1
+            counter += 1
+            if counter > 200:
+                break 
+    return lane_dict
 
 def set_visible_area(point_dict, axes):
     min_x = 10e9
@@ -258,6 +332,7 @@ if __name__ == "__main__":
     #     print(i, way_id, way_type, way_subtype)
     #     print("x", x[sort_id])
     #     print("y", y[sort_id])
+    # plt.show()
     
     # plot all relations
     # for i, (relation_id, relation_val) in enumerate(relation_dict.items()):
@@ -282,4 +357,25 @@ if __name__ == "__main__":
     #     print(i, relation_id, way_ids)
     #     plt.pause(0.5)
         
-    # plt.show()
+    
+    # plot all lanes
+    colors = plt.get_cmap("Set1").colors
+    lane_dict = find_all_lanes(way_dict)
+    print("num lane", len(lane_dict))
+    
+    for i, (lane_id, lane_val) in enumerate(lane_dict.items()):
+        lane_type = lane_val["type"]
+        lane_subtype = lane_val["subtype"]
+        vis_dict = get_way_vis(lane_type, lane_subtype)
+        vis_dict["color"] = colors[np.random.randint(len(colors))]
+        
+        if vis_dict is None:
+            continue
+            
+        for i, (way_id, way_val) in enumerate(lane_dict[lane_id]["way_dict"].items()):
+            x = way_val["x"]
+            y = way_val["y"]
+            ax.plot(x, y, "-o", markersize=2, **vis_dict)
+        plt.pause(0.5)
+        
+    plt.show()
