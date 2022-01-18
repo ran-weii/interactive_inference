@@ -1,7 +1,8 @@
-import xml.etree.ElementTree as xml
 import pyproj
 import math
+import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
 
 class Point:
     def __init__(self):
@@ -262,120 +263,99 @@ def set_visible_area(point_dict, axes):
     axes.set_aspect('equal', adjustable='box')
     axes.set_xlim([min_x - 10, max_x + 10])
     axes.set_ylim([min_y - 10, max_y + 10])
-    
-if __name__ == "__main__":
-    """ TODO 
-    (done) render each line by pause to figure out how this map is produced
-    (done) lable each line center with way_id
-    (done) understand how relations are formed by plotting each relation in order
-        is it only two parallel lines? 
-            left and right don't mean left and right, they are up and down here and do not even follow the same order
-            the relations don't include all ways, some ways don't have relations
-            ways may appear in multiple relations
-    (done) can we ignore guard rails and are there any lines underneath the guard rails?
-        there is no lines underneath the guard rails. as the map is defined by top layer nodes, every connection between two nodes uniquely appear once
-    (almost) how to identify a continuing lane? 
-        for each way segment we find all segments that share the same nodes, and take their union
-        plot a map with all nodes labeled, find segment not yet connected on lane map and verify their end nodes
-    is it possible to identify and mask lane segments in an image? if so lane assignment may be done with the amount of intersection area
-    how to identify 2 lanes merge into one and space between guard rails that are not lanes? 
-        we can potentially render the relations one by one and label them, the result should be a segmentation map with hand labels
-        for agent observation, lane change can be stored as tuple (direction, ahead distance)
-    how to define lane curvature or angle? maybe for highway we just consider the road as straight?
-    """
-    
-    import os
-    import numpy as np
-    import matplotlib.pyplot as plt
-    data_path = "../../interaction-dataset-master/maps"
-    file_path = os.path.join(data_path, "DR_CHN_Merging_ZS.osm")
-    # file_path = os.path.join(data_path, "DR_DEU_Merging_MT.osm")
-    
-    e = xml.parse(file_path).getroot()
-    
-    point_dict = find_all_points(e, lat_origin=0, lon_origin=0)
-    way_dict = find_all_ways(e, point_dict)
-    relation_dict = find_all_relations(e, way_dict)
-    
-    fig, ax = plt.subplots(1, 1, figsize=(15, 6))
+
+def plot_all_ways(point_dict, way_dict, figsize=(15, 6), show=False, pause=0):
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
     ax.set_aspect('equal', adjustable='box')
     ax.patch.set_facecolor('lightgrey')
     set_visible_area(point_dict, ax)
     
-    # plot all points
-    # x_list, y_list = [], []
-    # for k, v in point_dict.items():
-    #     x_list.append(v.x)
-    #     y_list.append(v.y)
-    
-    # ax.plot(x_list, y_list, "o", markersize=4)
-    # plt.show()
-    
-    
-    # plot all ways
-    # for i, (way_id, val) in enumerate(way_dict.items()):
-    #     way_type = val["type"]
-    #     way_subtype = val["subtype"]
-    #     vis_dict = val["vis_dict"]
+    for i, (way_id, val) in enumerate(way_dict.items()):
+        way_type = val["type"]
+        way_subtype = val["subtype"]
+        vis_dict = val["vis_dict"]
         
-    #     if vis_dict is None:
-    #         continue
+        if vis_dict is None:
+            continue
         
-    #     x = val["x"]
-    #     y = val["y"]
-    #     sort_id = np.argsort(x)
+        x = val["x"]
+        y = val["y"]
+        sort_id = np.argsort(x)
         
-    #     ax.plot(x, y, **vis_dict)
-    #     ax.text(x[sort_id[0]], y[sort_id[0]], way_id, size=8)
-    #     # plt.pause(0.5)
+        ax.plot(x, y, "-o", markersize=2, **vis_dict)
+        ax.text(x[sort_id[0]], y[sort_id[0]], way_id, size=8)
         
-    #     print(i, way_id, way_type, way_subtype)
-    #     print("x", x[sort_id])
-    #     print("y", y[sort_id])
-    # plt.show()
+        if pause > 0:
+            plt.pause(pause)
+        
+    if show:
+        plt.show()
+    return fig
+
+def plot_all_relations(
+    point_dict, relation_dict, figsize=(15, 6), show=False, pause=0
+    ):
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.set_aspect('equal', adjustable='box')
+    ax.patch.set_facecolor('lightgrey')
+    set_visible_area(point_dict, ax)
     
-    # plot all relations
-    # for i, (relation_id, relation_val) in enumerate(relation_dict.items()):
-    #     way_ids = []
-    #     for j, (way_id, way_val) in enumerate(relation_val.items()):
-    #         way_type = way_val["type"]
-    #         way_subtype = way_val["subtype"]
-    #         vis_dict = way_val["vis_dict"]
+    for i, (relation_id, relation_val) in enumerate(relation_dict.items()):
+        way_ids = []
+        for j, (way_id, way_val) in enumerate(relation_val.items()):
+            way_type = way_val["type"]
+            way_subtype = way_val["subtype"]
+            vis_dict = way_val["vis_dict"]
             
-    #         if vis_dict is None:
-    #             continue
+            if vis_dict is None:
+                continue
             
-    #         x = way_val["x"]
-    #         y = way_val["y"]
-    #         sort_id = np.argsort(x)
+            x = way_val["x"]
+            y = way_val["y"]
+            sort_id = np.argsort(x)
             
-    #         ax.plot(x, y, "-o", markersize=2, **vis_dict)
-    #         ax.text(x[sort_id[0]], y[sort_id[0]], relation_id, size=8)
+            ax.plot(x, y, "-o", markersize=2, **vis_dict)
+            ax.text(x[sort_id[0]], y[sort_id[0]], relation_id, size=8)
             
-    #         way_ids.append(way_id)
+            way_ids.append(way_id)
         
-    #     print(i, relation_id, way_ids)
-    #     plt.pause(0.5)
-        
-    
-    # plot all lanes
-    colors = plt.get_cmap("Set1").colors
-    lane_dict = find_all_lanes(way_dict)
-    print("num lane", len(lane_dict))
+        if pause > 0:
+            plt.pause(0.5)
+            
+    if show:
+        plt.show()
+    return fig
+
+def plot_all_lanes(
+    point_dict, lane_dict, figsize=(15, 6), show=False, pause=0, callback=None
+    ):
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.set_aspect('equal', adjustable='box')
+    ax.patch.set_facecolor('lightgrey')
+    set_visible_area(point_dict, ax)
     
     for i, (lane_id, lane_val) in enumerate(lane_dict.items()):
         lane_type = lane_val["type"]
         lane_subtype = lane_val["subtype"]
         vis_dict = get_way_vis(lane_type, lane_subtype)
-        vis_dict["color"] = colors[np.random.randint(len(colors))]
         
         if vis_dict is None:
             continue
             
-        for i, (way_id, way_val) in enumerate(lane_dict[lane_id]["way_dict"].items()):
+        for j, (way_id, way_val) in enumerate(lane_dict[lane_id]["way_dict"].items()):
             x = way_val["x"]
             y = way_val["y"]
+            sort_id = np.argsort(x)
+            
             ax.plot(x, y, "-o", markersize=2, **vis_dict)
-        plt.pause(0.5)
+            ax.text(x[sort_id[0]], y[sort_id[0]], way_id, size=8)
         
-    plt.show()
+        if pause > 0:
+            plt.pause(pause)
+            
+        if callback is not None:
+            callback()
+        
+    if show:
+        plt.show()
+    return fig, callback
