@@ -145,8 +145,6 @@ def find_all_ways(element, point_dict):
         vis_dict = get_way_vis(way_type, way_subtype)
         
         x_list, y_list = get_x_y_lists(way, point_dict)
-        x_list = np.array(x_list)
-        y_list = np.array(y_list)
         
         way_dict[way_id] = {
             "type": way_type, 
@@ -270,16 +268,16 @@ def plot_all_ways(point_dict, way_dict, figsize=(15, 6), show=False, pause=0):
     ax.patch.set_facecolor('lightgrey')
     set_visible_area(point_dict, ax)
     
-    for i, (way_id, val) in enumerate(way_dict.items()):
-        way_type = val["type"]
-        way_subtype = val["subtype"]
-        vis_dict = val["vis_dict"]
+    for i, (way_id, way_val) in enumerate(way_dict.items()):
+        way_type = way_val["type"]
+        way_subtype = way_val["subtype"]
+        vis_dict = way_val["vis_dict"]
         
         if vis_dict is None:
             continue
         
-        x = val["x"]
-        y = val["y"]
+        x = np.array(way_val["x"])
+        y = np.array(way_val["y"])
         sort_id = np.argsort(x)
         
         ax.plot(x, y, "-o", markersize=2, **vis_dict)
@@ -310,8 +308,8 @@ def plot_all_relations(
             if vis_dict is None:
                 continue
             
-            x = way_val["x"]
-            y = way_val["y"]
+            x = np.array(way_val["x"])
+            y = np.array(way_val["y"])
             sort_id = np.argsort(x)
             
             ax.plot(x, y, "-o", markersize=2, **vis_dict)
@@ -343,8 +341,8 @@ def plot_all_lanes(
             continue
             
         for j, (way_id, way_val) in enumerate(lane_dict[lane_id]["way_dict"].items()):
-            x = way_val["x"]
-            y = way_val["y"]
+            x = np.array(way_val["x"])
+            y = np.array(way_val["y"])
             sort_id = np.argsort(x)
             
             ax.plot(x, y, "-o", markersize=2, **vis_dict)
