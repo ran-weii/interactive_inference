@@ -288,7 +288,7 @@ def plot_all_ways(point_dict, way_dict, figsize=(15, 6), show=False, pause=0):
         
     if show:
         plt.show()
-    return fig
+    return fig, ax
 
 def plot_all_relations(
     point_dict, relation_dict, figsize=(15, 6), show=False, pause=0
@@ -322,7 +322,7 @@ def plot_all_relations(
             
     if show:
         plt.show()
-    return fig
+    return fig, ax
 
 def plot_all_lanes(
     point_dict, lane_dict, figsize=(15, 6), show=False, pause=0, callback=None
@@ -356,4 +356,4 @@ def plot_all_lanes(
         
     if show:
         plt.show()
-    return fig, callback
+    return fig, ax, callback
