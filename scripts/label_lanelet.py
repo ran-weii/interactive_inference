@@ -17,6 +17,7 @@ def parse_args():
         "--save_path", type=str, default="../exp/lanelet"
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
+    parser.add_argument("--label", type=bool_, default=True)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
@@ -59,7 +60,10 @@ if __name__ == "__main__":
     way_dict = find_all_ways(e, point_dict)
     lane_dict = find_all_lanes(way_dict)
     
-    labler = LaneLabler()
+    if arglist.label:
+        labler = LaneLabler()
+    else:
+        labler = None
     
     with plt.ion():    
         plot_all_ways(point_dict, way_dict, show=False, pause=0)
@@ -68,17 +72,18 @@ if __name__ == "__main__":
         )
     
     # update lane_dict
-    for i, (lane_id, lane_val) in enumerate(lane_dict.items()):
-        lane_dict[lane_id]["label"] = labler.labels[i]
-    
-    if arglist.save:
-        if not os.path.exists(arglist.save_path):
-            os.mkdir(arglist.save_path)
+    if arglist.label:
+        for i, (lane_id, lane_val) in enumerate(lane_dict.items()):
+            lane_dict[lane_id]["label"] = labler.labels[i]
         
-        file_name = os.path.join(arglist.save_path, arglist.scenario + ".json")
-        with open(file_name, "w") as f:
-            json.dump(lane_dict, f)
-        
-        print("map saved")
+        if arglist.save:
+            if not os.path.exists(arglist.save_path):
+                os.mkdir(arglist.save_path)
+            
+            file_name = os.path.join(arglist.save_path, arglist.scenario + ".json")
+            with open(file_name, "w") as f:
+                json.dump(lane_dict, f)
+            
+            print("map saved")
     
     plt.show()
