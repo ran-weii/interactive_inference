@@ -67,9 +67,14 @@ def get_cardinal_direction(x, y, heading, a, b):
         b (float): y coor of target point
         
     Returns:
-        diff_heading (float): heading difference in (-pi, pi)
+        diff_heading (float): heading difference in range (-pi, pi)
+            left is positive, right is negative
     """
     assert heading >= -np.pi and heading <= np.pi
+    
+    # handle same point
+    if x == a and y == b:
+        return 0
     
     # find vector direction from (x, y) to (a, b)
     vec = (a - x, b - y)
@@ -87,6 +92,7 @@ def is_above_line(x, y, heading, a, b):
     """ Determine if point (a, b) is above (1) or below (-1) the line 
     defined by point (x, y) and heading 
     """
+    # handle same point
     if x == a and y == b:
         return 0
     

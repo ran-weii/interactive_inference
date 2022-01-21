@@ -29,6 +29,10 @@ def test_get_cardinal_direction():
     x, y = 0, 0
     heading = np.deg2rad(45)
     
+    # case 0: same point
+    card0 = get_cardinal_direction(x, y, heading, x, y)
+    assert card0 == 0
+    
     # case 1: front left
     heading_vec1 = np.deg2rad(60)
     card1 = get_cardinal_direction(x, y, heading, 1, np.tan(heading_vec1))
