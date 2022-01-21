@@ -34,24 +34,32 @@ def test_get_cardinal_direction():
     card1 = get_cardinal_direction(x, y, heading, 1, np.tan(heading_vec1))
     card1_ = heading_vec1 - heading
     assert card1 == card1_
+    assert card1 > 0 and card1 < np.pi # left
+    assert card1 > -np.pi / 2 and card1 < np.pi / 2 # front
     
     # case 2: front right
     heading_vec2 = np.deg2rad(30)
     card2 = get_cardinal_direction(x, y, heading, 1, np.tan(heading_vec2))
     card2_ = heading_vec2 - heading
     assert card2 == card2_
+    assert card2 < 0 and card2 > -np.pi # right
+    assert card2 > -np.pi / 2 and card2 < np.pi / 2 # front
     
     # case 3: behind left
-    heading_vec3 = np.deg2rad(60)
+    heading_vec3 = np.deg2rad(30)
     card3 = get_cardinal_direction(x, y, heading, -1, np.tan(heading_vec3))
     card3_ = np.deg2rad(180) - heading_vec3 - heading
     assert card3 == card3_
+    assert card3 > 0 and card3 < np.pi # left
+    assert card3 > np.pi/2 or card3 < -np.pi/2 # behind
     
     # case 4: behind right
     heading_vec4 = np.deg2rad(-60)
     card4 = get_cardinal_direction(x, y, heading, 1, np.tan(heading_vec4))
     card4_ = heading_vec4 - heading
     assert card4 == card4_
+    assert card4 < 0 and card4 > -np.pi # right
+    assert card4 > np.pi/2 or card4 < -np.pi/2 # behind
     
     print("test_get_cardianl_direction passed")
 
