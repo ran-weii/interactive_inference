@@ -4,7 +4,7 @@ import json
 import xml.etree.ElementTree as xml
 import matplotlib.pyplot as plt
 from src.data.lanelet import find_all_points, find_all_ways, find_all_lanes    
-from src.data.lanelet import plot_all_ways, plot_all_lanes
+from src.visualization.lanelet_vis import plot_all_ways, plot_all_lanes
 
 def parse_args():
     bool_ = lambda x: x if isinstance(x, bool) else x == "True"
