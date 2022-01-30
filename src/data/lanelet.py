@@ -1,6 +1,8 @@
 import pyproj
 import math
+import json
 import numpy as np
+import pandas as pd
 import networkx as nx
 
 class Point:
@@ -197,3 +199,43 @@ def find_all_lanes(way_dict):
             if counter > 200:
                 break 
     return lane_dict
+
+def load_lanelet_df(lanelet_json_path):
+    """
+    Args:
+        lanelet_json_path (str): labeled lanelet json file
+
+    Returns:
+        df_lanelet (pd.dataframe): dataframe with labeled ways
+    """
+    assert ".json" in lanelet_json_path
+    
+    with open(lanelet_json_path, "r") as f:
+        lane_dict = json.load(f)
+    
+    # remove unlabeled lanes
+    lane_dict = {
+        k: v for (k, v) in lane_dict.items() if v["label"] is not None
+    }
+    
+    # dict to df
+    df_lanelet = []
+    for i, (lane_id, lane_val) in enumerate(lane_dict.items()):
+        label = lane_val["label"]
+        num_ways = lane_val["len"]
+        way_dict = lane_val["way_dict"]
+        
+        df_way = []
+        for j, (way_id, way_val) in enumerate(way_dict.items()):
+            way_val["way_id"] = way_id
+            df_way.append(way_val)
+            
+        df_way = pd.DataFrame(df_way)
+        df_way["lane_id"] = lane_id
+        df_way["lane_label"] = [label for i in range(len(df_way))]
+        df_way["num_ways"] = num_ways
+        
+        df_lanelet.append(df_way)
+        
+    df_lanelet = pd.concat(df_lanelet, axis=0).reset_index(drop=True)
+    return df_lanelet
