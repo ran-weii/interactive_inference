@@ -92,14 +92,13 @@ def get_lane_pos(x, y, heading, df_lanelet):
     })
     return df_lane_assigned
 
-def get_neighbor_vehicles(df_ego, df_frame, r):
+def get_neighbor_vehicles(df_ego, df_frame, max_dist):
     """ Find all vehicle in adjacent lane within a radius
 
     Args:
         df_ego (pd.series): pd series of ego vehicle 
         df_frame (pd.dataframe): dataframe of all vehicels in the same frame
-        r (float): scan radius centered on ego vehicle. 
-            Vehicles outside of the radus will be removed
+        max_dist (float): max dist to ego to be considered neighbors
             
     Returns:
         df_neighbors (pd.dataframe): dataframe of neighbor vehicles.
@@ -113,7 +112,7 @@ def get_neighbor_vehicles(df_ego, df_frame, r):
     df_neighbors["dist_to_ego"] = np.sqrt(
         (df_neighbors["x"] - df_ego["x"]) ** 2 + (df_neighbors["y"] - df_ego["y"]) ** 2
     )
-    df_neighbors = df_neighbors.loc[df_neighbors["dist_to_ego"] <= r]
+    df_neighbors = df_neighbors.loc[df_neighbors["dist_to_ego"] <= max_dist]
     
     # compare avg lanes and remove non neighbors
     df_neighbors = df_neighbors.loc[np.abs(df_ego["lane_label_avg"] - df_neighbors["lane_label_avg"]) <= 1]
