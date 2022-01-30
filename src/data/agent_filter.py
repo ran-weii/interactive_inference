@@ -30,7 +30,6 @@ def min_dist_to_way(x, y, heading, way_x, way_y):
     min_dist = dists[sort_id[0]]
     return min_dist
 
-""" TODO: should be avoid using df in this function? """
 def get_lane_pos(x, y, heading, df_lanelet):
     """ Assign lane position and labels to vehicle
 
@@ -43,6 +42,11 @@ def get_lane_pos(x, y, heading, df_lanelet):
     Returns:
         df_lane_assigned (pd.series): left and right lane attribute dataframe
     """
+    assert all(
+        v in df_lanelet.columns for v in 
+            ["x", "y", "lane_label", "type", "subtype", "way_id"]
+    )
+    
     df_lanelet = df_lanelet.copy()
     
     # calculate distance between vehicle and all ways
@@ -104,6 +108,8 @@ def get_neighbor_vehicles(df_ego, df_frame, max_dist):
         df_neighbors (pd.dataframe): dataframe of neighbor vehicles.
             The ego vehicle is the first row. 
     """ 
+    assert all(v in df_ego.index for v in ["x", "y", "psi_rad"])
+    assert all(v in df_frame.columns for v in ["x", "y", "psi_rad"])
     assert df_ego["frame_id"] == df_frame["frame_id"].iloc[0]
     assert len(df_frame["frame_id"].unique()) == 1
     
