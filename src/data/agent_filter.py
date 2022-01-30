@@ -133,6 +133,8 @@ def get_neighbor_vehicles(df_ego, df_frame, max_dist):
     ]
     df_neighbors["is_ego"] = df_neighbors["dist_to_ego"] == 0
     df_neighbors["is_lead"] = (df_neighbors["card"] < np.pi/2) * (df_neighbors["card"] > -np.pi/2)
+    df_neighbors["is_lead"] *= df_neighbors["lane_label_avg"] == df_ego["lane_label_avg"]
+    
     df_neighbors["is_left"] = (df_neighbors["card"] > 0) * (df_neighbors["card"] < np.pi)
     df_neighbors["is_left"] *= df_neighbors["lane_label_avg"] != df_ego["lane_label_avg"]
     return df_neighbors
@@ -143,7 +145,7 @@ def get_car_following_episode(df_track_processed):
         df_track_processed (pd.dataframe): processed track dataframe
         
     Returns:
-        episode_id (np.array): car following episode id
+        episode_id (np.array): car following episode id, -1 for not car following
     """
     assert all(v in df_track_processed.columns for v in ["track_id", "lead_track_id"])
     
