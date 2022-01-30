@@ -87,6 +87,7 @@ def get_lane_pos(x, y, heading, df_lanelet):
         "lane_right_subtype": df_right["subtype"].iloc[0],
         "lane_right_way_id": df_right["way_id"].iloc[0],
         "lane_right_min_dist": df_right["min_dist"].iloc[0],
+        "avg_lane": 0.5 * (label1 + label2)
     })
     return df_lane_assigned
 
@@ -114,8 +115,6 @@ def get_neighbor_vehicles(df_ego, df_frame, r):
     df_neighbors = df_neighbors.loc[df_neighbors["dist_to_ego"] <= r]
     
     # compare avg lanes and remove non neighbors
-    df_ego["avg_lane"] = 0.5 * (df_ego["lane_left_label"] + df_ego["lane_right_label"])
-    df_neighbors["avg_lane"] = 0.5 * (df_neighbors["lane_left_label"] + df_neighbors["lane_right_label"])
     df_neighbors = df_neighbors.loc[np.abs(df_neighbors["avg_lane"] - df_neighbors["avg_lane"]) <= 1]
     df_neighbors = df_neighbors.sort_values(by="dist_to_ego").reset_index(drop=True)
     
@@ -129,4 +128,5 @@ def get_neighbor_vehicles(df_ego, df_frame, r):
     df_neighbors["is_ego"] = df_neighbors["dist_to_ego"] == 0
     df_neighbors["is_lead"] = (df_neighbors["card"] < np.pi/2) * (df_neighbors["card"] > -np.pi/2)
     df_neighbors["is_left"] = (df_neighbors["card"] > 0) * (df_neighbors["card"] < np.pi)
+    df_neighbors["is_left"] *= df_neighbors["avg_lane"] != df_ego["avg_lane"]
     return df_neighbors
