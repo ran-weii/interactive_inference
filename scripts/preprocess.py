@@ -1,6 +1,7 @@
 import argparse
 import os
 import glob
+import time
 import pickle
 import numpy as np
 import pandas as pd
@@ -33,6 +34,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="Merging")
     parser.add_argument("--max_dist", type=float, default=50., help="max dist to be considereed neighbor")
+    parser.add_argument("--save", type=bool_, default=True)
     parser.add_argument("--debug", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
@@ -95,13 +97,22 @@ def process(df_track, df_lanelet, max_dist, kf_filter=None):
     df_processed = pd.concat([df_ego_lane, df_lead_vehicle], axis=1)
     
     if kf_filter is not None:
-        df_track_smooth = df_track.groupby("track_id").apply(
+        print("filter vehicle dynamimcs")
+        df_track_smooth = df_track.groupby("track_id").progress_apply(
                 lambda x: smooth_one_track(x, kf_filter)
         ).reset_index().drop(columns=["level_1", "track_id"])
         df_processed = pd.concat([df_processed, df_track_smooth], axis=1)
+        
+    df_processed.insert(0, "track_id", df_track["track_id"])
+    df_processed.insert(1, "frame_id", df_track["frame_id"])
     return df_processed
 
 def main(arglist):
+    # make save path
+    save_path = os.path.join(arglist.data_path, "processed_trackfiles")
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+        
     # load kalman filter 
     with open(os.path.join(arglist.kf_path, "model.p"), "rb") as f:
         kf = pickle.load(f)
@@ -112,9 +123,10 @@ def main(arglist):
         os.path.join(arglist.data_path, "recorded_trackfiles", "*/")
     )
     
-    scenario_counter = 0
+    num_processed = 0
     for i, scenario_path in enumerate(scenario_paths):
         scenario = os.path.basename(os.path.dirname(scenario_path))
+        
         if arglist.scenario in scenario:
             print(f"\nScenario {i+1}: {scenario}")
             
@@ -127,34 +139,37 @@ def main(arglist):
             )
             
             for j, track_path in enumerate(track_paths):
-                filename = os.path.basename(track_path)
-                record_id = filename.replace(".csv", "").split("_")[-1]
-                print(f"track_file: {filename}")
+                track_filename = os.path.basename(track_path)
+                record_id = track_filename.replace(".csv", "").split("_")[-1]
+                print(f"num_processed: {num_processed}, track_file: {track_filename}")
                 
                 df_track = pd.read_csv(track_path)
                 
                 if arglist.debug:
-                    # df_track = df_track.loc[df_track["track_id"].isin([1, 2, 3])].iloc[:100]
-                    df_track = df_track.iloc[:10000]
+                    df_track = df_track.iloc[:50000]
+                    # df_track = df_track.loc[df_track["frame_id"].isin([1, 2])].reset_index(drop=True)
+                    pass
                 
-                """ test process """
-                df_track = df_track.loc[df_track["frame_id"].isin([1, 2])].reset_index(drop=True)
+                start_time = time.time()
                 df_processed = process(
                     df_track, df_lanelet, arglist.max_dist, kf_filter=None
                 )
                 df_processed.insert(0, "scenario", scenario)
                 df_processed.insert(1, "record_id", record_id)
-                print(df_processed)
+                print(f"time: {np.round(time.time() - start_time, 2)}")
                 
-                if arglist.debug:
-                    break
+                if arglist.save:
+                    scenario_save_path = os.path.join(save_path, scenario)
+                    if not os.path.exists(scenario_save_path):
+                        os.mkdir(scenario_save_path)
+                        
+                    df_processed.to_csv(
+                        os.path.join(scenario_save_path, track_filename), index=False
+                    )
             
-            scenario_counter += 1
-        else:
-            pass 
-        
-        if arglist.debug and scenario_counter > 0:
-            break
+                num_processed += 1
+                if arglist.debug and num_processed > 0:
+                    return
     
     return 
 
