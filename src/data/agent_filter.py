@@ -130,3 +130,20 @@ def get_neighbor_vehicles(df_ego, df_frame, max_dist):
     df_neighbors["is_left"] = (df_neighbors["card"] > 0) * (df_neighbors["card"] < np.pi)
     df_neighbors["is_left"] *= df_neighbors["lane_label_avg"] != df_ego["lane_label_avg"]
     return df_neighbors
+
+def get_car_following_episode(df_track_processed):
+    """
+    Args:
+        df_track_processed (pd.dataframe): processed track dataframe
+        
+    Returns:
+        episode_id (np.array): car following episode id
+    """
+    assert all(v in df_track_processed.columns for v in ["track_id", "lead_track_id"])
+    
+    df = df_track_processed.copy()
+    df["lead_change"] = df.groupby("track_id")["lead_track_id"].diff().fillna(0) != 0
+    df["episode"] = df.groupby("track_id")["lead_change"].cumsum()
+    df["episode"].loc[df["lead_track_id"].isna()] = -1
+    episode_id = df["episode"].values
+    return episode_id
