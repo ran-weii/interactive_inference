@@ -9,7 +9,8 @@ from tqdm.auto import tqdm
 
 from src.data.lanelet import load_lanelet_df
 from src.data.kalman_filter import BatchKalmanFilter
-from src.data.agent_filter import get_lane_pos, get_neighbor_vehicles
+from src.data.agent_filter import (
+    get_lane_pos, get_neighbor_vehicles, get_car_following_episode)
 from src.data.utils import derive_acc, normalize_pos
 
 # to use apply progress bar
@@ -33,7 +34,10 @@ def parse_args():
         "--map_path", type=str, default="../exp/lanelet"
     )
     parser.add_argument("--scenario", type=str, default="Merging")
-    parser.add_argument("--max_dist", type=float, default=50., help="max dist to be considereed neighbor")
+    parser.add_argument("--use_kf", type=bool_, default=True, 
+                        help="use kalman filter, default=False")
+    parser.add_argument("--max_dist", type=float, default=50., 
+                        help="max dist to be considered neighbor, default=50")
     parser.add_argument("--save", type=bool_, default=True)
     parser.add_argument("--debug", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -42,7 +46,6 @@ def parse_args():
 def smooth_one_track(df_one_track, kf):
     """ Apply kalman filter to one track """
     df_ = df_one_track.copy()
-    df_ = derive_acc(df_, kf.dt)
     init_pos = df_.head(1)[["x", "y"]].values[:2]
     
     df_ = normalize_pos(df_)
@@ -75,13 +78,17 @@ def get_lead_vehicle_id(df_ego, df_track, max_dist):
     out = pd.Series({"lead_track_id": id_lead})
     return out
 
-def process(df_track, df_lanelet, max_dist, kf_filter=None):
+def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter):
     """ Preprocess pipeline: 
-    get ego lane, get lead vehicle id, filter vehicle dynamics
+    1. Identify ego lane
+    2. Identify lead vehicle id
+    3. Identify car following episode
+    4. Derive acceleration
+    5. Filter vehicle dynamics
     """
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
-    print("identifying ego lane")
+    print("identify ego lane")
     df_ego_lane = df_track.progress_apply(
         lambda x: get_lane_pos(
             x["x"], x["y"], x["psi_rad"], df_lanelet
@@ -89,22 +96,27 @@ def process(df_track, df_lanelet, max_dist, kf_filter=None):
     )
     df_track = pd.concat([df_track, df_ego_lane], axis=1)
     
-    print("identifying lead vehicle")
+    print("identify lead vehicle")
     df_lead_vehicle = df_track.progress_apply(
         lambda x: get_lead_vehicle_id(x, df_track, max_dist), axis=1
     ).reset_index(drop=True)
     
+    print("identify car following episode")
     df_processed = pd.concat([df_ego_lane, df_lead_vehicle], axis=1)
-    
-    if kf_filter is not None:
-        print("filter vehicle dynamimcs")
-        df_track_smooth = df_track.groupby("track_id").progress_apply(
-                lambda x: smooth_one_track(x, kf_filter)
-        ).reset_index().drop(columns=["level_1", "track_id"])
-        df_processed = pd.concat([df_processed, df_track_smooth], axis=1)
-        
     df_processed.insert(0, "track_id", df_track["track_id"])
     df_processed.insert(1, "frame_id", df_track["frame_id"])
+    df_processed["car_follow_eps"] = get_car_following_episode(df_processed)
+    
+    print("derive acceleration")
+    df_track = derive_acc(df_track, dt)
+    df_processed["ax"] = df_track["vx_grad"]
+    df_processed["ay"] = df_track["vy_grad"]
+    
+    print("filter vehicle dynamics")
+    df_track_smooth = df_track.groupby("track_id").progress_apply(
+            lambda x: smooth_one_track(x, kf_filter)
+    ).reset_index().drop(columns=["level_1", "track_id"])
+    df_processed = pd.concat([df_processed, df_track_smooth], axis=1)
     return df_processed
 
 def main(arglist):
@@ -116,7 +128,7 @@ def main(arglist):
     # load kalman filter 
     with open(os.path.join(arglist.kf_path, "model.p"), "rb") as f:
         kf = pickle.load(f)
-        kf.dt = 0.1
+        dt = 0.1
     
     # load data
     scenario_paths = glob.glob(
@@ -140,22 +152,20 @@ def main(arglist):
             
             for j, track_path in enumerate(track_paths):
                 track_filename = os.path.basename(track_path)
-                record_id = track_filename.replace(".csv", "").split("_")[-1]
+                track_record_id = track_filename.replace(".csv", "").split("_")[-1]
                 print(f"num_processed: {num_processed}, track_file: {track_filename}")
                 
                 df_track = pd.read_csv(track_path)
                 
                 if arglist.debug:
-                    df_track = df_track.iloc[:50000]
-                    # df_track = df_track.loc[df_track["frame_id"].isin([1, 2])].reset_index(drop=True)
-                    pass
+                    df_track = df_track.iloc[:5000]
                 
                 start_time = time.time()
-                df_processed = process(
-                    df_track, df_lanelet, arglist.max_dist, kf_filter=None
+                df_processed = preprocess_pipeline(
+                    df_track, df_lanelet, arglist.max_dist, dt, kf
                 )
                 df_processed.insert(0, "scenario", scenario)
-                df_processed.insert(1, "record_id", record_id)
+                df_processed.insert(1, "record_id", track_record_id)
                 print(f"time: {np.round(time.time() - start_time, 2)}")
                 
                 if arglist.save:
@@ -170,8 +180,6 @@ def main(arglist):
                 num_processed += 1
                 if arglist.debug and num_processed > 0:
                     return
-    
-    return 
 
 if __name__ == "__main__":
     arglist = parse_args()
