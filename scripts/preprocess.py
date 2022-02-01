@@ -5,6 +5,7 @@ import time
 import pickle
 import numpy as np
 import pandas as pd
+import swifter
 from tqdm.auto import tqdm
 
 from src.data.lanelet import load_lanelet_df
@@ -88,16 +89,20 @@ def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter):
     """
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
-    print("identify ego lane")
-    df_ego_lane = df_track.progress_apply(
+    # identify ego lane
+    df_ego_lane = df_track.swifter.progress_bar(
+        True, desc="identify ego lane"
+    ).apply(
         lambda x: get_lane_pos(
             x["x"], x["y"], x["psi_rad"], df_lanelet
         ), axis=1
     )
     df_track = pd.concat([df_track, df_ego_lane], axis=1)
-    
-    print("identify lead vehicle")
-    df_lead_vehicle = df_track.progress_apply(
+        
+    # identify lead vehicle
+    df_lead_vehicle = df_track.swifter.progress_bar(
+        True, desc="identify lead vehicle"
+    ).apply(
         lambda x: get_lead_vehicle_id(x, df_track, max_dist), axis=1
     ).reset_index(drop=True)
     
