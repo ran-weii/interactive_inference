@@ -39,6 +39,8 @@ def parse_args():
                         help="use kalman filter, default=False")
     parser.add_argument("--max_dist", type=float, default=50., 
                         help="max dist to be considered neighbor, default=50")
+    parser.add_argument("--parallel", type=bool_, default=True, 
+                        help="parallel apply, default=True")
     parser.add_argument("--save", type=bool_, default=True)
     parser.add_argument("--debug", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -79,7 +81,14 @@ def get_lead_vehicle_id(df_ego, df_track, max_dist):
     out = pd.Series({"lead_track_id": id_lead})
     return out
 
-def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter):
+def parallel_apply(df, f, parallel, axis=1, desc=""):
+    if parallel:
+        return df.swifter.progress_bar(True, desc=desc).apply(f, axis=axis)
+    else:
+        print(desc)
+        return df.progress_apply(f, axis=axis)
+
+def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter, parallel=False):
     """ Preprocess pipeline: 
     1. Identify ego lane
     2. Identify lead vehicle id
@@ -90,20 +99,16 @@ def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter):
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
     # identify ego lane
-    df_ego_lane = df_track.swifter.progress_bar(
-        True, desc="identify ego lane"
-    ).apply(
-        lambda x: get_lane_pos(
-            x["x"], x["y"], x["psi_rad"], df_lanelet
-        ), axis=1
+    f_ego_lane = lambda x: get_lane_pos(x["x"], x["y"], x["psi_rad"], df_lanelet)
+    df_ego_lane = parallel_apply(
+        df_track, f_ego_lane, parallel, axis=1, desc="identify ego lane"
     )
     df_track = pd.concat([df_track, df_ego_lane], axis=1)
-        
+    
     # identify lead vehicle
-    df_lead_vehicle = df_track.swifter.progress_bar(
-        True, desc="identify lead vehicle"
-    ).apply(
-        lambda x: get_lead_vehicle_id(x, df_track, max_dist), axis=1
+    f_lead_vehicle = lambda x: get_lead_vehicle_id(x, df_track, max_dist)
+    df_lead_vehicle = parallel_apply(
+        df_track, f_lead_vehicle, parallel, axis=1, desc="identify lead vehicle"
     ).reset_index(drop=True)
     
     print("identify car following episode")
@@ -167,7 +172,7 @@ def main(arglist):
                 
                 start_time = time.time()
                 df_processed = preprocess_pipeline(
-                    df_track, df_lanelet, arglist.max_dist, dt, kf
+                    df_track, df_lanelet, arglist.max_dist, dt, kf, arglist.parallel
                 )
                 df_processed.insert(0, "scenario", scenario)
                 df_processed.insert(1, "record_id", track_record_id)
