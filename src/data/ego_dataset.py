@@ -122,7 +122,7 @@ class SimpleEgoDataset(EgoDataset):
         
         df_agents = df_agents.loc[
             df_agents["frame_id"].isin(df_ego["frame_id"].values)
-        ].reset_index(drop=True)
+        ].sort_values("frame_id").reset_index(drop=True)
         df_agents["is_lead"] = True
         df_agents["is_left"] = False
         df_agents["dist_to_ego"] = np.sqrt(
