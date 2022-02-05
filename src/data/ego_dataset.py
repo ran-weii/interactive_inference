@@ -13,20 +13,17 @@ def filter_car_follow_eps(df_track, min_eps_len):
     Returns:
         df_track (pd.dataframe): track dataframe with filtered "eps_id" and "eps_len" fields
     """
-    df_track["eps_id"] = df_track["scenario"] + '_' + df_track["record_id"].apply(str) + \
+    df_track["eps_label"] = df_track["scenario"] + '_' + df_track["record_id"].apply(str) + \
         "_" + df_track["track_id"].apply(str) + "_" + df_track["car_follow_eps"].apply(str)
-    is_new_eps = df_track["eps_id"].ne(df_track["eps_id"].shift().bfill())
     
-    df_eps_len = df_track.groupby("eps_id").size().reset_index()
-    df_eps_len.columns = ["eps_id", "eps_len"]
-    df_track = df_track.merge(df_eps_len, how="outer", on="eps_id")
+    df_eps_len = df_track.groupby("eps_label").size().reset_index()
+    df_eps_len.columns = ["eps_label", "eps_len"]
+    df_eps_len["eps_id"] = -1
+    is_valid_eps = df_eps_len["eps_len"] >= min_eps_len
+    df_eps_len["eps_id"].loc[is_valid_eps] = np.arange(0, sum(is_valid_eps))
     
-    slice_id = np.all(np.stack(
-        [df_track["eps_len"] >= min_eps_len, df_track["car_follow_eps"] != -1]
-    ), axis=0)
-    df_track["eps_id"].loc[slice_id] = np.cumsum(is_new_eps[slice_id])
-    df_track["eps_id"].loc[slice_id == False] = -1
-    df_track["eps_len"].loc[slice_id == False] = -1
+    df_track = df_track.merge(df_eps_len, how="outer", on="eps_label")
+    df_track["eps_id"].loc[df_track["lead_track_id"].isna()] = -1
     return df_track
     
     
@@ -47,6 +44,7 @@ class EgoDataset(Dataset):
             
         self.df_track = df_track.copy()
         self.df_lanelet = df_lanelet.copy()
+        self.min_eps_len = min_eps_len
         self.max_dist = max_dist
         self.max_agents = max_agents
         
@@ -63,7 +61,9 @@ class EgoDataset(Dataset):
         return len(self.unique_eps)
     
     def __getitem__(self, idx):
-        df_ego = self.df_track.loc[self.df_track["eps_id"] == self.unique_eps[idx]]
+        df_ego = self.df_track.loc[
+            self.df_track["eps_id"] == self.unique_eps[idx]
+        ].reset_index(drop=True)
         
         obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy()
         obs_ego = df_ego[self.ego_fields].to_numpy()
@@ -120,13 +120,16 @@ class SimpleEgoDataset(EgoDataset):
         df_record = df_scenario.loc[df_scenario["record_id"] == record_id]
         df_agents = df_record.loc[df_record["track_id"] == lead_track_id]
         
-        df_agents = df_agents.loc[df_agents["frame_id"].isin(df_ego["frame_id"].values)]
+        df_agents = df_agents.loc[
+            df_agents["frame_id"].isin(df_ego["frame_id"].values)
+        ].reset_index(drop=True)
         df_agents["is_lead"] = True
         df_agents["is_left"] = False
         df_agents["dist_to_ego"] = np.sqrt(
             (df_agents["x"] - df_ego["x"])**2 + (df_agents["y"] - df_ego["y"])**2
         )
         
+        # lead vehicle df should have the same length as ego
         obs_agents = -1 * np.ones((T, self.max_agents, len(self.agent_fields)))
         obs_agents[:, 0, :] = df_agents[self.agent_fields].values
         return obs_agents
