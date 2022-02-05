@@ -150,8 +150,11 @@ def get_car_following_episode(df_track_processed):
     assert all(v in df_track_processed.columns for v in ["track_id", "lead_track_id"])
     
     df = df_track_processed.copy()
-    df["lead_change"] = df.groupby("track_id")["lead_track_id"].diff().fillna(0) != 0
-    df["episode"] = df.groupby("track_id")["lead_change"].cumsum()
+    df["eps_change"] = np.any(np.stack([
+        df.groupby("track_id")["lead_track_id"].fillna(-1).diff() != 0,
+        df.groupby("track_id")["lane_label_avg"].fillna(-1).diff() != 0,
+    ]), axis=0)
+    df["episode"] = df.groupby("track_id")["eps_change"].cumsum()
     df["episode"].loc[df["lead_track_id"].isna()] = -1
     episode_id = df["episode"].values
     return episode_id
