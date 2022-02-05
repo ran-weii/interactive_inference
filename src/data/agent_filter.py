@@ -15,13 +15,13 @@ def min_dist_to_way(x, y, heading, way_x, way_y):
         
     Returns:
         min_dist (float): signed minimum distance from the vehile to the way
-            if right lane: sign=1, if left lane: sign=-1
+            if left lane: sign=1, if right lane: sign=-1
     """    
     dists = []
     for i in range(len(way_x) - 1):
         a, b = closest_point_on_line(x, y, way_x[i:i+2], way_y[i:i+2])
         card = get_cardinal_direction(x, y, heading, a, b)
-        sign = 1 if card < 0 and card > -np.pi else -1
+        sign = 1 if card > 0 and card < np.pi else -1
         dist = dist_two_points(x, y, a, b)
         dists.append(sign * dist)
     
@@ -65,6 +65,12 @@ def get_lane_pos(x, y, heading, df_lanelet):
         sort_values("abs_min_dist").head(1).reset_index(drop=True)
     df_right = df_lanelet.loc[df_lanelet["min_dist"] <= 0].\
         sort_values("abs_min_dist").head(1).reset_index(drop=True)
+    
+    # no lane handle
+    if len(df_left) == 0:
+        df_left = df_right
+    elif len(df_right) == 0:
+        df_right = df_left
     
     label_left = df_left["lane_label"].iloc[0]
     label_right = df_right["lane_label"].iloc[0]
