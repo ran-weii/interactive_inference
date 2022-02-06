@@ -47,7 +47,8 @@ def visualize_scene(frames, lanelet_source, plot_width=900):
         tooltips=[
             ("Track id", "@track_id{00}"),
             ("Vel", "(@vx{00.0}, @vy{00.0})"),
-            ("Psi", "@psi_rad{00.0}")
+            ("Psi", "@psi_rad{00.0}"),
+            ("Lane pos", "(@lane_left_min_dist{00.0}, @lane_right_min_dist{00.0})")
         ]
     )
 
@@ -61,6 +62,9 @@ def visualize_scene(frames, lanelet_source, plot_width=900):
         tools=["pan", "wheel_zoom", agent_hover, "reset", "save"],
         active_scroll="wheel_zoom"
     )
+    f.xgrid.grid_line_alpha=0.7
+    f.ygrid.grid_line_alpha=0.7
+    
     f.patches(
         xs="x", 
         ys="y", 
