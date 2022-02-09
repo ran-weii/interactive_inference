@@ -227,7 +227,7 @@ def load_lanelet_df(lanelet_json_path):
         
         df_way = []
         for j, (way_id, way_val) in enumerate(way_dict.items()):
-            way_val["way_id"] = way_id
+            way_val["way_id"] = int(way_id)
             df_way.append(way_val)
             
         df_way = pd.DataFrame(df_way)
