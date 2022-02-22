@@ -3,17 +3,21 @@ import pandas as pd
 from src.data.ego_dataset import EgoDataset, SimpleEgoDataset
 from src.data.lanelet import load_lanelet_df
 from src.visualization.visualizer import build_bokeh_sources, visualize_scene
-from bokeh.plotting import show
+from bokeh.plotting import save
 
 pd.set_option('display.max_columns', None)
 pd.options.mode.chained_assignment = None
 
 lanelet_path = "../exp/lanelet"
 data_path = "../interaction-dataset-master"
-scenario = "DR_CHN_Merging_ZS"
+save_path = "../doc/fig"
+if not os.path.exists(save_path):
+    os.mkdir(save_path)
+scenario1 = "DR_CHN_Merging_ZS"
+scenario2 = "DR_DEU_Merging_MT"
 filename = "vehicle_tracks_007.csv"
 
-def test_ego_dataset():
+def test_ego_dataset(scenario):
     df_lanelet = load_lanelet_df(os.path.join(lanelet_path, scenario + ".json"))
     df_processed = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", scenario, filename)
@@ -31,9 +35,9 @@ def test_ego_dataset():
         track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields
     )
     fig = visualize_scene(frames, lanelet_source)
-    show(fig)
+    save(fig, os.path.join(save_path, f"{scenario}_Ego.html"))
     
-def test_simple_ego_dataset():
+def test_simple_ego_dataset(scenario):
     df_lanelet = load_lanelet_df(os.path.join(lanelet_path, scenario + ".json"))
     df_processed = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", scenario, filename)
@@ -51,8 +55,10 @@ def test_simple_ego_dataset():
         track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields
     )
     fig = visualize_scene(frames, lanelet_source)
-    show(fig)
+    save(fig, os.path.join(save_path, f"{scenario}_SimpleEgo.html"))
 
 if __name__ == "__main__":
-    test_ego_dataset()
-    test_simple_ego_dataset()
+    test_ego_dataset(scenario1)
+    test_ego_dataset(scenario2)
+    test_simple_ego_dataset(scenario1)
+    test_simple_ego_dataset(scenario2)
