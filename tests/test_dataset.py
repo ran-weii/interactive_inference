@@ -1,6 +1,7 @@
 import os
+import numpy as np
 import pandas as pd
-from src.data.ego_dataset import EgoDataset, SimpleEgoDataset
+from src.data.ego_dataset import EgoDataset, SimpleEgoDataset, RelativeDataset
 from src.data.lanelet import load_lanelet_df
 from src.visualization.visualizer import build_bokeh_sources, visualize_scene
 from bokeh.plotting import save
@@ -57,8 +58,28 @@ def test_simple_ego_dataset(scenario):
     fig = visualize_scene(frames, lanelet_source)
     save(fig, os.path.join(save_path, f"{scenario}_SimpleEgo.html"))
 
+def test_relative_dataset(scenario):
+    df_lanelet = load_lanelet_df(os.path.join(lanelet_path, scenario + ".json"))
+    df_processed = pd.read_csv(
+        os.path.join(data_path, "processed_trackfiles", scenario, filename)
+    )
+    df_track = pd.read_csv(
+        os.path.join(data_path, "recorded_trackfiles", scenario, filename)
+    )
+    df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
+    df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
+    
+    min_eps_len = 50
+    rel_dataset = RelativeDataset(df_track, df_lanelet, min_eps_len)
+    track_data = rel_dataset[0]
+    
+    assert track_data["ego"].shape[1] == len(rel_dataset.ego_fields)
+    assert track_data["act"].shape[1] == len(rel_dataset.act_fields)
+    print("test_relative_dataset passed")
+
 if __name__ == "__main__":
     test_ego_dataset(scenario1)
     test_ego_dataset(scenario2)
     test_simple_ego_dataset(scenario1)
     test_simple_ego_dataset(scenario2)
+    test_relative_dataset(scenario1)
