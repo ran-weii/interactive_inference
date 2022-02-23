@@ -5,6 +5,14 @@ from bokeh.plotting import figure, ColumnDataSource
 from bokeh.models import CustomJS, HoverTool, Slider
 from bokeh.layouts import column
 
+def get_speed_pointer_dict(x, y, vx, vy, psi_rad):
+    v_norm = np.sqrt(vx**2 + vy**2)
+    if vx < 0:
+        v_norm *= -1
+    tan = np.tan(psi_rad)
+    out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
+    return out
+
 def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
     # build lanelet data source
     df_lanelet["color"] = [d["color"] for d in df_lanelet["vis_dict"]]
@@ -24,6 +32,13 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
     frames = []
     for i in range(len(ego_data)):
         df_ego = pd.DataFrame(ego_data[i].reshape(1, -1), columns=ego_fields)
+        ego_speed_dict = get_speed_pointer_dict(
+            df_ego["x"].iloc[0],
+            df_ego["y"].iloc[0],
+            df_ego["vx"].iloc[0],
+            df_ego["vy"].iloc[0],
+            df_ego["psi_rad"].iloc[0]
+        )
         
         agent_data = track_data["agents"][i]
         agent_data[agent_data == -1] = np.nan
@@ -33,7 +48,8 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
         
         frames.append({
             "ego": ColumnDataSource(df_ego),
-            "agents": ColumnDataSource(df_agent)
+            "agents": ColumnDataSource(df_agent),
+            "ego_speed": ColumnDataSource(data=ego_speed_dict)
         })
     return frames, lanelet_source
 
@@ -95,11 +111,21 @@ def visualize_scene(frames, lanelet_source, plot_width=900):
         source=frames[0]["agents"],
         name="agents"
     )
-
+    f.line(
+        x="vx_psi",
+        y="vy_psi",
+        line_width=3,
+        line_alpha=1,
+        color="red",
+        source=frames[0]["ego_speed"],
+        legend_label="Ego speed"
+    )
+    
     js_string = """
     sources["ego"].data = frames[cb_obj.value]["ego"].data;
     sources["agents"].data = frames[cb_obj.value]["agents"].data;
-
+    sources["ego_speed"].data = frames[cb_obj.value]["ego_speed"].data;
+    
     sources["ego"].change.emit();
     sources["agents"].change.emit();
     """
