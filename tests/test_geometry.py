@@ -1,7 +1,8 @@
 import numpy as np
+from src.data.geometry import (
+    closest_point_on_line, get_cardinal_direction, is_above_line)
 
 def test_closest_point_on_line():
-    from src.data.utils import closest_point_on_line
     x, y = 0, 0 
     
     # case 1: closest is tangent
@@ -25,7 +26,6 @@ def test_closest_point_on_line():
     print("test_closest_point_on_line passed")
 
 def test_get_cardinal_direction():
-    from src.data.utils import get_cardinal_direction
     x, y = 0, 0
     heading = np.deg2rad(45)
     
@@ -68,7 +68,6 @@ def test_get_cardinal_direction():
     print("test_get_cardianl_direction passed")
 
 def test_is_above_line():
-    from src.data.utils import is_above_line
     x, y = 0, 0
     
     # case 0: on the line

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from .utils import closest_point_on_line, get_cardinal_direction, dist_two_points
+from .geometry import closest_point_on_line, get_cardinal_direction, dist_two_points
 
 def min_dist_to_way(x, y, heading, way_x, way_y):
     """ Find the min absolute distance from the vehicle to 
