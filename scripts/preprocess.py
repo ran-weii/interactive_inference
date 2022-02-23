@@ -12,7 +12,6 @@ from src.data.lanelet import load_lanelet_df
 from src.data.kalman_filter import BatchKalmanFilter
 from src.data.agent_filter import (
     get_lane_pos, get_neighbor_vehicles, get_car_following_episode)
-from src.data.utils import derive_acc, normalize_pos
 
 # to use apply progress bar
 tqdm.pandas()
@@ -45,6 +44,23 @@ def parse_args():
     parser.add_argument("--debug", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
+
+def derive_acc(df, dt):
+    """ differentiate vel and add to df """
+    df_ = df.copy()
+    f_grad = lambda x: pd.DataFrame(np.gradient(x, dt), index=x.index)
+    df_["vx_grad"] = df_.groupby("track_id")["vx"].apply(f_grad)
+    df_["vy_grad"] = df_.groupby("track_id")["vy"].apply(f_grad)
+    return df_
+
+def normalize_pos(df):
+    """ subtrack all pos by initial pos """
+    df_ = df.copy()
+    
+    f_norm = lambda x: x - x.iloc[0]
+    df_["x"] = df_.groupby("track_id")["x"].apply(f_norm)
+    df_["y"] = df_.groupby("track_id")["y"].apply(f_norm)
+    return df_
 
 def smooth_one_track(df_one_track, kf):
     """ Apply kalman filter to one track """
