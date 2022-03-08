@@ -19,3 +19,18 @@ def make_covariance_matrix(logvar, tril, cholesky=True):
     if not cholesky:
         L = torch.bmm(L, L.transpose(-1, -2))
     return L
+
+def poisson_pdf(gamma, K):
+    """ 
+    Args:
+        gamma (torch.tensor): poission arrival rate [batch_size, 1]
+        K (int): number of bins
+
+    Returns:
+        pdf (torch.tensor): truncated poisson pdf [batch_size, K]
+    """
+    assert torch.all(gamma > 0)
+    Ks = torch.arange(K) + 1
+    poisson_dist = torch.distributions.Poisson(gamma)
+    pdf = torch.softmax(poisson_dist.log_prob(Ks), dim=-1)
+    return pdf
