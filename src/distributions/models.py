@@ -9,17 +9,24 @@ class HiddenMarkovModel(nn.Module):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
+        self.parameter_size = [act_dim * state_dim * state_dim, state_dim]
+        
         self.B = nn.Parameter(
             torch.randn(1, act_dim, state_dim, state_dim), requires_grad=True
         )
+        self.D = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
         nn.init.xavier_normal_(self.B, gain=1.)
+        nn.init.xavier_normal_(self.D, gain=1.)
         
     def __repr__(self):
         s = "{}(s={}, a={})".format(
             self.__class__.__name__, self.state_dim, self.act_dim
         )
         return s
-
+    
+    def transform_parameters(self, B):
+        return B.view(-1, self.act_dim, self.state_dim, self.state_dim)
+    
     def forward(self, logp_o, a, b, B=None):
         """ 
         Args:
@@ -33,6 +40,7 @@ class HiddenMarkovModel(nn.Module):
             b_t(torch.tensor): next belief [batch_size, state_dim]
         """
         if B is not None:
+            B = self.transform_parameters(B)
             B = torch.softmax(B, dim=-1)
         else:
             B = torch.softmax(self.B, dim=-1)
@@ -128,10 +136,10 @@ class ConditionalDistribution(nn.Module):
         return mu, lv, tl, sk
     
     def get_distribution_class(self, params=None):
-        if params is None:
-            [mu, lv, tl, sk] = self.mu, self.lv, self.tl, self.sk
-        else:
+        if params is not None:
             [mu, lv, tl, sk] = self.transform_parameters(params)
+        else:
+            [mu, lv, tl, sk] = self.mu, self.lv, self.tl, self.sk
         L = make_covariance_matrix(lv, tl, cholesky=True)
         
         if self.dist == "mvn":
@@ -148,7 +156,16 @@ class ConditionalDistribution(nn.Module):
         distribution = self.get_distribution_class(params)
         return distribution.variance
     
+    def entropy(self, params=None):
+        distribution = self.get_distribution_class(params)
+        return distribution.entropy()
+    
     def log_prob(self, x, params=None):
+        """
+        Args:
+            x (torch.tensor): [batch_size, 1, x_dim]
+            params (torch.tensor, optional): parameter vector. Defaults to None.
+        """
         distribution = self.get_distribution_class(params)
         return distribution.log_prob(x)
     
