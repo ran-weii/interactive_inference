@@ -28,11 +28,13 @@ def test_conditional_distribution():
     cond_dist = ConditionalDistribution(x_dim, z_dim, dist, cov)
     mean = cond_dist.mean(params)
     variance = cond_dist.variance(params)
+    entropy = cond_dist.entropy(params)
     logp = cond_dist.log_prob(obs, params)
     samples = cond_dist.sample((sample_size,), params)
     
     assert list(mean.shape) == [batch_size, z_dim, x_dim]
     assert list(variance.shape) == [batch_size, z_dim, x_dim]
+    assert list(entropy.shape) == [batch_size, z_dim]
     assert list(logp.shape) == [batch_size, z_dim]
     assert list(samples.shape) == [sample_size, batch_size, z_dim, x_dim]
     assert torch.all(mean - mu == 0)
@@ -43,11 +45,13 @@ def test_conditional_distribution():
     cond_dist = ConditionalDistribution(x_dim, z_dim, dist, cov)
     mean = cond_dist.mean()
     variance = cond_dist.variance()
+    entropy = cond_dist.entropy()
     logp = cond_dist.log_prob(obs)
     samples = cond_dist.sample((sample_size,))
     
     assert list(mean.shape) == [1, z_dim, x_dim]
     assert list(variance.shape) == [1, z_dim, x_dim]
+    assert list(entropy.shape) == [1, z_dim]
     assert list(logp.shape) == [batch_size, z_dim]
     assert list(samples.shape) == [sample_size, 1, z_dim, x_dim]
     assert torch.all(mean - cond_dist.mu == 0)
@@ -58,11 +62,13 @@ def test_conditional_distribution():
     cond_dist = ConditionalDistribution(x_dim, z_dim, dist, cov)
     mean = cond_dist.mean()
     variance = cond_dist.variance()
+    entropy = cond_dist.entropy()
     logp = cond_dist.log_prob(obs)
     samples = cond_dist.sample((sample_size,))
     
     assert list(mean.shape) == [1, z_dim, x_dim]
     assert list(variance.shape) == [1, z_dim, x_dim]
+    assert list(entropy.shape) == [1, z_dim]
     assert list(logp.shape) == [batch_size, z_dim]
     assert list(samples.shape) == [sample_size, 1, z_dim, x_dim]
     assert torch.all(mean - cond_dist.mu == 0)
