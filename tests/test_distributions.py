@@ -1,6 +1,7 @@
 from pyro import param
 import torch
 from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
+from src.distributions.utils import poisson_pdf
 
 """ TODO: finish all test cases """
 def test_conditional_distribution():
@@ -94,6 +95,17 @@ def test_hidden_markov_model():
     
     print("test_hidden_markov_model passed")
 
+def test_poisson_pdf():
+    batch_size = 32
+    gamma = torch.randn(batch_size, 1).exp()
+    K = 12
+    
+    pdf = poisson_pdf(gamma, K)
+    assert torch.all(torch.isclose(pdf.sum(-1), torch.ones(1)))
+    
+    print("test_poisson_pdf passed")
+    
 if __name__ == "__main__":
     test_conditional_distribution()
     test_hidden_markov_model()
+    test_poisson_pdf()
