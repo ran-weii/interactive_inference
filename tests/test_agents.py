@@ -20,7 +20,7 @@ def test_active_inference_agent():
     mask = torch.zeros(batch_size, T)
     
     # test with supplied parameters
-    agent = ActiveInference(state_dim, obs_dim, act_dim, ctl_dim, H)
+    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
     theta = {
         "A": nn.Parameter(torch.randn(batch_size, sum(agent.obs_model.parameter_size))),
         "B": nn.Parameter(torch.randn(batch_size, agent.hmm.parameter_size[0])),
@@ -49,7 +49,7 @@ def test_active_inference_agent():
     assert agent.tau.grad == None
     
     # test with self parameters
-    agent = ActiveInference(state_dim, obs_dim, act_dim, ctl_dim, H)
+    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
     logp_pi, logp_obs = agent(obs, u)
     loss = logp_pi.sum()
     loss.backward()

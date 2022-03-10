@@ -5,7 +5,7 @@ import torch.nn as nn
 from src.agents.active_inference import ActiveInference
 
 class MLEIRL(nn.Module):
-    def __init__(self, state_dim, obs_dim, act_dim, ctl_dim, H, 
+    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
         obs_penalty=0, lr=1e-3, decay=0, grad_clip=40):
         super().__init__()
@@ -15,7 +15,7 @@ class MLEIRL(nn.Module):
         self.grad_clip = grad_clip
         
         self.agent = ActiveInference(
-            state_dim, obs_dim, act_dim, ctl_dim, H,
+            state_dim, act_dim, obs_dim, ctl_dim, H,
             obs_dist, obs_cov, ctl_dist, ctl_cov
         )
         self.optimizers = [torch.optim.Adam(

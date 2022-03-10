@@ -7,7 +7,7 @@ from src.agents.planners import value_iteration
 
 class ActiveInference(nn.Module):
     def __init__(
-        self, state_dim, obs_dim, act_dim, ctl_dim, H, 
+        self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full"
         ):
         super(). __init__()
