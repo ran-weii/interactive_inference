@@ -33,13 +33,13 @@ class ActiveInference(nn.Module):
         }
         return theta
     
-    def forward(self, o, u, theta=None):
+    def forward(self, o, u, theta=None, inference=False):
         """
         Args:
             o (torch.tensor): observation sequence [T, batch_size, obs_dim]
             u (torch.tensor): control sequence [T, batch_size, ctl_dim]
-            mask (torch.tensor): sequence length mask [batch_size, T]
             theta (dict, optional): agent parameters dict. Defaults to None.
+            inference (bool, optional): whether in inference model. Defaults to False
             
         Returns:
             logp_pi (torch.tensor): predicted control likelihood [T, batch_size]
@@ -59,16 +59,19 @@ class ActiveInference(nn.Module):
         b[0] = torch.softmax(theta["D"], dim=-1) * torch.ones_like(logp_o[0])
         for t in range(T):
             b[t+1] = self.hmm(logp_o[t], p_a[t], b[t], B=theta["B"])
-        b = torch.stack(b)[1:]
+        b = torch.stack(b)
         
         # decode actions
         Q = self.plan(theta)
-        G = torch.sum(b.unsqueeze(-2) * Q.unsqueeze(0), dim=-1)
-        logp_a = torch.softmax(G, dim=-1)
-        logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
+        G = torch.sum(b[:-1].unsqueeze(-2) * Q.unsqueeze(0), dim=-1)
         
-        logp_obs = torch.sum(b * logp_o, dim=-1)
-        return logp_pi, logp_obs
+        if not inference:
+            logp_a = torch.softmax(G, dim=-1).log()
+            logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
+            logp_obs = torch.sum(b[1:] * logp_o, dim=-1)
+            return logp_pi, logp_obs
+        else:
+            return G, b
     
     def get_reward(self, theta):
         obs_entropy = self.obs_model.entropy(theta["A"]).unsqueeze(-2)
@@ -91,3 +94,25 @@ class ActiveInference(nn.Module):
         Q = torch.sum(h * Q, dim=-3)
         return Q
     
+    def choose_action(self, o, u, theta=None):
+        """ Choose action via Bayesian model averaging
+
+        Args:
+            o (torch.tensor): observation sequence [T, batch_size, obs_dim]
+            u (torch.tensor): control sequence [T, batch_size, ctl_dim]
+            theta (dict, optional): agent parameters dict. Defaults to None.
+
+        Returns:
+            u: predicted control [T, batch_size, ctl_dim]
+        """
+        G, b = self.forward(o, u, theta=theta, inference=True)
+        p_a = torch.softmax(G, dim=-1)
+        
+        # bayesian model averaging
+        if theta is None:
+            mu_u = self.ctl_model.mean()
+        else:
+            mu_u = self.ctl_model.mean(theta["F"])
+        
+        u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
+        return u
