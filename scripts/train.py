@@ -1,6 +1,8 @@
 import argparse
 import os
+import json
 import time
+import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,19 +11,13 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
-from src.data.agent_filter import get_car_following_episode
-from src.data.data_filter import get_relative_df, get_ego_centric_df
 from src.data.lanelet import load_lanelet_df
 from src.data.ego_dataset import RelativeDataset
-from src.agents.active_inference import ActiveInference
 from src.irl.algorithms import MLEIRL
 
 import warnings
 warnings.filterwarnings("ignore")
 
-""" TODO 
-implement data splitting and training modules
-"""
 def parse_args():
     bool_ = lambda x: x if isinstance(x, bool) else x == "True"
     
@@ -133,7 +129,7 @@ def main(arglist):
     ctl_dim = ctl.shape[-1]
     
     model = MLEIRL(
-        arglist.state_dim, obs_dim, arglist.act_dim, ctl_dim, arglist.horizon,
+        arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
         obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
         ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
         obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
@@ -161,8 +157,32 @@ def main(arglist):
     df_history = pd.DataFrame(history)
     
     fig_history, _ = plot_history(df_history)
-    plt.show()
     
+    # save results
+    if arglist.save:
+        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+        exp_path = os.path.join(arglist.save_path, "mleirl")
+        save_path = os.path.join(exp_path, date_time)
+        if not os.path.exists(exp_path):
+            os.mkdir(exp_path)
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        
+        # save args
+        with open(os.path.join(save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+        
+        # save model
+        torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
+        
+        # save history
+        df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
+        
+        # save history plot
+        fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
+        
+        print(f"\nmodel saved at: ./exp/mleirl/{date_time}")
+        
 
 if __name__ == "__main__":
     arglist = parse_args()
