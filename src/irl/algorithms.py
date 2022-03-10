@@ -1,10 +1,9 @@
+import numpy as np
+import pandas as pd
 import torch 
 import torch.nn as nn
 from src.agents.active_inference import ActiveInference
 
-""" TODO:
-implement loss function
-"""
 class MLEIRL(nn.Module):
     def __init__(self, state_dim, obs_dim, act_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
@@ -27,6 +26,7 @@ class MLEIRL(nn.Module):
         self.train()
         
         epoch_stats = []
+        num_samples = 0
         for i, batch in enumerate(loader):
             o, u, mask = batch
             out = self.agent(o, u)
@@ -40,7 +40,10 @@ class MLEIRL(nn.Module):
                 optimizer.zero_grad()
             
             epoch_stats.append(stats)
-        return epoch_stats
+            num_samples += o.shape[1]
+        
+        df_stats = pd.DataFrame(epoch_stats).mean()
+        return df_stats
     
     def test_epoch(self, loader):
         self.eval()
@@ -52,10 +55,36 @@ class MLEIRL(nn.Module):
                 out = self.agent(o, u)
                 loss, stats = self.loss(out, mask)
                 epoch_stats.append(stats)
-        return epoch_stats
+            
+        df_stats = pd.DataFrame(epoch_stats).mean()
+        return df_stats
     
     def loss(self, agent_out, mask):
-        return 
+        [logp_pi, logp_obs] = agent_out
+        
+        loss_pi = -torch.sum(mask * logp_pi)
+        loss_obs = -torch.sum(mask * logp_obs)
+        loss = loss_pi + self.obs_penalty * loss_obs
+        
+        # compute stats
+        nan_mask = mask.clone()
+        nan_mask[nan_mask == 0] = float("nan")
+        logp_pi_np = (nan_mask * logp_pi).data.numpy()
+        logp_obs_np = (nan_mask * logp_obs).data.numpy()
+        stats_dict = {
+            "loss": loss.data.numpy(),
+            "loss_pi": loss_pi.data.numpy(),
+            "loss_obs": loss_obs.data.numpy(),
+            "logp_pi_mean": np.nanmean(logp_pi_np),
+            "logp_pi_std": np.nanstd(logp_pi_np),
+            "logp_pi_min": np.nanmin(logp_pi_np),
+            "logp_pi_max": np.nanmax(logp_pi_np),
+            "logp_obs_mean": np.nanmean(logp_obs_np),
+            "logp_obs_std": np.nanstd(logp_obs_np),
+            "logp_obs_min": np.nanmin(logp_obs_np),
+            "logp_obs_max": np.nanmax(logp_obs_np),
+        }
+        return loss, stats_dict
     
 """ TODO: 
 implement init parameters similar to test_active_inference
