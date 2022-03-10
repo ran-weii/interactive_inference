@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from src.agents.active_inference import ActiveInference
-from src.evaluation.offline_metrics import mean_absolute_error
+from src.evaluation.offline_metrics import (
+    mean_absolute_error, threshold_relative_error)
 
 def test_active_inference_agent():
     torch.manual_seed(0)
@@ -82,9 +83,13 @@ def test_active_inference_agent():
             u.numpy(), ctl.numpy(), mask=mask.numpy(), 
             speed=obs[:, :, 0].numpy(), cumulative=False
         )
+        tre = threshold_relative_error(
+            u.numpy(), ctl.numpy(), mask=mask.numpy(), alpha=0.1
+        )
         
     assert list(ctl.shape) == [T, batch_size, ctl_dim]
     assert list(mae.shape) == [ctl_dim]
+    assert list(tre.shape) == [ctl_dim]
     
     # test with self parameters
     agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
@@ -95,9 +100,13 @@ def test_active_inference_agent():
             u.numpy(), ctl.numpy(), mask=mask.numpy(), 
             speed=obs[:, :, 0].numpy(), cumulative=False
         )
+        tre = threshold_relative_error(
+            u.numpy(), ctl.numpy(), mask=mask.numpy(), alpha=0.1
+        )
         
     assert list(ctl.shape) == [T, batch_size, ctl_dim]
     assert list(mae.shape) == [ctl_dim]
+    assert list(tre.shape) == [ctl_dim]
     
     print("test_active_inference_agent passed")
 
