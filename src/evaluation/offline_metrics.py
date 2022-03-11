@@ -6,7 +6,8 @@ def mean_absolute_error(true, pred, mask=None, speed=None, cumulative=False):
         true (np.array): true control [T, batch_size, ctl_dim]
         pred (np.array): true control [T, batch_size, ctl_dim]
         mask (np.array, optional): sequence mask [T, batch_size]. Defaults to None.
-        speed (np.array, optional): speed vecotr [T, batch_size]. Defaults to None.
+        speed (np.array, optional): speed vecotr [T, batch_size, speed_dim]. 
+            Defaults to None.
         cumulative (bool, optional): whether to accumulate along trajectory. 
             Defaults to False.
 
@@ -21,7 +22,7 @@ def mean_absolute_error(true, pred, mask=None, speed=None, cumulative=False):
         mae *= nan_mask
     
     if speed is not None:
-        mae *= np.expand_dims(np.abs(speed), axis=-1)
+        mae *= np.abs(speed)
         
     if cumulative:
         mae = np.nansum(mae, 0)
