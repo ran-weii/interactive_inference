@@ -1,4 +1,6 @@
 *.pyc
+doc/fig/*
 exp/*
+presentations/*
 interaction-dataset-master/*
 src.egg-info/*
