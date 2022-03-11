@@ -3,6 +3,7 @@ import torch.nn as nn
 from src.agents.active_inference import ActiveInference
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
+from src.visualization.inspection import get_active_inference_parameters
 
 def test_active_inference_agent():
     torch.manual_seed(0)
@@ -79,9 +80,11 @@ def test_active_inference_agent():
     with torch.no_grad():
         G, b = agent(obs, u, theta=theta, inference=True)
         ctl = agent.choose_action(obs, u, theta=theta)
+        
+        speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
             u.numpy(), ctl.numpy(), mask=mask.numpy(), 
-            speed=obs[:, :, 0].numpy(), cumulative=False
+            speed=speed, cumulative=False
         )
         tre = threshold_relative_error(
             u.numpy(), ctl.numpy(), mask=mask.numpy(), alpha=0.1
@@ -96,9 +99,11 @@ def test_active_inference_agent():
     with torch.no_grad():
         G, b = agent(obs, u, inference=False)
         ctl = agent.choose_action(obs, u)
+        
+        speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
             u.numpy(), ctl.numpy(), mask=mask.numpy(), 
-            speed=obs[:, :, 0].numpy(), cumulative=False
+            speed=speed, cumulative=False
         )
         tre = threshold_relative_error(
             u.numpy(), ctl.numpy(), mask=mask.numpy(), alpha=0.1
@@ -110,5 +115,31 @@ def test_active_inference_agent():
     
     print("test_active_inference_agent passed")
 
+""" TODO: get parameters in batch """
+def test_get_active_inference_parameters():
+    torch.manual_seed(0)
+    torch.autograd.set_detect_anomaly(True)
+    
+    state_dim = 10
+    obs_dim = 12
+    act_dim = 5
+    ctl_dim = 3
+    H = 15
+    
+    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
+    
+    theta_dict = get_active_inference_parameters(agent)
+    
+    assert list(theta_dict["A_mu"].shape) == [state_dim, obs_dim]
+    assert list(theta_dict["A_sd"].shape) == [state_dim, obs_dim]
+    assert list(theta_dict["B"].shape) == [act_dim, state_dim, state_dim]
+    assert list(theta_dict["C"].shape) == [state_dim]
+    assert list(theta_dict["D"].shape) == [state_dim]
+    assert list(theta_dict["F_mu"].shape) == [act_dim, ctl_dim]
+    assert list(theta_dict["F_sd"].shape) == [act_dim, ctl_dim]
+    
+    print("test_get_active_inference_parameters passed")
+
 if __name__ == "__main__":
     test_active_inference_agent()
+    test_get_active_inference_parameters()
