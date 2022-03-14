@@ -43,7 +43,7 @@ class ActiveInference(nn.Module):
             
         Returns:
             logp_pi (torch.tensor): predicted control likelihood [T, batch_size]
-            logp_pi (torch.tensor): predicted observation likelihood [T, batch_size]
+            logp_obs (torch.tensor): predicted observation likelihood [T, batch_size]
         """
         if theta is None:
             theta = self.get_default_parameters()
@@ -68,7 +68,9 @@ class ActiveInference(nn.Module):
         if not inference:
             logp_a = torch.softmax(G, dim=-1).log()
             logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
-            logp_obs = torch.sum(b[1:] * logp_o, dim=-1)
+            
+            logp_b = torch.log(b[1:] + 1e-6)
+            logp_obs = torch.logsumexp(logp_b * logp_o, dim=-1)
             return logp_pi, logp_obs
         else:
             return G, b
