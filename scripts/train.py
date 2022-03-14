@@ -1,4 +1,5 @@
 import argparse
+from cgi import test
 import os
 import json
 import time
@@ -118,7 +119,16 @@ def main(arglist):
     df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
-    dataset = RelativeDataset(df_track, df_lanelet, arglist.min_eps_len, arglist.max_eps_len)
+    # load test labels
+    merge_keys = ["scenario", "record_id", "track_id"]
+    df_train_labels = pd.read_csv(
+        os.path.join(arglist.data_path, "test_labels", arglist.scenario, arglist.filename)
+    )
+    
+    dataset = RelativeDataset(
+        df_track, df_lanelet, df_train_labels=df_train_labels,
+        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len
+    )
     train_loader, test_loader = train_test_split(
         dataset, arglist.train_ratio, arglist.batch_size, arglist.seed
     )
@@ -156,8 +166,6 @@ def main(arglist):
     
     df_history = pd.DataFrame(history)
     
-    fig_history, _ = plot_history(df_history)
-    
     # save results
     if arglist.save:
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
@@ -179,6 +187,7 @@ def main(arglist):
         df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
         
         # save history plot
+        fig_history, _ = plot_history(df_history)
         fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
         print(f"\nmodel saved at: ./exp/mleirl/{date_time}")
