@@ -14,18 +14,27 @@ identify neighor vehicle by region (front, front left/right, back, back left/rig
 class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
-        self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100,
+        self, df_track, df_lanelet, df_train_labels=None, min_eps_len=10, max_eps_len=100,
         max_dist=50., max_agents=10, car_following=True
         ):
         super().__init__()
         assert all(v in df_track.columns for v in ["track_id", "car_follow_eps"])
         if car_following:
             df_track = filter_car_follow_eps(df_track, min_eps_len)
-            unique_eps = df_track["eps_id"].unique()
-            self.unique_eps = unique_eps[unique_eps != -1]
         else:
             raise NotImplementedError
-            
+        
+        """ TODO: come up with a better solution to filter test set """
+        # filter test trajectories
+        if df_train_labels is not None:
+            merge_keys = ["scenario", "record_id", "track_id"]
+            df_track = df_track.merge(
+                df_train_labels, left_on=merge_keys, right_on=merge_keys, how="left"
+            )
+            df_track["eps_id"].loc[df_track["is_train"] == False] = -1
+        
+        unique_eps = df_track["eps_id"].unique()
+        self.unique_eps = unique_eps[unique_eps != -1]
         self.df_track = df_track.copy()
         self.df_lanelet = df_lanelet.copy()
         self.min_eps_len = min_eps_len
@@ -88,10 +97,12 @@ class EgoDataset(Dataset):
 
 class SimpleEgoDataset(EgoDataset):
     """ Dataset for lead vehicle following only """
-    def __init__(self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100, max_dist=50.):
+    def __init__(self, df_track, df_lanelet, df_train_labels=None, 
+                 min_eps_len=10, max_eps_len=100, max_dist=50.):
         super().__init__(
-            df_track, df_lanelet, min_eps_len, max_eps_len,
-            max_dist, max_agents=1, car_following=True
+            df_track, df_lanelet, df_train_labels=df_train_labels, 
+            min_eps_len=min_eps_len, max_eps_len=max_eps_len,
+            max_dist=max_dist, max_agents=1, car_following=True
         )
     
     def get_agent_obs(self, df_ego):
@@ -120,10 +131,12 @@ class SimpleEgoDataset(EgoDataset):
         return obs_agents
     
 class RelativeDataset(EgoDataset):
-    def __init__(self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100, max_dist=50.):
+    def __init__(self, df_track, df_lanelet, df_train_labels=None, 
+                 min_eps_len=10, max_eps_len=100, max_dist=50.):
         super().__init__(
-            df_track, df_lanelet, min_eps_len, max_eps_len,
-            max_dist, max_agents=1, car_following=True
+            df_track, df_lanelet, df_train_labels=df_train_labels, 
+            min_eps_len=min_eps_len, max_eps_len=max_eps_len,
+            max_dist=max_dist, max_agents=1, car_following=True
         )
         """ TODO: temporary data filtering solution """
         df_rel = get_relative_df(self.df_track, self.df_track["lead_track_id"])
