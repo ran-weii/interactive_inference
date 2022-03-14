@@ -53,7 +53,7 @@ class ExpertNetwork(nn.Module):
             ).log_prob(o.unsqueeze(-2)).sum(dim=-1)
             p_a = torch.softmax(log_b0 + logp_o, dim=-1)
             
-            logp_obs = torch.logsumexp(torch.log(pi + 1e-6) * logp_o, dim=-1)
+            logp_obs = torch.logsumexp(torch.log(p_a + 1e-6) * logp_o, dim=-1)
         else:
             p_a = torch.softmax(self.lin(o), dim=-1)
             logp_obs = torch.zeros_like(o.unsqueeze(-1))
