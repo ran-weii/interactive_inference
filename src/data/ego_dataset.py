@@ -24,13 +24,16 @@ class EgoDataset(Dataset):
         else:
             raise NotImplementedError
         
-        """ TODO: come up with a better solution to filter test set """
+        """ TODO: 
+        come up with a better solution to filter test set 
+        pd merge wierdly duplicate rows
+        """
         # filter test trajectories
         if df_train_labels is not None:
             merge_keys = ["scenario", "record_id", "track_id"]
             df_track = df_track.merge(
                 df_train_labels, left_on=merge_keys, right_on=merge_keys, how="left"
-            )
+            ).drop_duplicates(merge_keys + ["frame_id"], keep="last").reset_index(drop=True)
             df_track["eps_id"].loc[df_track["is_train"] == False] = -1
         
         unique_eps = df_track["eps_id"].unique()
