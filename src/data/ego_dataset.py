@@ -1,36 +1,20 @@
 from enum import unique
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data.dataset import Dataset
 from src.data.agent_filter import get_neighbor_vehicles
+from src.data.data_filter import (
+    filter_car_follow_eps, get_relative_df, get_ego_centric_df)
 
-def filter_car_follow_eps(df_track, min_eps_len):
-    """
-    Args:
-        df_track (pd.dataframe): track dataframe
-        min_eps_len (int): min episode length
+""" TODO: 
+identify neighor vehicle by region (front, front left/right, back, back left/right)
+"""
 
-    Returns:
-        df_track (pd.dataframe): track dataframe with filtered "eps_id" and "eps_len" fields
-    """
-    df_track["eps_label"] = df_track["scenario"] + '_' + df_track["record_id"].apply(str) + \
-        "_" + df_track["track_id"].apply(str) + "_" + df_track["car_follow_eps"].apply(str)
-    
-    df_eps_len = df_track.groupby("eps_label").size().reset_index()
-    df_eps_len.columns = ["eps_label", "eps_len"]
-    df_eps_len["eps_id"] = -1
-    is_valid_eps = df_eps_len["eps_len"] >= min_eps_len
-    df_eps_len["eps_id"].loc[is_valid_eps] = np.arange(0, sum(is_valid_eps))
-    
-    df_track = df_track.merge(df_eps_len, how="outer", on="eps_label")
-    df_track["eps_id"].loc[df_track["lead_track_id"].isna()] = -1
-    return df_track
-    
-    
 class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
-        self, df_track, df_lanelet, min_eps_len=10, 
+        self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100,
         max_dist=50., max_agents=10, car_following=True
         ):
         super().__init__()
@@ -45,6 +29,7 @@ class EgoDataset(Dataset):
         self.df_track = df_track.copy()
         self.df_lanelet = df_lanelet.copy()
         self.min_eps_len = min_eps_len
+        self.max_eps_len = max_eps_len
         self.max_dist = max_dist
         self.max_agents = max_agents
         
@@ -103,9 +88,9 @@ class EgoDataset(Dataset):
 
 class SimpleEgoDataset(EgoDataset):
     """ Dataset for lead vehicle following only """
-    def __init__(self, df_track, df_lanelet, min_eps_len=10, max_dist=50.):
+    def __init__(self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100, max_dist=50.):
         super().__init__(
-            df_track, df_lanelet, min_eps_len, 
+            df_track, df_lanelet, min_eps_len, max_eps_len,
             max_dist, max_agents=1, car_following=True
         )
     
@@ -133,3 +118,44 @@ class SimpleEgoDataset(EgoDataset):
         obs_agents = -1 * np.ones((T, self.max_agents, len(self.agent_fields)))
         obs_agents[:, 0, :] = df_agents[self.agent_fields].values
         return obs_agents
+    
+class RelativeDataset(EgoDataset):
+    def __init__(self, df_track, df_lanelet, min_eps_len=10, max_eps_len=100, max_dist=50.):
+        super().__init__(
+            df_track, df_lanelet, min_eps_len, max_eps_len,
+            max_dist, max_agents=1, car_following=True
+        )
+        """ TODO: temporary data filtering solution """
+        df_rel = get_relative_df(self.df_track, self.df_track["lead_track_id"])
+        df_ego = pd.concat([self.df_track, df_rel], axis=1)
+        self.df_track = get_ego_centric_df(df_ego)
+        self.df_track["loom_x"] = self.df_track["vx_rel"] / (self.df_track["x_rel"] + 1e-6)
+        
+        self.ego_fields = [
+            "vx_ego", "vy_ego", "lane_left_min_dist", "lane_right_min_dist", 
+            "x_rel_ego", "y_rel_ego", "vx_rel_ego", 
+            "vy_rel_ego", "psi_rad_rel", "loom_x"
+        ]
+        self.act_fields = ["ax_ego", "ay_ego"]
+        
+    def __getitem__(self, idx):
+        df_ego = self.df_track.loc[
+            self.df_track["eps_id"] == self.unique_eps[idx]
+        ].reset_index(drop=True)
+        
+        """ TODO: add seed to max length filtering """
+        if len(df_ego) > self.max_eps_len: 
+            sample_id = np.random.randint(0, len(df_ego) - self.max_eps_len)
+            df_ego = df_ego.iloc[sample_id:sample_id+self.max_eps_len]
+        
+        obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy()
+        obs_ego = df_ego[self.ego_fields].to_numpy()
+        act_ego = df_ego[self.act_fields].to_numpy()
+        out_dict = {
+            "meta": None,
+            "ego": torch.from_numpy(obs_ego).to(torch.float32),
+            "agents": None,
+            "act": torch.from_numpy(act_ego).to(torch.float32)
+        }
+        return out_dict
+        
