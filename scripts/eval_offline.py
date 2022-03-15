@@ -10,7 +10,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from src.data.lanelet import load_lanelet_df
 from src.data.ego_dataset import RelativeDataset
-from src.irl.algorithms import MLEIRL
+from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import (
@@ -30,10 +30,12 @@ def parse_args():
         "--lanelet_path", type=str, default="../exp/lanelet"
     )
     parser.add_argument(
-        "--exp_path", type=str, default="../exp/mleirl"
+        "--exp_path", type=str, default="../exp/"
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
+    parser.add_argument("--method", type=str, choices=["mleirl", "il"], 
+        default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -44,25 +46,6 @@ def collate_fn(batch):
     pad_act = pad_sequence([b["act"] for b in batch])
     mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
-
-def train_test_split(dataset, train_ratio, batch_size, seed):
-    gen = torch.Generator()
-    gen.manual_seed(seed)
-    
-    train_size = np.ceil(train_ratio * len(dataset)).astype(int)
-    test_size = len(dataset) - train_size
-    
-    train_set, test_set = random_split(
-        dataset, [train_size, test_size], generator=gen
-    )
-    
-    train_loader = DataLoader(
-        train_set, batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True
-    )
-    test_loader = DataLoader(
-        test_set, batch_size, shuffle=False, collate_fn=collate_fn, drop_last=False
-    )
-    return train_loader, test_loader
 
 def eval_epoch(agent, loader):
     agent.eval()
@@ -85,7 +68,7 @@ def eval_epoch(agent, loader):
     masks = torch.cat(masks, dim=1).data.numpy()
     
     # get speed
-    ego_fields = loader.dataset.dataset.ego_fields
+    ego_fields = loader.dataset.ego_fields
     id_speed = [i for i, f in enumerate(ego_fields) if f in ["vx_ego", "vy_ego"]]
     speed = np.take(obs, id_speed, axis=-1)
     
@@ -106,7 +89,7 @@ def eval_epoch(agent, loader):
     return out
 
 def main(arglist):
-    exp_path = os.path.join(arglist.exp_path, arglist.exp_name)
+    exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
     
     # load args
     with open(os.path.join(exp_path, "args.json"), "rb") as f:
@@ -127,29 +110,44 @@ def main(arglist):
     df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
-    dataset = RelativeDataset(df_track, df_lanelet, config["min_eps_len"], config["max_eps_len"])
-    train_loader, test_loader = train_test_split(
-        dataset, config["train_ratio"], config["batch_size"], seed=123
+    # load test labels
+    df_train_labels = pd.read_csv(
+        os.path.join(arglist.data_path, "test_labels", arglist.scenario, arglist.filename)
+    )
+    df_train_labels["is_train"] = ~df_train_labels["is_train"]
+    
+    dataset = RelativeDataset(df_track, df_lanelet, df_train_labels=df_train_labels, 
+        min_eps_len=config["min_eps_len"], max_eps_len=config["max_eps_len"]
+    )
+    test_loader = DataLoader(
+        dataset, config["batch_size"], shuffle=False, 
+        drop_last=False, collate_fn=collate_fn
     )
     
     # get dimensions from data 
-    [obs, ctl, mask] = next(iter(train_loader))
+    [obs, ctl, mask] = next(iter(test_loader))
     obs_dim = obs.shape[-1]
     ctl_dim = ctl.shape[-1]
     
     # load model
-    model = MLEIRL(
-        config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
-        obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
-        ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
-    )
+    if arglist.method == "mleirl":
+        model = MLEIRL(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
+        )
+    elif arglist.method == "il":
+        model = ImitationLearning(config["act_dim"], obs_dim, ctl_dim)
+    
     model.load_state_dict(state_dict)
     agent = model.agent
     
     metrics_dict = eval_epoch(agent, test_loader)
-    theta_dict = get_active_inference_parameters(agent)
-    fig_params, _ = plot_active_inference_parameters(theta_dict, cmap="inferno")
     
+    if arglist.method == "mleirl":
+        theta_dict = get_active_inference_parameters(agent)
+        fig_params, _ = plot_active_inference_parameters(theta_dict, cmap="inferno")
+
     # save results
     if arglist.save:
         save_path = os.path.join(exp_path, "eval_offline")
@@ -161,7 +159,8 @@ def main(arglist):
             json.dump(metrics_dict, f)
         
         # save figures
-        fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
+        if arglist.method == "mleirl":
+            fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
         
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
