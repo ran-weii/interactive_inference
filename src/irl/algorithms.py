@@ -7,8 +7,9 @@ from src.agents.baseline import ExpertNetwork
 
 class ImitationLearning(nn.Module):
     def __init__(self, act_dim, obs_dim, ctl_dim, 
-            lr=1e-3, decay=0, grad_clip=40):
+            obs_penalty=0, lr=1e-3, decay=0, grad_clip=40):
         super().__init__()
+        self.obs_penalty = obs_penalty
         self.lr = lr
         self.decay = decay
         self.grad_clip = grad_clip
