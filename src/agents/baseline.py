@@ -56,12 +56,12 @@ class ExpertNetwork(nn.Module):
             logp_obs = torch.logsumexp(torch.log(p_a + 1e-6) * logp_o, dim=-1)
         else:
             p_a = torch.softmax(self.lin(o), dim=-1)
-            logp_obs = torch.zeros_like(o.unsqueeze(-1))
+            logp_obs = torch.zeros_like(o[:, :, 0])
         
         # control
         if self.prod:
-            mu = torch.mean(p_a * self.mu.view(1, -1), dim=-1, keepdim=True)
-            lv = torch.mean(p_a * self.lv.view(1, -1), dim=-1, keepdim=True)
+            mu = p_a.matmul(self.mu.unsqueeze(0))
+            lv = p_a.matmul(self.lv.unsqueeze(0))
             logp_pi = torch.distributions.Normal(mu, lv.exp()).log_prob(u).sum(dim=-1)
         else:
             logp_a = torch.distributions.Normal(self.mu, self.lv.exp()).log_prob(u).sum(dim=-1)
@@ -82,9 +82,8 @@ class ExpertNetwork(nn.Module):
         Returns:
             u: predicted control [T, batch_size, ctl_dim]
         """
-        p_a = self.forward(o, u)
+        p_a = self.forward(o, u, inference=True)
         
         # bayesian model averaging
-        mu_u = self.mu
-        u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
+        u = p_a.matmul(self.mu.unsqueeze(0))
         return u
