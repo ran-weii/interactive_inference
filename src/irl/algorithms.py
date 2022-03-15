@@ -14,7 +14,7 @@ class ImitationLearning(nn.Module):
         self.decay = decay
         self.grad_clip = grad_clip
         self.agent = ExpertNetwork(
-            act_dim, obs_dim, ctl_dim, nb=False, prod=True
+            act_dim, obs_dim, ctl_dim, nb=True, prod=False
         )
         self.optimizers = [torch.optim.Adam(
             self.agent.parameters(), lr=lr, weight_decay=decay
