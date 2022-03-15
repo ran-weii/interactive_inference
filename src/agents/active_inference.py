@@ -70,7 +70,7 @@ class ActiveInference(nn.Module):
             logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
             
             logp_b = torch.log(b[1:] + 1e-6)
-            logp_obs = torch.logsumexp(logp_b * logp_o, dim=-1)
+            logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
             return logp_pi, logp_obs
         else:
             return G, b
