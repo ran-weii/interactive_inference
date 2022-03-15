@@ -5,15 +5,32 @@ from bokeh.plotting import figure, ColumnDataSource
 from bokeh.models import CustomJS, HoverTool, Slider
 from bokeh.layouts import column
 
-def get_speed_pointer_dict(x, y, vx, vy, psi_rad):
-    v_norm = np.sqrt(vx**2 + vy**2)
-    if vx < 0:
-        v_norm *= -1
+def get_vector_dict(x, y, vx, vy, psi_rad, global_coor=True):
+    """ Build two point vector dict centered at (x, y) with heading psi_rad
+    
+    Args:
+        x (float): vehicle x position
+        y (float): vehicle y position
+        vx (float): vector x value 
+        vy (float): vector y value 
+        psi_rad (float): vehicle heading
+        global_coor (bool, optional): vector in global coordinate
+
+    Returns:
+        out (dict): two point vector dict
+    """
     tan = np.tan(psi_rad)
-    out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
+    
+    if global_coor:
+        v_norm = np.sqrt(vx**2 + vy**2)
+        if vx < 0:
+            v_norm *= -1    
+        out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
+    else:
+        out = {"vx_psi": [x, x + vx], "vy_psi": [y, y + vy * tan]}
     return out
 
-def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
+def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_true=None, acc_pred=None):
     # build lanelet data source
     df_lanelet["color"] = [d["color"] for d in df_lanelet["vis_dict"]]
     df_lanelet["dash"] = [d["dashes"] if "dashes" in d.keys() else "solid" for d in df_lanelet["vis_dict"]]
@@ -32,12 +49,13 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
     frames = []
     for i in range(len(ego_data)):
         df_ego = pd.DataFrame(ego_data[i].reshape(1, -1), columns=ego_fields)
-        ego_speed_dict = get_speed_pointer_dict(
+        ego_speed_dict = get_vector_dict(
             df_ego["x"].iloc[0],
             df_ego["y"].iloc[0],
             df_ego["vx"].iloc[0],
             df_ego["vy"].iloc[0],
-            df_ego["psi_rad"].iloc[0]
+            df_ego["psi_rad"].iloc[0],
+            global_coor=True
         )
         
         agent_data = track_data["agents"][i]
@@ -51,9 +69,32 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields):
             "agents": ColumnDataSource(df_agent),
             "ego_speed": ColumnDataSource(data=ego_speed_dict)
         })
+        
+        """ TODO: come up with a better solution for adding action predictions """
+        if acc_true is not None:
+            acc_true_dict = get_vector_dict(
+                df_ego["x"].iloc[0],
+                df_ego["y"].iloc[0],
+                acc_true[i, 0],
+                acc_true[i, 1],
+                df_ego["psi_rad"].iloc[0],
+                global_coor=False
+            )
+            frames[i]["ego_acc_true"] = ColumnDataSource(data=acc_true_dict)
+            
+        if acc_pred is not None:
+            acc_pred_dict = get_vector_dict(
+                df_ego["x"].iloc[0],
+                df_ego["y"].iloc[0],
+                acc_pred[i, 0],
+                acc_pred[i, 1],
+                df_ego["psi_rad"].iloc[0],
+                global_coor=False
+            )
+            frames[i]["ego_acc_pred"] = ColumnDataSource(data=acc_pred_dict)
     return frames, lanelet_source
 
-def visualize_scene(frames, lanelet_source, plot_width=900):
+def visualize_scene(frames, lanelet_source, title="", plot_width=900):
     max_x, min_x = lanelet_source.data["max_x"].max() + 10, lanelet_source.data["min_x"].min() - 10
     max_y, min_y = lanelet_source.data["max_y"].max() + 10, lanelet_source.data["min_y"].min() - 10
     
