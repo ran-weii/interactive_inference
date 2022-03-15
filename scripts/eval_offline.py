@@ -3,18 +3,20 @@ import os
 import json
 import numpy as np
 import pandas as pd
+import bokeh
 
 import torch 
 from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
 from src.data.lanelet import load_lanelet_df
-from src.data.ego_dataset import RelativeDataset
+from src.data.ego_dataset import RelativeDataset, EgoDataset
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import (
     get_active_inference_parameters, plot_active_inference_parameters)
+from src.visualization.visualizer import build_bokeh_sources, visualize_scene
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -37,6 +39,7 @@ def parse_args():
     parser.add_argument("--method", type=str, choices=["mleirl", "il"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
@@ -89,6 +92,38 @@ def eval_epoch(agent, loader):
     out = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
     return out
 
+def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
+    """
+    Args:
+        dataset (torch.dataset): relative dataset
+        num_samples (int): number of episode samples per cluster
+        sample (bool, optional): sample randomly or take head. Defaults to False.
+        seed (int, optional): random seed. Defaults to 0.
+
+    Returns:
+        df_eps (pd.dataframe): dataframe with fields [cluster, eps_id, idx]
+    """
+    unique_clusters = dataset.df_track["cluster"].unique()
+    unique_clusters = unique_clusters[np.isnan(unique_clusters) == False]
+    
+    # get episode header
+    merge_keys = ["scenario", "record_id", "track_id"]
+    df_track_head = dataset.df_track.groupby(merge_keys).head(1)
+    df_track_head = df_track_head.loc[df_track_head["is_train"] == True]
+    
+    df_eps = df_track_head.dropna(subset=["cluster"]).groupby("cluster")
+    if sample:
+        df_eps = df_eps.sample(n=num_samples, random_state=seed)
+    else:
+        df_eps = df_eps.head(num_samples)
+    
+    eps_id = df_eps["eps_id"].values
+    idx = [np.where(dataset.unique_eps == i)[0][0] for i in eps_id]
+    
+    df_eps = df_eps[merge_keys + ["cluster", "eps_id"]].reset_index(drop=True)
+    df_eps = df_eps.assign(idx=idx)
+    return df_eps
+
 def main(arglist):
     exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
     
@@ -117,7 +152,8 @@ def main(arglist):
     )
     df_train_labels["is_train"] = ~df_train_labels["is_train"]
     
-    dataset = RelativeDataset(df_track, df_lanelet, df_train_labels=df_train_labels, 
+    dataset = RelativeDataset(
+        df_track, df_lanelet, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000
     )
     test_loader = DataLoader(
@@ -145,6 +181,26 @@ def main(arglist):
     
     metrics_dict = eval_epoch(agent, test_loader)
     
+    # plot sample test scenes
+    num_samples = 1
+    df_eps = sample_trajectory_by_cluster(
+        dataset, num_samples, sample=True, seed=arglist.seed
+    )
+    ego_dataset = EgoDataset(
+        df_track, df_lanelet, df_train_labels=df_train_labels, 
+        min_eps_len=config["min_eps_len"], max_eps_len=1000
+    )
+    scene_figs = []
+    for i in range(len(df_eps)):
+        idx = df_eps.iloc[i]["idx"]
+        track_data = ego_dataset[idx]
+        frames, lanelet_source = build_bokeh_sources(
+            track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields
+        )
+        fig = visualize_scene(frames, lanelet_source)
+        scene_figs.append(fig)
+    
+    # plot active inference parameters
     if arglist.method == "mleirl":
         theta_dict = get_active_inference_parameters(agent)
         fig_params, _ = plot_active_inference_parameters(theta_dict, cmap="inferno")
@@ -163,6 +219,9 @@ def main(arglist):
         if arglist.method == "mleirl":
             fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
         
+        for i, fig in enumerate(scene_figs):
+            bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
+            
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
             arglist.exp_name
