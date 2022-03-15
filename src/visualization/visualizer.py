@@ -19,15 +19,17 @@ def get_vector_dict(x, y, vx, vy, psi_rad, global_coor=True):
     Returns:
         out (dict): two point vector dict
     """
-    tan = np.tan(psi_rad)
+    v_norm = np.sqrt(vx**2 + vy**2)
     
     if global_coor:
-        v_norm = np.sqrt(vx**2 + vy**2)
+        tan = np.tan(psi_rad)
         if vx < 0:
             v_norm *= -1    
-        out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
     else:
-        out = {"vx_psi": [x, x + vx], "vy_psi": [y, y + vy * tan]}
+        psi_v = np.arctan2(vy, vx)
+        tan = np.tan(psi_rad + psi_v)
+    
+    out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
     return out
 
 def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_true=None, acc_pred=None):
@@ -158,7 +160,16 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
             x="vx_psi",
             y="vy_psi",
             line_width=3,
-            line_alpha=1,
+            line_alpha=0.6,
+            color="black",
+            source=frames[0]["ego_speed"],
+            legend_label="Ego speed"
+        )
+        f.line(
+            x="vx_psi",
+            y="vy_psi",
+            line_width=3,
+            line_alpha=0.6,
             color="red",
             source=frames[0]["ego_acc_true"],
             legend_label="Ego acc true"
@@ -167,7 +178,7 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
             x="vx_psi",
             y="vy_psi",
             line_width=3,
-            line_alpha=1,
+            line_alpha=0.6,
             color="green",
             source=frames[0]["ego_acc_pred"],
             legend_label="Ego acc pred"
@@ -176,6 +187,7 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
         js_string = """
         sources["ego"].data = frames[cb_obj.value]["ego"].data;
         sources["agents"].data = frames[cb_obj.value]["agents"].data;
+        sources["ego_speed"].data = frames[cb_obj.value]["ego_speed"].data;
         sources["ego_acc_true"].data = frames[cb_obj.value]["ego_acc_true"].data;
         sources["ego_acc_pred"].data = frames[cb_obj.value]["ego_acc_pred"].data;
         
@@ -187,8 +199,8 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
             x="vx_psi",
             y="vy_psi",
             line_width=3,
-            line_alpha=1,
-            color="red",
+            line_alpha=0.6,
+            color="black",
             source=frames[0]["ego_speed"],
             legend_label="Ego speed"
         )
