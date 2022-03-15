@@ -33,6 +33,7 @@ class ActiveInference(nn.Module):
         }
         return theta
     
+    """ TODO: add parameter flow control """
     def forward(self, o, u, theta=None, inference=False):
         """
         Args:
