@@ -90,7 +90,7 @@ def eval_epoch(agent, loader):
         u_true, u_pred, mask=masks, alpha=0.1
     ).tolist()
     out = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
-    return out
+    return out, u_true, u_pred
 
 def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     """
@@ -179,7 +179,7 @@ def main(arglist):
     model.load_state_dict(state_dict)
     agent = model.agent
     
-    metrics_dict = eval_epoch(agent, test_loader)
+    metrics_dict, u_true, u_pred = eval_epoch(agent, test_loader)
     
     # plot sample test scenes
     num_samples = 1
@@ -195,9 +195,14 @@ def main(arglist):
         idx = df_eps.iloc[i]["idx"]
         track_data = ego_dataset[idx]
         frames, lanelet_source = build_bokeh_sources(
-            track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields
+            track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields,
+            acc_true=u_true[:, idx], acc_pred=u_pred[:, idx]
         )
-        fig = visualize_scene(frames, lanelet_source)
+        track_id = df_eps.iloc[i]["track_id"]
+        cluster_id = df_eps.iloc[i]["cluster"]
+        fig = visualize_scene(
+            frames, lanelet_source, title=f"track_{track_id}_cluster_{cluster_id:.0f}"
+        )
         scene_figs.append(fig)
     
     # plot active inference parameters
