@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
     parser.add_argument("--method", type=str, choices=["mleirl", "il"], 
         default="active_inference", help="algorithm, default=mleirl")
+    parser.add_argument("--lateral_control", type=bool_, default=True, help="predict lateral control, default=True")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=100, help="max track length, default=200")
@@ -129,7 +130,8 @@ def main(arglist):
     
     dataset = RelativeDataset(
         df_track, df_lanelet, df_train_labels=df_train_labels,
-        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len
+        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
+        lateral_control=arglist.lateral_control
     )
     train_loader, test_loader = train_test_split(
         dataset, arglist.train_ratio, arglist.batch_size, arglist.seed
@@ -139,6 +141,8 @@ def main(arglist):
     [obs, ctl, mask] = next(iter(train_loader))
     obs_dim = obs.shape[-1]
     ctl_dim = ctl.shape[-1]
+    if not arglist.lateral_control:
+        ctl_dim = 1
     
     # init model
     if arglist.method == "mleirl":
@@ -155,6 +159,8 @@ def main(arglist):
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
+    
+    print(model)
     
     start_time = time.time()
     history = []

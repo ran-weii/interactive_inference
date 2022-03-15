@@ -135,7 +135,7 @@ class SimpleEgoDataset(EgoDataset):
     
 class RelativeDataset(EgoDataset):
     def __init__(self, df_track, df_lanelet, df_train_labels=None, 
-                 min_eps_len=10, max_eps_len=100, max_dist=50.):
+                 min_eps_len=10, max_eps_len=100, max_dist=50., lateral_control=True):
         super().__init__(
             df_track, df_lanelet, df_train_labels=df_train_labels, 
             min_eps_len=min_eps_len, max_eps_len=max_eps_len,
@@ -153,6 +153,10 @@ class RelativeDataset(EgoDataset):
             "vy_rel_ego", "psi_rad_rel", "loom_x"
         ]
         self.act_fields = ["ax_ego", "ay_ego"]
+        
+        """ TODO: temporary solution of feeding only longitudinal control """
+        if not lateral_control:
+            self.act_fields = ["ax_ego"]
         
     def __getitem__(self, idx):
         df_ego = self.df_track.loc[

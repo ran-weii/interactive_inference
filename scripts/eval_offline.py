@@ -71,6 +71,10 @@ def eval_epoch(agent, loader):
     obs = torch.cat(obs, dim=1).data.numpy()
     masks = torch.cat(masks, dim=1).data.numpy()
     
+    """ TODO: temporary solution for lateral control"""
+    u_true = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
+    u_pred = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
+    
     # get speed
     ego_fields = loader.dataset.ego_fields
     id_speed = [i for i, f in enumerate(ego_fields) if f in ["vx_ego", "vy_ego"]]
@@ -154,7 +158,8 @@ def main(arglist):
     
     dataset = RelativeDataset(
         df_track, df_lanelet, df_train_labels=df_train_labels, 
-        min_eps_len=config["min_eps_len"], max_eps_len=1000
+        min_eps_len=config["min_eps_len"], max_eps_len=1000,
+        lateral_control=config["lateral_control"]
     )
     test_loader = DataLoader(
         dataset, len(dataset), shuffle=False, 
