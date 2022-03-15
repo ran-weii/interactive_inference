@@ -62,6 +62,7 @@ def eval_epoch(agent, loader):
             obs.append(o)
             masks.append(mask)
     
+    """ TODO: add padding for batch evaluation """
     u_true = torch.cat(u_true, dim=1).data.numpy()
     u_pred = torch.cat(u_pred, dim=1).data.numpy()
     obs = torch.cat(obs, dim=1).data.numpy()
@@ -117,10 +118,10 @@ def main(arglist):
     df_train_labels["is_train"] = ~df_train_labels["is_train"]
     
     dataset = RelativeDataset(df_track, df_lanelet, df_train_labels=df_train_labels, 
-        min_eps_len=config["min_eps_len"], max_eps_len=config["max_eps_len"]
+        min_eps_len=config["min_eps_len"], max_eps_len=1000
     )
     test_loader = DataLoader(
-        dataset, config["batch_size"], shuffle=False, 
+        dataset, len(dataset), shuffle=False, 
         drop_last=False, collate_fn=collate_fn
     )
     
