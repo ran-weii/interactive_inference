@@ -75,8 +75,8 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_tr
             acc_true_dict = get_vector_dict(
                 df_ego["x"].iloc[0],
                 df_ego["y"].iloc[0],
-                acc_true[i, 0],
-                acc_true[i, 1],
+                acc_true[i, 0] * 100,
+                acc_true[i, 1] * 100,
                 df_ego["psi_rad"].iloc[0],
                 global_coor=False
             )
@@ -86,8 +86,8 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_tr
             acc_pred_dict = get_vector_dict(
                 df_ego["x"].iloc[0],
                 df_ego["y"].iloc[0],
-                acc_pred[i, 0],
-                acc_pred[i, 1],
+                acc_pred[i, 0] * 100,
+                acc_pred[i, 1] * 100,
                 df_ego["psi_rad"].iloc[0],
                 global_coor=False
             )
@@ -110,6 +110,7 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
     )
 
     f = figure(
+        title=title,
         plot_width=plot_width,
         aspect_ratio=((max_x - min_x) / (max_y - min_y)),
         x_range=(min_x, max_x),
@@ -152,24 +153,55 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
         source=frames[0]["agents"],
         name="agents"
     )
-    f.line(
-        x="vx_psi",
-        y="vy_psi",
-        line_width=3,
-        line_alpha=1,
-        color="red",
-        source=frames[0]["ego_speed"],
-        legend_label="Ego speed"
-    )
+    if "ego_acc_true" in list(frames[0].keys()):
+        f.line(
+            x="vx_psi",
+            y="vy_psi",
+            line_width=3,
+            line_alpha=1,
+            color="red",
+            source=frames[0]["ego_acc_true"],
+            legend_label="Ego acc true"
+        )
+        f.line(
+            x="vx_psi",
+            y="vy_psi",
+            line_width=3,
+            line_alpha=1,
+            color="green",
+            source=frames[0]["ego_acc_pred"],
+            legend_label="Ego acc pred"
+        )
+        
+        js_string = """
+        sources["ego"].data = frames[cb_obj.value]["ego"].data;
+        sources["agents"].data = frames[cb_obj.value]["agents"].data;
+        sources["ego_acc_true"].data = frames[cb_obj.value]["ego_acc_true"].data;
+        sources["ego_acc_pred"].data = frames[cb_obj.value]["ego_acc_pred"].data;
+        
+        sources["ego"].change.emit();
+        sources["agents"].change.emit();
+        """
+    else:
+        f.line(
+            x="vx_psi",
+            y="vy_psi",
+            line_width=3,
+            line_alpha=1,
+            color="red",
+            source=frames[0]["ego_speed"],
+            legend_label="Ego speed"
+        )
     
-    js_string = """
-    sources["ego"].data = frames[cb_obj.value]["ego"].data;
-    sources["agents"].data = frames[cb_obj.value]["agents"].data;
-    sources["ego_speed"].data = frames[cb_obj.value]["ego_speed"].data;
-    
-    sources["ego"].change.emit();
-    sources["agents"].change.emit();
-    """
+        js_string = """
+        sources["ego"].data = frames[cb_obj.value]["ego"].data;
+        sources["agents"].data = frames[cb_obj.value]["agents"].data;
+        sources["ego_speed"].data = frames[cb_obj.value]["ego_speed"].data;
+        
+        sources["ego"].change.emit();
+        sources["agents"].change.emit();
+        """
+        
     slider_callback = CustomJS(
         args=dict(figure=f, sources=frames[0], frames=frames), 
         code=js_string
