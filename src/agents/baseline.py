@@ -19,21 +19,27 @@ class ExpertNetwork(nn.Module):
         self.ctl_dim = ctl_dim
         
         self.lin = nn.Linear(obs_dim, act_dim)
-        self.mu = nn.Parameter(torch.randn(act_dim, ctl_dim), requires_grad=True)
-        self.lv = nn.Parameter(torch.randn(act_dim, ctl_dim), requires_grad=True)
+        self.mu = nn.Parameter(torch.randn(1, act_dim, ctl_dim), requires_grad=True)
+        self.lv = nn.Parameter(torch.randn(1, act_dim, ctl_dim), requires_grad=True)
         
         nn.init.xavier_normal_(self.mu, gain=1.)
         nn.init.xavier_normal_(self.lv, gain=1.)
         
         if self.nb:
             self.b0 = nn.Parameter(torch.randn(1, act_dim), requires_grad=True)
-            self.mu_o = nn.Parameter(torch.randn(act_dim, obs_dim), requires_grad=True)
-            self.lv_o = nn.Parameter(torch.randn(act_dim, obs_dim), requires_grad=True)
+            self.mu_o = nn.Parameter(torch.randn(1, act_dim, obs_dim), requires_grad=True)
+            self.lv_o = nn.Parameter(torch.randn(1, act_dim, obs_dim), requires_grad=True)
             
             nn.init.xavier_normal_(self.b0, gain=0.3)
             nn.init.xavier_normal_(self.mu_o, gain=1.)
             nn.init.xavier_normal_(self.lv_o, gain=1.)
-            
+    
+    def __repr__(self):
+        s = "{}(act_dim={}, naive_bayes={}, prod_experts={})".format(
+            self.__class__.__name__, self.act_dim, self.nb, self.prod
+        )
+        return s
+    
     def forward(self, o, u, inference=False):
         """
         Args:
@@ -49,11 +55,11 @@ class ExpertNetwork(nn.Module):
         if self.nb:
             log_b0 = torch.softmax(self.b0, dim=-1).log()
             logp_o = torch.distributions.Normal(
-                self.mu_o.unsqueeze(0), self.lv_o.exp().unsqueeze(0)
+                self.mu_o, self.lv_o.exp()
             ).log_prob(o.unsqueeze(-2)).sum(dim=-1)
             p_a = torch.softmax(log_b0 + logp_o, dim=-1)
             
-            logp_obs = torch.logsumexp(torch.log(p_a + 1e-6) * logp_o, dim=-1)
+            logp_obs = torch.logsumexp(torch.log(p_a + 1e-6) + logp_o, dim=-1)
         else:
             p_a = torch.softmax(self.lin(o), dim=-1)
             logp_obs = torch.zeros_like(o[:, :, 0])
@@ -64,8 +70,10 @@ class ExpertNetwork(nn.Module):
             lv = p_a.matmul(self.lv.unsqueeze(0))
             logp_pi = torch.distributions.Normal(mu, lv.exp()).log_prob(u).sum(dim=-1)
         else:
-            logp_a = torch.distributions.Normal(self.mu, self.lv.exp()).log_prob(u).sum(dim=-1)
-            logp_pi = torch.logsumexp(torch.log(p_a + 1e-6) * logp_a, dim=-1)
+            logp_a = torch.distributions.Normal(
+                self.mu, self.lv.exp()
+            ).log_prob(u.unsqueeze(-2)).sum(dim=-1)
+            logp_pi = torch.logsumexp(torch.log(p_a + 1e-6) + logp_a, dim=-1)
         
         if not inference:
             return logp_pi, logp_obs
@@ -85,5 +93,5 @@ class ExpertNetwork(nn.Module):
         p_a = self.forward(o, u, inference=True)
         
         # bayesian model averaging
-        u = p_a.matmul(self.mu.unsqueeze(0))
+        u = p_a.matmul(self.mu)
         return u
