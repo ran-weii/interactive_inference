@@ -70,31 +70,7 @@ def eval_epoch(agent, loader):
     u_pred = torch.cat(u_pred, dim=1).data.numpy()
     obs = torch.cat(obs, dim=1).data.numpy()
     masks = torch.cat(masks, dim=1).data.numpy()
-    
-    """ TODO: temporary solution for lateral control"""
-    u_true = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
-    u_pred = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
-    
-    # get speed
-    ego_fields = loader.dataset.ego_fields
-    id_speed = [i for i, f in enumerate(ego_fields) if f in ["vx_ego", "vy_ego"]]
-    speed = np.take(obs, id_speed, axis=-1)
-    
-    # compute offline metrics
-    mae = mean_absolute_error(
-        u_true, u_pred, mask=masks, speed=None, cumulative=False
-    ).tolist()
-    mae_s = mean_absolute_error(
-        u_true, u_pred, mask=masks, speed=speed, cumulative=False
-    ).tolist()
-    mae_sc = mean_absolute_error(
-        u_true, u_pred, mask=masks, speed=speed, cumulative=True
-    ).tolist()
-    tre = threshold_relative_error(
-        u_true, u_pred, mask=masks, alpha=0.1
-    ).tolist()
-    out = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
-    return out, u_true, u_pred
+    return u_true, u_pred, obs, masks
 
 def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     """
@@ -127,6 +103,32 @@ def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     df_eps = df_eps[merge_keys + ["cluster", "eps_id"]].reset_index(drop=True)
     df_eps = df_eps.assign(idx=idx)
     return df_eps
+
+""" TODO: temporary plotting solution """
+def plot_action_trajectory(u_true, u_pred, mask, title="", figsize=(8, 4)):
+    import matplotlib.pyplot as plt
+    
+    # mask actions
+    nan_mask = np.expand_dims(mask, axis=-1).copy()
+    nan_mask[nan_mask == 0] = float("nan")
+    u_true *= nan_mask
+    u_pred *= nan_mask
+    
+    n_rows = u_true.shape[-1]
+    fig, ax = plt.subplots(n_rows, 1, figsize=figsize, sharex=True)
+    if n_rows == 1:
+        ax = [ax]
+        
+    for i, x in enumerate(ax):
+        x.plot(u_true, label="true")
+        x.plot(u_pred, label="pred")
+        x.set_xlabel("time")
+        x.set_ylabel(f"u_{i}")
+    
+    ax[0].set_title(title)
+            
+    plt.tight_layout()
+    return fig, ax
 
 def main(arglist):
     exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
@@ -184,8 +186,33 @@ def main(arglist):
     model.load_state_dict(state_dict)
     agent = model.agent
     
-    metrics_dict, u_true, u_pred = eval_epoch(agent, test_loader)
+    u_true, u_pred, obs, masks = eval_epoch(agent, test_loader)
     
+    """ TODO: temporary solution for lateral control"""
+    if not config["lateral_control"]:
+        u_true_pad = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
+        u_pred_pad = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
+        
+    # get speed
+    ego_fields = test_loader.dataset.ego_fields
+    id_speed = [i for i, f in enumerate(ego_fields) if f in ["vx_ego", "vy_ego"]]
+    speed = np.take(obs, id_speed, axis=-1)
+    
+    # compute offline metrics
+    mae = mean_absolute_error(
+        u_true_pad, u_pred_pad, mask=masks, speed=None, cumulative=False
+    ).tolist()
+    mae_s = mean_absolute_error(
+        u_true_pad, u_pred_pad, mask=masks, speed=speed, cumulative=False
+    ).tolist()
+    mae_sc = mean_absolute_error(
+        u_true_pad, u_pred_pad, mask=masks, speed=speed, cumulative=True
+    ).tolist()
+    tre = threshold_relative_error(
+        u_true_pad, u_pred_pad, mask=masks, alpha=0.1
+    ).tolist()
+    metrics_dict = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
+        
     # plot sample test scenes
     num_samples = 1
     df_eps = sample_trajectory_by_cluster(
@@ -196,19 +223,24 @@ def main(arglist):
         min_eps_len=config["min_eps_len"], max_eps_len=1000
     )
     scene_figs = []
+    acc_figs = []
     for i in range(len(df_eps)):
         idx = df_eps.iloc[i]["idx"]
         track_data = ego_dataset[idx]
         frames, lanelet_source = build_bokeh_sources(
             track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields,
-            acc_true=u_true[:, idx], acc_pred=u_pred[:, idx]
+            acc_true=u_true_pad[:, idx], acc_pred=u_pred_pad[:, idx]
         )
         track_id = df_eps.iloc[i]["track_id"]
         cluster_id = df_eps.iloc[i]["cluster"]
-        fig = visualize_scene(
+        fig_scene = visualize_scene(
             frames, lanelet_source, title=f"track_{track_id}_cluster_{cluster_id:.0f}"
         )
-        scene_figs.append(fig)
+        fig_acc, ax = plot_action_trajectory(
+            u_true[:, idx], u_pred[:, idx], masks[:, idx], title=f"track_{track_id}_cluster_{cluster_id:.0f}"
+        )
+        scene_figs.append(fig_scene)
+        acc_figs.append(fig_acc)
     
     # plot active inference parameters
     if arglist.method == "mleirl":
@@ -231,6 +263,7 @@ def main(arglist):
         
         for i, fig in enumerate(scene_figs):
             bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
+            acc_figs[i].savefig(os.path.join(save_path, f"test_scene_{i}.png"), dpi=100)
             
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
