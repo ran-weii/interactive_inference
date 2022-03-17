@@ -124,6 +124,7 @@ def plot_action_trajectory(u_true, u_pred, mask, title="", figsize=(8, 4)):
         x.plot(u_pred, label="pred")
         x.set_xlabel("time")
         x.set_ylabel(f"u_{i}")
+        x.legend()
     
     ax[0].set_title(title)
             
