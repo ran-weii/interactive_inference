@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 
+from src.distributions.utils import poisson_pdf
+
 def get_active_inference_parameters(agent):
     """ 
     Args:
@@ -18,6 +20,7 @@ def get_active_inference_parameters(agent):
     D = torch.softmax(agent.hmm.D, dim=-1).data.squeeze(0)
     F_mu = agent.ctl_model.mean().data.squeeze(0)
     F_sd = torch.sqrt(agent.ctl_model.variance()).data.squeeze(0)
+    tau = poisson_pdf(agent.tau.exp(), agent.H).argmax().data
     
     theta = {
         "A_mu": A_mu.numpy(),
@@ -26,7 +29,9 @@ def get_active_inference_parameters(agent):
         "C": C.numpy(),
         "D": D.numpy(),
         "F_mu": F_mu.numpy(),
-        "F_sd": F_sd.numpy()
+        "F_sd": F_sd.numpy(),
+        "tau": tau.numpy()
+        
     }
     return theta
 
@@ -58,7 +63,7 @@ def plot_active_inference_parameters(theta, figsize=(15, 12), n_round=2, cmap="v
     ax[0, 0].set_ylabel("state")
     ax[0, 1].set_xlabel("A_sd")
     ax[0, 1].set_ylabel("state")
-    ax[0, 2].set_xlabel("C")
+    ax[0, 2].set_xlabel("C (tau = {})".format(theta["tau"] + 1))
     ax[0, 2].set_ylabel("state")
     ax[1, 0].set_xlabel("F_mu")
     ax[1, 0].set_ylabel("act")
