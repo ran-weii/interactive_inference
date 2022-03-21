@@ -35,9 +35,11 @@ class L2Polygon:
 class Lanelet:
     class Cell:
         """ Section of a lane, represented as a Shapely polygon, with a defined heading """
-        def __init__(self, polygon, heading):
+        def __init__(self, polygon, heading, left_bound, right_bound):
             self.polygon = polygon  # Shapely polygon
             self.heading = heading  # radians clockwise from y-axis
+            self.left_bound = left_bound
+            self.right_bound = right_bound
             
     def __init__(self, id_, subtype, region, location, one_way, 
         turn_direction, vehicle_participant, pedestrian_participant, 
@@ -104,12 +106,14 @@ class Lanelet:
             left_bound_linestr = LineString(self.left_bound.linestring.coords[::-1]) 
         
         # determine which linestring is longer
+        right_is_longer = True
         if right_bound_linestr.length > left_bound_linestr.length:
             longer_linestr = right_bound_linestr
             shorter_linestr = left_bound_linestr
         else:
             longer_linestr = left_bound_linestr
             shorter_linestr = right_bound_linestr
+            right_is_longer = False
         
         # interpolate shorter linestring by cell distance
         shorter_distances = np.arange(0, shorter_linestr.length, self.cell_distance)
@@ -120,12 +124,19 @@ class Lanelet:
             cell_coords = [(p.x, p.y) for p in [shorter_points[i], shorter_points[i+1], longer_points[i+1], longer_points[i]]]
             cell_polygon = Polygon(cell_coords).buffer(self.buffer_)
             
+            if right_is_longer:
+                cell_left_bound = LineString([shorter_points[i], shorter_points[i+1]])
+                cell_right_bound = LineString([longer_points[i], longer_points[i+1]])
+            else:
+                cell_left_bound = LineString([longer_points[i], longer_points[i+1]])
+                cell_right_bound = LineString([shorter_points[i], shorter_points[i+1]])
+                
             # compute cell heading
             delta_y = shorter_points[i+1].y - shorter_points[i].y
             delta_x = shorter_points[i+1].x - shorter_points[i].x
             cell_heading = np.arctan2(delta_y, delta_x)
             
-            cell = self.Cell(cell_polygon, cell_heading)
+            cell = self.Cell(cell_polygon, cell_heading, cell_left_bound, cell_right_bound)
             self._cells.append(cell)    
         return self._cells
 
