@@ -54,6 +54,15 @@ class MapData:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
     
+    def match(self, x, y):
+        p = Point(x, y)
+        
+        lane_id = None
+        for lane_id, lane in self.lanes.items():
+            if lane.polygon.contains(p):
+                break      
+        return lane_id
+    
     def plot(self, option="ways", figsize=(15, 6)):
         """
         Args:
@@ -78,8 +87,8 @@ class MapData:
         elif option == "cells":
             plot_lanelets(self, ax, plot_cells=True, fill=True, annot=True, alpha=0.4)
         elif option == "lanes":
-            plot_lanelets(self, ax, plot_cells=False, fill=False, annot=True, alpha=0.4)
-            plot_lanes(self, ax, alpha=0.4)
+            plot_lanelets(self, ax, plot_cells=False, fill=False, annot=False, alpha=0.4)
+            plot_lanes(self, ax, annot=True, alpha=0.4)
         return fig, ax
     
     def parse(self, filepath, verbose=False):
