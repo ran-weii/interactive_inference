@@ -4,7 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 from shapely.geometry import Point, LineString, Polygon
-from shapely.ops import unary_union
+from shapely.ops import unary_union, nearest_points
 from shapely import speedups
 speedups.disable()
 
@@ -55,13 +55,39 @@ class MapData:
         return self._cells
     
     def match(self, x, y):
+        """ Match point to map
+
+        Args:
+            x (float): target point x coordinate
+            y (float): target point y coordinate
+
+        Returns:
+            lane_id (int): matched lane id, Returns None if not matched
+            lanelet_id (int): matched lanelet id. Returns None if not matched
+            cell_id (int): matched cell id.Returns None if not matched
+            left_bound_dist (float): distance to cell left bound. Returns None if not matched
+            right_bound_dist (float): distance to cell right bound. Returns None if not matched
+        """
         p = Point(x, y)
         
+        matched = False
         lane_id = None
+        lanelet_id = None
+        cell_id = None
+        left_bound_dist = None
+        right_bound_dist = None
         for lane_id, lane in self.lanes.items():
             if lane.polygon.contains(p):
-                break      
-        return lane_id
+                for lanelet_id, lanelet in lane.lanelets.items():
+                    if lanelet.polygon.contains(p):
+                        for cell_id, cell in enumerate(lanelet.cells):
+                            if cell.polygon.contains(p):
+                                left_bound_dist = p.distance(cell.left_bound)
+                                right_bound_dist = p.distance(cell.right_bound)
+                                return lane_id, lanelet_id, cell_id, left_bound_dist, right_bound_dist
+        if not matched:
+            lane_id = None
+        return lane_id, lanelet_id, cell_id, left_bound_dist, right_bound_dist
     
     def plot(self, option="ways", figsize=(15, 6)):
         """
