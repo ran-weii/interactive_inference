@@ -1,4 +1,3 @@
-from platform import node
 import xml.etree.ElementTree as ET
 import networkx as nx
 

@@ -1,4 +1,4 @@
-import math
+import numpy as np
 from shapely.geometry import Point, LineString, Polygon
 
 class L2Point:
@@ -41,7 +41,7 @@ class Lanelet:
     def __init__(self, id_, subtype, region, location, one_way, 
         turn_direction, vehicle_participant, pedestrian_participant, 
         bicycle_participant, left_bound=None, right_bound=None, 
-        centerline=None, regulatory_elements=[], buffer_=0):
+        centerline=None, regulatory_elements=[], cell_distance=5., buffer_=0):
         self.id_ = id_
         self.subtype = subtype
         self.region = region
@@ -50,6 +50,7 @@ class Lanelet:
         self.turn_direction = turn_direction
         self.pedestrian_participant = pedestrian_participant
         self.regulatory_elements = regulatory_elements
+        self.cell_distance = cell_distance
         self.buffer_ = buffer_
         self.bicycle_participant = bicycle_participant
 
@@ -99,57 +100,35 @@ class Lanelet:
             return self._cells
 
         # reverse left bound if opposed
+        right_bound_linestr = self.right_bound.linestring
         left_bound_linestr = self.left_bound.linestring
         if self.has_opposing_linestrings():
             left_bound_linestr = LineString(self.left_bound.linestring.coords[::-1]) 
         
-        # determine linestring with more points		
-        num_right_pts = len(self.right_bound.linestring.coords)  
-        num_left_pts = len(self.left_bound.linestring.coords) 
-        right_has_more = False
-        if num_right_pts > num_left_pts:
-            right_has_more = True
-            more_pts_linestr = self.right_bound.linestring
-            less_pts_linestr = left_bound_linestr 
+        # determine which linestring is longer
+        if right_bound_linestr.length > left_bound_linestr.length:
+            longer_linestr = right_bound_linestr
+            shorter_linestr = left_bound_linestr
         else:
-            more_pts_linestr = left_bound_linestr
-            less_pts_linestr = self.right_bound.linestring
+            longer_linestr = left_bound_linestr
+            shorter_linestr = right_bound_linestr
         
-        less_first_pt = Point(less_pts_linestr.coords[0][0], less_pts_linestr.coords[0][1])  
-        less_second_pt = Point(less_pts_linestr.coords[1][0], less_pts_linestr.coords[1][1])  
-        less_last_pt = Point(less_pts_linestr.coords[-1][0], less_pts_linestr.coords[-1][1])  
-        
-        # connect points from linestring (with more points) to other linestring (that has less points)
-        more_pts_coords = more_pts_linestr.coords
-        for i in range(len(more_pts_coords) - 1):
-            curr_pt = Point(more_pts_coords[i][0], more_pts_coords[i][1])  # convert to Shapely point
-            next_pt = Point(more_pts_coords[i + 1][0], more_pts_coords[i + 1][1])  # to compute second bound and heading
-            
-            # compute closest point on other linestring
-            # endpoints guarantee other point is a coordinate of linestring
-            # middle points project to points that are not necessarily coordiantes of linestring
-            if i == 0:
-                bound_pt_1 = less_pts_linestr.interpolate(less_pts_linestr.project(next_pt))
-                bound_pt_2 = less_first_pt if next_pt.distance(less_first_pt) < next_pt.distance(less_last_pt) else less_last_pt
-            elif i == (len(more_pts_coords) - 1):
-                bound_pt_1 = less_first_pt if next_pt.distance(less_first_pt) < next_pt.distance(less_last_pt) else less_last_pt
-                bound_pt_2 = less_pts_linestr.interpolate(less_pts_linestr.project(curr_pt)) 
-            else:
-                bound_pt_1 = less_pts_linestr.interpolate(less_pts_linestr.project(next_pt))
-                bound_pt_2 = less_pts_linestr.interpolate(less_pts_linestr.project(curr_pt))
-            
-            cell_coords = [(p.x, p.y) for p in [curr_pt, next_pt, bound_pt_1, bound_pt_2]]
-            
+        # interpolate shorter linestring by cell distance
+        shorter_distances = np.arange(0, shorter_linestr.length, self.cell_distance)
+        shorter_points = [shorter_linestr.interpolate(d) for d in shorter_distances] + [shorter_linestr.boundary[1]]
+        longer_distances = [0] + [longer_linestr.project(p) for p in shorter_points[1:-1]]
+        longer_points = [longer_linestr.interpolate(d) for d in longer_distances] + [longer_linestr.boundary[1]]
+        for i in range(len(shorter_points) - 1):
+            cell_coords = [(p.x, p.y) for p in [shorter_points[i], shorter_points[i+1], longer_points[i+1], longer_points[i]]]
             cell_polygon = Polygon(cell_coords).buffer(self.buffer_)
-
-            # (assuming) can define heading based on lanelet's right bound
-            delta_x = next_pt.x - curr_pt.x if right_has_more else less_second_pt.x - less_first_pt.x
-            delta_y = next_pt.y - curr_pt.y if right_has_more else less_second_pt.y - less_first_pt.y
-            cell_heading = math.atan(delta_y / delta_x) + math.pi / 2 if delta_x else 0 # since headings in radians clockwise from y-axis
-
-            cell = self.Cell(cell_polygon, cell_heading)
-            self._cells.append(cell)
             
+            # compute cell heading
+            delta_y = shorter_points[i+1].y - shorter_points[i].y
+            delta_x = shorter_points[i+1].x - shorter_points[i].x
+            cell_heading = np.arctan2(delta_y, delta_x)
+            
+            cell = self.Cell(cell_polygon, cell_heading)
+            self._cells.append(cell)    
         return self._cells
 
 
