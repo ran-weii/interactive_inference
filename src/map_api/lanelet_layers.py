@@ -34,7 +34,7 @@ class L2Polygon:
             
 class Lanelet:
     class Cell:
-        ''' Section of a lane, represented as a Shapely polygon, with a defined heading '''
+        """ Section of a lane, represented as a Shapely polygon, with a defined heading """
         def __init__(self, polygon, heading):
             self.polygon = polygon  # Shapely polygon
             self.heading = heading  # radians clockwise from y-axis
@@ -49,21 +49,17 @@ class Lanelet:
         self.location = location
         self.one_way = one_way
         self.turn_direction = turn_direction
+        self.vehicle_participant = vehicle_participant
         self.pedestrian_participant = pedestrian_participant
+        self.bicycle_participant = bicycle_participant
         self.regulatory_elements = regulatory_elements
         self.cell_distance = cell_distance
         self.buffer_ = buffer_
-        self.bicycle_participant = bicycle_participant
 
         # L2Linestring
         self.left_bound = left_bound
         self.right_bound = right_bound
         self.centerline = centerline
-
-        # both left and right linestrings must point in the same direction
-        # used to handle inversion of linestring points order
-        self._flip_left = False
-        self._flip_right = False
 
         # calculated fields for property methods
         self._polygon = None
@@ -97,6 +93,7 @@ class Lanelet:
 
     @property
     def cells(self):
+        """ List of polygons with max distance of self.cell_distance """
         if self._cells:
             return self._cells
 
@@ -134,10 +131,8 @@ class Lanelet:
 
 
 class Lane:
-    def __init__(self, id_, lanelets, left_bound=None, right_bound=None):
+    def __init__(self, id_, lanelets):
         self.id = id_
-        self.left_bound = left_bound
-        self.right_bound = right_bound
         self.lanelets = {v.id_: v for v in lanelets}
         
         self._polygon = None
