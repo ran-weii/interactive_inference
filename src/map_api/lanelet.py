@@ -19,9 +19,10 @@ class MapData:
         self.lanelets = {}
         self.lanes = {} # concatenation of lanelets
         self.crosswalks = {}
-        self.areas = {}
-        self.regulatory_elements = {}
+        self.areas = {} # not implemented
+        self.regulatory_elements = {} # note implemented
         
+        # properties
         self._drivable_polygon = None
         self._cells = []
     
@@ -44,7 +45,7 @@ class MapData:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
     
-    def parse(self, filepath):
+    def parse(self, filepath, verbose=False):
         tree = ET.parse(filepath)
         root = tree.getroot()
         geo_projector = LL2XYProjector(0, 0)
@@ -72,51 +73,10 @@ class MapData:
         
         self._extract_lanes()
         
-    def _extract_lanes(self):    
-        def is_connected(lanelet1, lanelet2):
-            left_bound_linestring_1 = lanelet1.left_bound.linestring
-            left_bound_linestring_2 = lanelet2.left_bound.linestring
-            right_bound_linestring_1 = lanelet1.right_bound.linestring
-            right_bound_linestring_2 = lanelet2.right_bound.linestring
-            out = left_bound_linestring_1.intersects(left_bound_linestring_2)
-            out = out and right_bound_linestring_1.intersects(right_bound_linestring_2)
-            return out
-        
-        def add_all_edges(G):
-            node_list = list(G.nodes)
-            for i, (node1_id, node1_val) in enumerate(node_list):
-                for j, (node2_id, node2_val) in enumerate(node_list):
-                    if is_connected(node1_val, node2_val):
-                        G.add_edge(node_list[i], node_list[j])
-                        G.add_edge(node_list[j], node_list[i])
-            return G
-        
-        G = nx.Graph()
-        
-        # add all lanelets as nodes
-        for lanelet_id, lanelet in self.lanelets.items():
-            G.add_nodes_from([(lanelet_id, lanelet)])
-        
-        # add connected lanelets as edges     
-        G = add_all_edges(G)
-        
-        # add reachable lanelets as lanes
-        node_list = list(G.nodes)
-        counter = 0
-        while len(node_list) > 0:
-            curr_node = node_list[0]
-            connected_nodes = list(nx.descendants(G, curr_node))
-            connected_nodes.append(curr_node)
-            
-            lanelets = [n[1] for n in connected_nodes]
-            self.lanes[counter] = Lane(counter, lanelets)
-            
-            # remove all nodes found on the lane
-            for n_id in connected_nodes:
-                node_list.remove(n_id)
-            counter += 1        
-        
-        print(f"found {counter} lanes")
+        if verbose:
+            print("found {} points, {} ways, {} lanelets, {} lanes".format(
+                len(self.points), len(self.linestrings), len(self.lanelets), len(self.lanes)
+            ))
         
     def _extract_point(self, id_, lon, lat, type_, subtype, ele, x, y, geo_projector):
         x, y = geo_projector.latlon2xy(lat, lon)
@@ -167,50 +127,46 @@ class MapData:
         else:
             self.lanelets[id_] = lanelet
     
-    def _align_lanelets(self, align_range=0):
+    def _extract_lanes(self):    
+        def is_connected(lanelet1, lanelet2):
+            left_bound_linestring_1 = lanelet1.left_bound.linestring
+            left_bound_linestring_2 = lanelet2.left_bound.linestring
+            right_bound_linestring_1 = lanelet1.right_bound.linestring
+            right_bound_linestring_2 = lanelet2.right_bound.linestring
+            out = left_bound_linestring_1.intersects(left_bound_linestring_2)
+            out = out and right_bound_linestring_1.intersects(right_bound_linestring_2)
+            return out
+        
+        def add_all_edges(G):
+            node_list = list(G.nodes)
+            for i, (node1_id, node1_val) in enumerate(node_list):
+                for j, (node2_id, node2_val) in enumerate(node_list):
+                    if is_connected(node1_val, node2_val):
+                        G.add_edge(node_list[i], node_list[j])
+                        G.add_edge(node_list[j], node_list[i])
+            return G
+        
+        G = nx.Graph()
+        
+        # add all lanelets as nodes
+        for lanelet_id, lanelet in self.lanelets.items():
+            G.add_nodes_from([(lanelet_id, lanelet)])
+        
+        # add connected lanelets as edges     
+        G = add_all_edges(G)
+        
+        # add reachable lanelets as lanes
+        node_list = list(G.nodes)
         counter = 0
-        lanelets = [v for v in self.lanelets.values()]
-        for i in range(len(lanelets) - 1):
-            curr = lanelets[i]
-            curr_left = list(curr.left_bound.linestring.coords)
-            curr_right = list(curr.right_bound.linestring.coords)
-            curr_bound_pts = tuple(Point(coords) for coords in (curr_left[0], curr_left[-1], curr_right[0], curr_right[-1]))
+        while len(node_list) > 0:
+            curr_node = node_list[0]
+            connected_nodes = list(nx.descendants(G, curr_node))
+            connected_nodes.append(curr_node)
             
-            # print(curr_bound_pts)
-            for j in range(i + 1, len(lanelets)):
-                other = lanelets[j]
-                other_left = list(other.left_bound.linestring.coords)
-                other_right = list(other.right_bound.linestring.coords)
-                other_bound_pts = tuple(Point(coords) for coords in (other_left[0], other_left[-1], other_right[0], other_right[-1]))
-                
-                for u in range(len(curr_bound_pts)):
-                    curr_pt = curr_bound_pts[u]
-                    
-                    for k in range(len(other_bound_pts)):
-                        other_pt = other_bound_pts[k]
-                        dist = curr_pt.distance(other_pt)
-                        
-                        if dist <= align_range:
-                            counter += 1
-                            
-                            avg_x = (curr_pt.x + other_pt.x) / 2
-                            avg_y = (curr_pt.y + other_pt.y) / 2
-                            
-                            if u == 0 or u == 1: # replace left bound coordinates
-                                new_coords = curr_left
-                                new_coords[0 if u ==0 else -1] = (avg_x, avg_y)
-                                curr.right_bound.linestring = LineString(new_coords)
-                            else: # replace right bound coordinates
-                                new_coords = curr_right
-                                new_coords[0 if u == 2 else -1] = (avg_x, avg_y)
-                                curr.right_bound.linestring = LineString(new_coords)
-                            
-                            if k == 0 or k == 1: # replace left bound coordinates
-                                new_coords = other_left
-                                new_coords[0 if k == 0 else -1] = (avg_x, avg_y)
-                                other.left_bound.linestring = LineString(new_coords)
-                            else: # replace right bound coordinates
-                                new_coords = other_right
-                                new_coords[0 if k == 2 else -1] = (avg_x, avg_y)
-                                other.right_bound.linestring = LineString(new_coords)
-        print(f"{counter} points aligned")
+            lanelets = [n[1] for n in connected_nodes]
+            self.lanes[counter] = Lane(counter, lanelets)
+            
+            # remove all nodes found on the lane
+            for n_id in connected_nodes:
+                node_list.remove(n_id)
+            counter += 1        
