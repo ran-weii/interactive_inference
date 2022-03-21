@@ -98,8 +98,16 @@ def plot_lanelets(map_data, ax, plot_cells=False, fill=True, annot=False, alpha=
             )
     return ax
 
-def plot_lanes(map_data, ax, alpha=0.4):
-    for lane in map_data.lanes.values():
+def plot_lanes(map_data, ax, annot=True, alpha=0.4):
+    for lane_id, lane in map_data.lanes.items():
         polygon = lane.polygon
         ax.fill(*polygon.exterior.xy, alpha=alpha)
+        if annot:
+            for lanelet in lane.lanelets.values():
+                centroid_coords = list(lanelet.polygon.centroid.coords)[0]
+                ax.text(
+                    centroid_coords[0], 
+                    centroid_coords[1], 
+                    lane_id, size=8, 
+                )
     return ax
