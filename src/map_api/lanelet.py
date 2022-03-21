@@ -1,14 +1,18 @@
 import xml.etree.ElementTree as ET
+import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
 
 from shapely.geometry import Point, LineString, Polygon
-from shapely.ops import cascaded_union
+from shapely.ops import unary_union
 from shapely import speedups
 speedups.disable()
 
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
+from src.map_api.visualization import (set_visible_area, plot_points, 
+    plot_ways, plot_lanelets, plot_lanes)
 
 class MapData:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
@@ -32,7 +36,7 @@ class MapData:
             return self._drivable_polygon
         
         lanelet_polygons = [l.polygon for l in self.lanelets.values() if l.subtype != "crosswalk"]
-        self._drivable_polygon = cascaded_union(lanelet_polygons)
+        self._drivable_polygon = unary_union(lanelet_polygons)
         return self._drivable_polygon
     
     @property
@@ -44,6 +48,34 @@ class MapData:
             for cell in lanelet.cells:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
+    
+    def plot(self, option="ways", figsize=(15, 6)):
+        """
+        Args:
+            option (str, optional): plotting options, 
+                one of ["ways", "lanelets", "cells", "lanes"]. Defaults to "ways".
+            figsize (tuple, optional): figure size. Defaults to (15, 6).
+
+        Returns:
+            _type_: _description_
+        """
+        point_coords = np.array([(p.point.x, p.point.y) for p in self.points.values()])
+        min_coords = point_coords.min(axis=0)
+        max_coords = point_coords.max(axis=0)
+        
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        set_visible_area(min_coords[0], min_coords[1], max_coords[0], max_coords[1], ax)
+        
+        if option == "ways":
+            plot_ways(self, ax)
+        elif option == "lanelets":
+            plot_lanelets(self, ax, plot_cells=False, fill=True, annot=True, alpha=0.4)
+        elif option == "cells":
+            plot_lanelets(self, ax, plot_cells=True, fill=True, annot=True, alpha=0.4)
+        elif option == "lanes":
+            plot_lanelets(self, ax, plot_cells=False, fill=False, annot=True, alpha=0.4)
+            plot_lanes(self, ax, alpha=0.4)
+        return fig, ax
     
     def parse(self, filepath, verbose=False):
         tree = ET.parse(filepath)
