@@ -1,5 +1,6 @@
 import numpy as np
 from shapely.geometry import Point, LineString, Polygon
+from shapely.ops import unary_union
 
 class L2Point:
     def __init__(self, id_, metric_point, geo_point, type_, point_subtype):
@@ -138,3 +139,14 @@ class Lane:
         self.left_bound = left_bound
         self.right_bound = right_bound
         self.lanelets = {v.id_: v for v in lanelets}
+        
+        self._polygon = None
+    
+    @property
+    def polygon(self):
+        if self._polygon:
+            return self._polygon
+        
+        lanelet_polygons = [l.polygon for l in self.lanelets.values() if l.subtype != "crosswalk"]
+        self._polygon = unary_union(lanelet_polygons)
+        return self._polygon
