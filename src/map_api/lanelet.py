@@ -2,6 +2,7 @@ import xml.etree.ElementTree as ET
 import networkx as nx
 
 from shapely.geometry import Point, LineString, Polygon
+from shapely.ops import cascaded_union
 from shapely import speedups
 speedups.disable()
 
@@ -21,6 +22,28 @@ class MapData:
         self.areas = {}
         self.regulatory_elements = {}
         
+        self._drivable_polygon = None
+        self._cells = []
+    
+    @property
+    def drivable_polygon(self):
+        if self._drivable_polygon:
+            return self._drivable_polygon
+        
+        lanelet_polygons = [l.polygon for l in self.lanelets.values() if l.subtype != "crosswalk"]
+        self._drivable_polygon = cascaded_union(lanelet_polygons)
+        return self._drivable_polygon
+    
+    @property
+    def cells(self):
+        if self._cells:
+            return self._cells
+        
+        for lanelet in self.lanelets.values():
+            for cell in lanelet.cells:
+                self._cells.append((cell.polygon, cell.heading))
+        return self._cells
+    
     def parse(self, filepath):
         tree = ET.parse(filepath)
         root = tree.getroot()
