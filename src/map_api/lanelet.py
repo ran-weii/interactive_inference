@@ -16,7 +16,12 @@ from src.map_api.visualization import (set_visible_area, plot_points,
 
 class MapData:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
-    def __init__(self):
+    def __init__(self, cell_distance=5):
+        """
+        Args:
+            cell_distance (float, optional): distance of drivable cells. Defaults to 5.
+        """
+        self.cell_distance = cell_distance
         self.points = {}
         self.linestrings = {}
         self.polygons = {}
@@ -132,7 +137,8 @@ class MapData:
     def _extract_lanelet(self, id_, subtype, region, location, one_way, 
             turn_direction, vehicle, pedestrian, bicycle, relation):
         lanelet = Lanelet(id_, subtype, region, location, one_way, 
-            turn_direction, vehicle, pedestrian, bicycle)
+            turn_direction, vehicle, pedestrian, bicycle, 
+            cell_distance=self.cell_distance)
         
         for member in relation.iter("member"):
             member_role = member.get("role")
