@@ -3,7 +3,7 @@ import numpy as np
 import networkx as nx
 from shapely.geometry import Point, LineString, Polygon
 from shapely import ops
-from src.data.geometry import get_cardinal_direction
+from src.data.geometry import get_heading, get_cardinal_direction
 
 class L2Point:
     def __init__(self, id_, metric_point, geo_point, type_, point_subtype):
@@ -42,6 +42,17 @@ class Cell:
         self.heading = heading  # radians clockwise from y-axis
         self.left_bound = left_bound
         self.right_bound = right_bound
+        
+        left_bound_coords = list(left_bound.coords)
+        right_bound_coords = list(right_bound.coords)
+        self.left_bound_heading = get_heading(
+            left_bound_coords[0][0], left_bound_coords[0][1], 
+            left_bound_coords[1][0], left_bound_coords[1][1]
+        )
+        self.right_bound_heading = get_heading(
+            right_bound_coords[0][0], right_bound_coords[0][1], 
+            right_bound_coords[1][0], right_bound_coords[1][1]
+        )
 
        
 class Lanelet:
@@ -94,9 +105,9 @@ class Lanelet:
         right_tail1 = Point(right_bound_coords[1]) 
         
         # compute right bound vector (0 -> 1) heading and left_tail0 cardinal direction
-        delta_y = right_tail1.y - right_tail0.y
-        delta_x = right_tail1.x - right_tail0.x
-        right_heading = np.arctan2(delta_y, delta_x)
+        right_heading = get_heading(
+            right_tail0.x, right_tail0.y, right_tail1.x, right_tail1.y
+        )
         card = get_cardinal_direction(
             right_tail0.x, right_tail0.y, right_heading, left_tail0.x, left_tail0.y
         )
@@ -160,11 +171,11 @@ class Lanelet:
             else:
                 cell_left_bound = LineString([longer_points[i], longer_points[i+1]])
                 cell_right_bound = LineString([shorter_points[i], shorter_points[i+1]])
-                
-            # compute cell heading
-            delta_y = shorter_points[i+1].y - shorter_points[i].y
-            delta_x = shorter_points[i+1].x - shorter_points[i].x
-            cell_heading = np.arctan2(delta_y, delta_x)
+            
+            cell_heading = get_heading(
+                shorter_points[i].x, shorter_points[i].y, 
+                shorter_points[i+1].x, shorter_points[i+1].y
+            )
             
             cell = Cell(cell_polygon, cell_heading, cell_left_bound, cell_right_bound)
             self._cells.append(cell)    
@@ -227,11 +238,11 @@ class Lane:
             else:
                 cell_left_bound = LineString([longer_points[i], longer_points[i+1]])
                 cell_right_bound = LineString([shorter_points[i], shorter_points[i+1]])
-                
-            # compute cell heading
-            delta_y = shorter_points[i+1].y - shorter_points[i].y
-            delta_x = shorter_points[i+1].x - shorter_points[i].x
-            cell_heading = np.arctan2(delta_y, delta_x)
+            
+            cell_heading = get_heading(
+                shorter_points[i].x, shorter_points[i].y, 
+                shorter_points[i+1].x, shorter_points[i+1].y
+            )
             
             cell = Cell(cell_polygon, cell_heading, cell_left_bound, cell_right_bound)
             self._cells.append(cell)    
