@@ -103,7 +103,7 @@ def plot_lanes(map_data, ax, annot=True, alpha=0.4):
         polygon = lane.polygon
         ax.fill(*polygon.exterior.xy, alpha=alpha)
         if annot:
-            for lanelet in lane.lanelets.values():
+            for lanelet in lane.lanelets:
                 centroid_coords = list(lanelet.polygon.centroid.coords)[0]
                 ax.text(
                     centroid_coords[0], 

@@ -78,7 +78,8 @@ class MapData:
         right_bound_dist = None
         for lane_id, lane in self.lanes.items():
             if lane.polygon.contains(p):
-                for lanelet_id, lanelet in lane.lanelets.items():
+                for lanelet in lane.lanelets:
+                    lanelet_id = lanelet.id_
                     if lanelet.polygon.contains(p):
                         for cell_id, cell in enumerate(lanelet.cells):
                             if cell.polygon.contains(p):
@@ -195,6 +196,8 @@ class MapData:
                 raise ValueError(f"Unknown member role {member_role} in lanelet with id={id_}")
         
         assert lanelet.left_bound and lanelet.right_bound, f"Lanelet with id={id_} missing bound(s)"
+        lanelet._align_bounds()
+        
         if subtype == "crosswalk":
             self.crosswalks[id_] = lanelet
         else:
