@@ -213,23 +213,16 @@ class MapData:
             out = out and right_bound_linestring_1.intersects(right_bound_linestring_2)
             return out
         
-        def add_all_edges(G):
-            node_list = list(G.nodes)
-            for i, (node1_id, node1_val) in enumerate(node_list):
-                for j, (node2_id, node2_val) in enumerate(node_list):
-                    if is_connected(node1_val, node2_val):
-                        G.add_edge(node_list[i], node_list[j])
-                        G.add_edge(node_list[j], node_list[i])
-            return G
-        
+        # build lanelet graph
         G = nx.Graph()
-        
-        # add all lanelets as nodes
-        for lanelet_id, lanelet in self.lanelets.items():
-            G.add_nodes_from([(lanelet_id, lanelet)])
-        
-        # add connected lanelets as edges     
-        G = add_all_edges(G)
+        lanelets = list(self.lanelets.values())
+        for i in range(len(lanelets) - 1):
+            for j in range(1, len(lanelets)):
+                node1_id, node1_val = lanelets[i].id_, lanelets[i]
+                node2_id, node2_val = lanelets[j].id_, lanelets[j]
+                if is_connected(node1_val, node2_val):
+                        G.add_edge((node1_id, node1_val), (node2_id, node2_val))
+                        G.add_edge((node2_id, node2_val), (node1_id, node1_val))
         
         # add reachable lanelets as lanes
         node_list = list(G.nodes)
