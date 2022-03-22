@@ -4,7 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 from shapely.geometry import Point, LineString, Polygon
-from shapely.ops import unary_union, nearest_points
+from shapely.ops import unary_union
 from shapely import speedups
 speedups.disable()
 
