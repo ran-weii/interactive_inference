@@ -1,3 +1,4 @@
+from turtle import right
 import numpy as np
 import networkx as nx
 from shapely.geometry import Point, LineString, Polygon
@@ -86,6 +87,7 @@ class Lanelet:
         right_bound_coords = list(self.right_bound.linestring.coords)
         if self.has_opposing_linestrings():
             right_bound_coords.reverse()
+            self.right_bound.linestring = LineString(right_bound_coords)
             
         left_tail0 = Point(left_bound_coords[0]) 
         right_tail0 = Point(right_bound_coords[0]) 
@@ -98,13 +100,13 @@ class Lanelet:
         card = get_cardinal_direction(
             right_tail0.x, right_tail0.y, right_heading, left_tail0.x, left_tail0.y
         )
-           
+        
         if card < 0 and card >= -np.pi: # left_tail0 to the right of right bound vector
             left_bound_coords.reverse()
             right_bound_coords.reverse()
             self.left_bound.linestring = LineString(left_bound_coords)
             self.right_bound.linestring = LineString(right_bound_coords)
-    
+        
     @property
     def polygon(self):
         if self._polygon:
@@ -183,16 +185,6 @@ class Lane:
         self._cells = []
         self._align_lanelets()
     
-    def has_opposing_linestrings(self):
-        """ Determines if a lane's left and right bounds have opposing headings """
-        left_bound_coords = list(self.left_bound.linestring.coords)
-        right_bound_coords = list(self.right_bound.linestring.coords)
-
-        left_head = Point(left_bound_coords[-1])  # last point of the left bound 
-        right_tail = Point(right_bound_coords[0])  # first point of the right bound
-        right_head = Point(right_bound_coords[-1])  # last point of the right bound
-        return True if left_head.distance(right_head) > left_head.distance(right_tail) else False
-    
     @property
     def polygon(self):
         if self._polygon:
@@ -209,8 +201,6 @@ class Lane:
         
         left_bound_linestr = self.left_bound.linestring
         right_bound_linestr = self.right_bound.linestring
-        if self.has_opposing_linestrings():
-            left_bound_linestr = LineString(self.left_bound.linestring.coords[::-1]) 
         
         # determine which linestring is longer
         right_is_longer = True
@@ -278,6 +268,7 @@ class Lane:
                     G.add_edge((node_id1, node_value1), (node_id2, node_value2))
                 elif order == "child":
                     G.add_edge((node_id2, node_value2), (node_id1, node_value1))
+        
         sorted_nodes = nx.topological_sort(G)
         self.lanelets = [n[1] for n in sorted_nodes]
         
@@ -285,3 +276,4 @@ class Lane:
         right_bound_linestr = ops.linemerge([l.right_bound.linestring for l in self.lanelets])
         self.left_bound = L2Linestring(self.id_, left_bound_linestr, None, None)
         self.right_bound = L2Linestring(self.id_, right_bound_linestr, None, None)
+        
