@@ -112,9 +112,8 @@ class MapData:
         elif option == "lanelets":
             plot_lanelets(self, ax, plot_cells=False, fill=True, annot=True, alpha=0.4)
         elif option == "cells":
-            plot_lanelets(self, ax, plot_cells=True, fill=True, annot=True, alpha=0.4)
+            plot_lanes(self, ax, plot_cells=True, annot=True, alpha=0.4)
         elif option == "lanes":
-            plot_lanelets(self, ax, plot_cells=False, fill=False, annot=False, alpha=0.4)
             plot_lanes(self, ax, annot=True, alpha=0.4)
         return fig, ax
     
@@ -233,7 +232,7 @@ class MapData:
             connected_nodes.append(curr_node)
             
             lanelets = [n[1] for n in connected_nodes]
-            self.lanes[counter] = Lane(counter, lanelets)
+            self.lanes[counter] = Lane(counter, lanelets, cell_distance=self.cell_distance)
             
             # remove all nodes found on the lane
             for n_id in connected_nodes:

@@ -98,13 +98,23 @@ def plot_lanelets(map_data, ax, plot_cells=False, fill=True, annot=False, alpha=
             )
     return ax
 
-def plot_lanes(map_data, ax, annot=True, alpha=0.4):
+def plot_lanes(map_data, ax, plot_cells=False, annot=True, alpha=0.4):
     for lane_id, lane in map_data.lanes.items():
         polygon = lane.polygon
-        ax.fill(*polygon.exterior.xy, alpha=alpha)
+        left_bound_linestr = lane.left_bound.linestring
+        right_bound_linestr = lane.right_bound.linestring
+        ax.plot(*left_bound_linestr.xy, "k-")
+        ax.plot(*right_bound_linestr.xy, "k-")
+        
+        if not plot_cells:
+            ax.fill(*polygon.exterior.xy, alpha=alpha)
+        else:
+            for cell in lane.cells:
+                cell_polygon = cell.polygon
+                ax.fill(*cell_polygon.exterior.xy, alpha=alpha)
         if annot:
-            for lanelet in lane.lanelets:
-                centroid_coords = list(lanelet.polygon.centroid.coords)[0]
+            for cell in lane.cells[:1]:
+                centroid_coords = list(cell.polygon.centroid.coords)[0]
                 ax.text(
                     centroid_coords[0], 
                     centroid_coords[1], 
