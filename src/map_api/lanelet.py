@@ -72,23 +72,19 @@ class MapData:
         
         matched = False
         lane_id = None
-        lanelet_id = None
         cell_id = None
         left_bound_dist = None
         right_bound_dist = None
         for lane_id, lane in self.lanes.items():
             if lane.polygon.contains(p):
-                for lanelet in lane.lanelets:
-                    lanelet_id = lanelet.id_
-                    if lanelet.polygon.contains(p):
-                        for cell_id, cell in enumerate(lanelet.cells):
-                            if cell.polygon.contains(p):
-                                left_bound_dist = p.distance(cell.left_bound)
-                                right_bound_dist = p.distance(cell.right_bound)
-                                return lane_id, lanelet_id, cell_id, left_bound_dist, right_bound_dist
+                for cell_id, cell in enumerate(lane.cells):
+                    if cell.polygon.contains(p):
+                        left_bound_dist = p.distance(cell.left_bound)
+                        right_bound_dist = p.distance(cell.right_bound)
+                        return lane_id, cell_id, left_bound_dist, right_bound_dist
         if not matched:
             lane_id = None
-        return lane_id, lanelet_id, cell_id, left_bound_dist, right_bound_dist
+        return lane_id, cell_id, left_bound_dist, right_bound_dist
     
     def plot(self, option="ways", figsize=(15, 6)):
         """
