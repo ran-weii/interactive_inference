@@ -4,6 +4,12 @@ def dist_two_points(x1, y1, x2, y2):
     """ Two point distance formula """
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
 
+def get_heading(x1, y1, x2, y2):
+    """ Heading of vector (x1, y1) -> (x2, y2) """
+    delta_y = y2 - y1
+    delta_x = x2 - x1
+    return np.arctan2(delta_y, delta_x)
+
 def closest_point_on_line(x, y, x_line, y_line):
     """ Find the closest point (a, b) to an external point (x, y) on a line segement
     
