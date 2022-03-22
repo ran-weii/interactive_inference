@@ -1,6 +1,8 @@
 import numpy as np
+import networkx as nx
 from shapely.geometry import Point, LineString, Polygon
 from shapely.ops import unary_union
+from src.data.geometry import get_cardinal_direction
 
 class L2Point:
     def __init__(self, id_, metric_point, geo_point, type_, point_subtype):
@@ -76,7 +78,32 @@ class Lanelet:
         right_tail = Point(right_bound_coords[0])  # first point of the right bound
         right_head = Point(right_bound_coords[-1])  # last point of the right bound
         return True if left_head.distance(right_head) > left_head.distance(right_tail) else False
-
+    
+    def _align_bounds(self):
+        """ Sort left and right bound points in the heading direction """
+        left_bound_coords = list(self.left_bound.linestring.coords)
+        right_bound_coords = list(self.right_bound.linestring.coords)
+        if self.has_opposing_linestrings():
+            right_bound_coords.reverse()
+            
+        left_tail0 = Point(left_bound_coords[0]) 
+        right_tail0 = Point(right_bound_coords[0]) 
+        right_tail1 = Point(right_bound_coords[1]) 
+        
+        # compute right bound vector (0 -> 1) heading and left_tail0 cardinal direction
+        delta_y = right_tail1.y - right_tail0.y
+        delta_x = right_tail1.x - right_tail0.x
+        right_heading = np.arctan2(delta_y, delta_x)
+        card = get_cardinal_direction(
+            right_tail0.x, right_tail0.y, right_heading, left_tail0.x, left_tail0.y
+        )
+           
+        if card < 0 and card >= -np.pi: # left_tail0 to the right of right bound vector
+            left_bound_coords.reverse()
+            right_bound_coords.reverse()
+            self.left_bound.linestring = LineString(left_bound_coords)
+            self.right_bound.linestring = LineString(right_bound_coords)
+    
     @property
     def polygon(self):
         if self._polygon:
@@ -144,15 +171,50 @@ class Lanelet:
 class Lane:
     def __init__(self, id_, lanelets):
         self.id = id_
-        self.lanelets = {v.id_: v for v in lanelets}
+        self.lanelets = [l for l in lanelets]
         
         self._polygon = None
+        self._align_lanelets()
     
     @property
     def polygon(self):
         if self._polygon:
             return self._polygon
         
-        lanelet_polygons = [l.polygon for l in self.lanelets.values() if l.subtype != "crosswalk"]
+        lanelet_polygons = [l.polygon for l in self.lanelets if l.subtype != "crosswalk"]
         self._polygon = unary_union(lanelet_polygons)
         return self._polygon
+    
+    def _align_lanelets(self):
+        """ Sort lanelets by heading direction """
+        def get_order(node1, node2):
+            """ Return topological order between node1 and node2 """
+            left_bound_linestr1 = node1.left_bound.linestring
+            left_bound_linestr2 = node2.left_bound.linestring
+            pt = left_bound_linestr1.intersection(left_bound_linestr2)
+            if pt.is_empty:
+                return None
+            else:
+                left_bound_start_pt1 = left_bound_linestr1.boundary[0]
+                left_bound_end_pt1 = left_bound_linestr1.boundary[-1]
+                left_bound_start_pt2 = left_bound_linestr2.boundary[0]
+                left_bound_end_pt2 = left_bound_linestr2.boundary[-1]
+                if pt == left_bound_end_pt1 and pt == left_bound_start_pt2: # node1 -> node2
+                    return "parent"
+                elif pt == left_bound_start_pt1 and pt == left_bound_end_pt2: # node2 -> node1
+                    return "child"
+                else:
+                    return None
+        
+        G = nx.DiGraph()
+        for i in range(len(self.lanelets) - 1):
+            for j in range(i+1, len(self.lanelets)):
+                node_id1, node_value1 = self.lanelets[i].id_, self.lanelets[i]
+                node_id2, node_value2 = self.lanelets[j].id_, self.lanelets[j]
+                order =  get_order(node_value1, node_value2)
+                if order == "parent":
+                    G.add_edge((node_id1, node_value1), (node_id2, node_value2))
+                elif order == "child":
+                    G.add_edge((node_id2, node_value2), (node_id1, node_value1))
+        sorted_nodes = nx.topological_sort(G)
+        self.lanelets = [n[1] for n in sorted_nodes]
