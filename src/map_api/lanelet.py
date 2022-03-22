@@ -54,12 +54,13 @@ class MapData:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
     
-    def match(self, x, y):
+    def match(self, x, y, max_cells=5):
         """ Match point to map
 
         Args:
             x (float): target point x coordinate
             y (float): target point y coordinate
+            max_cells (int, optional): maximum number of cells adhead to return. default=5
 
         Returns:
             lane_id (int): matched lane id, Returns None if not matched
@@ -75,16 +76,25 @@ class MapData:
         cell_id = None
         left_bound_dist = None
         right_bound_dist = None
+        cell_headings = np.zeros((max_cells, 2)) 
         for lane_id, lane in self.lanes.items():
             if lane.polygon.contains(p):
+                num_cells = len(lane.cells)
                 for cell_id, cell in enumerate(lane.cells):
                     if cell.polygon.contains(p):
                         left_bound_dist = p.distance(cell.left_bound)
                         right_bound_dist = p.distance(cell.right_bound)
-                        return lane_id, cell_id, left_bound_dist, right_bound_dist
+                        
+                        # compute lookahead cell headings
+                        last_cell_id = min(num_cells, cell_id + max_cells)
+                        cell_headings[:last_cell_id - cell_id] += np.array(
+                            [[l.left_bound_heading, l.right_bound_heading] 
+                            for l in lane.cells[cell_id:last_cell_id]]
+                        )
+                        return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
         if not matched:
             lane_id = None
-        return lane_id, cell_id, left_bound_dist, right_bound_dist
+        return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
     
     def plot(self, option="ways", figsize=(15, 6)):
         """
