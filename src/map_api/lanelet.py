@@ -64,10 +64,11 @@ class MapData:
 
         Returns:
             lane_id (int): matched lane id, Returns None if not matched
-            lanelet_id (int): matched lanelet id. Returns None if not matched
             cell_id (int): matched cell id.Returns None if not matched
             left_bound_dist (float): distance to cell left bound. Returns None if not matched
             right_bound_dist (float): distance to cell right bound. Returns None if not matched
+            cell_headings (np.array): array of left and right lookahead cell headings [max_cells, 2]. 
+                nonpresent cells are filled with zeros.
         """
         p = Point(x, y)
         
