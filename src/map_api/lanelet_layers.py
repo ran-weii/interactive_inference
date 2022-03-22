@@ -58,7 +58,7 @@ class Lanelet:
     def __init__(self, id_, subtype, region, location, one_way, 
         turn_direction, vehicle_participant, pedestrian_participant, 
         bicycle_participant, left_bound=None, right_bound=None, 
-        centerline=None, regulatory_elements=[], cell_distance=5., buffer_=0):
+        centerline=None, regulatory_elements=[], cell_len=5., buffer_=0):
         self.id_ = id_
         self.subtype = subtype
         self.region = region
@@ -69,7 +69,7 @@ class Lanelet:
         self.pedestrian_participant = pedestrian_participant
         self.bicycle_participant = bicycle_participant
         self.regulatory_elements = regulatory_elements
-        self.cell_distance = cell_distance
+        self.cell_len = cell_len
         self.buffer_ = buffer_
 
         # L2Linestring
@@ -135,7 +135,7 @@ class Lanelet:
 
     @property
     def cells(self):
-        """ List of polygons with max distance of self.cell_distance """
+        """ List of polygons with max distance of self.cell_len """
         if self._cells:
             return self._cells
 
@@ -156,7 +156,7 @@ class Lanelet:
             right_is_longer = False
         
         # interpolate shorter linestring by cell distance
-        shorter_distances = np.arange(0, shorter_linestr.length, self.cell_distance)
+        shorter_distances = np.arange(0, shorter_linestr.length, self.cell_len)
         shorter_points = [shorter_linestr.interpolate(d) for d in shorter_distances] + [shorter_linestr.boundary[1]]
         longer_distances = [0] + [longer_linestr.project(p) for p in shorter_points[1:-1]]
         longer_points = [longer_linestr.interpolate(d) for d in longer_distances] + [longer_linestr.boundary[1]]
@@ -182,11 +182,11 @@ class Lanelet:
 
 
 class Lane:
-    def __init__(self, id_, lanelets, cell_distance=5.):
+    def __init__(self, id_, lanelets, cell_len=5.):
         self.id_ = id_
         self.lanelets = [l for l in lanelets]
         self.buffer_ = 0
-        self.cell_distance = cell_distance
+        self.cell_len = cell_len
         
         self.left_bound = None
         self.right_bound = None
@@ -223,7 +223,7 @@ class Lane:
             right_is_longer = False
         
         # interpolate shorter linestring by cell distance
-        shorter_distances = np.arange(0, shorter_linestr.length, self.cell_distance)
+        shorter_distances = np.arange(0, shorter_linestr.length, self.cell_len)
         shorter_points = [shorter_linestr.interpolate(d) for d in shorter_distances] + [shorter_linestr.boundary[-1]]
         longer_distances = [0] + [longer_linestr.project(p) for p in shorter_points[1:-1]]
         longer_points = [longer_linestr.interpolate(d) for d in longer_distances] + [longer_linestr.boundary[-1]]

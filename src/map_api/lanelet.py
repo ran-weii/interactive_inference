@@ -16,12 +16,12 @@ from src.map_api.visualization import (set_visible_area, plot_points,
 
 class MapData:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
-    def __init__(self, cell_distance=5):
+    def __init__(self, cell_len=5):
         """
         Args:
-            cell_distance (float, optional): distance of drivable cells. Defaults to 5.
+            cell_len (float, optional): length of drivable cells. Defaults to 5.
         """
-        self.cell_distance = cell_distance
+        self.cell_len = cell_len
         self.points = {}
         self.linestrings = {}
         self.polygons = {}
@@ -102,9 +102,6 @@ class MapData:
             option (str, optional): plotting options, 
                 one of ["ways", "lanelets", "cells", "lanes"]. Defaults to "ways".
             figsize (tuple, optional): figure size. Defaults to (15, 6).
-
-        Returns:
-            _type_: _description_
         """
         point_coords = np.array([(p.point.x, p.point.y) for p in self.points.values()])
         min_coords = point_coords.min(axis=0)
@@ -179,7 +176,7 @@ class MapData:
             turn_direction, vehicle, pedestrian, bicycle, relation):
         lanelet = Lanelet(id_, subtype, region, location, one_way, 
             turn_direction, vehicle, pedestrian, bicycle, 
-            cell_distance=self.cell_distance)
+            cell_len=self.cell_len)
         
         for member in relation.iter("member"):
             member_role = member.get("role")
@@ -238,7 +235,7 @@ class MapData:
             connected_nodes.append(curr_node)
             
             lanelets = [n[1] for n in connected_nodes]
-            self.lanes[counter] = Lane(counter, lanelets, cell_distance=self.cell_distance)
+            self.lanes[counter] = Lane(counter, lanelets, cell_len=self.cell_len)
             
             # remove all nodes found on the lane
             for n_id in connected_nodes:
