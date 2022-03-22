@@ -1,4 +1,3 @@
-from turtle import right
 import numpy as np
 import networkx as nx
 from shapely.geometry import Point, LineString, Polygon
