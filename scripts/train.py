@@ -1,5 +1,4 @@
 import argparse
-from cgi import test
 import os
 import json
 import time
@@ -14,7 +13,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from src.data.lanelet import load_lanelet_df
 from src.data.ego_dataset import RelativeDataset
-from src.irl.algorithms import MLEIRL, ImitationLearning
+from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -42,7 +41,7 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="diag", help="agent observation covariance, default=diag")
     parser.add_argument("--ctl_dist", type=str, default="mvn", help="agent control distribution, default=mvn")
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--lateral_control", type=bool_, default=True, help="predict lateral control, default=True")
     # training args
@@ -54,7 +53,7 @@ def parse_args():
     parser.add_argument("--obs_penalty", type=float, default=0, help="observation likelihood penalty, default=0")
     parser.add_argument("--lr", type=float, default=0.005, help="learning rate, default=1e-3")
     parser.add_argument("--decay", type=float, default=0, help="weight decay, default=0")
-    parser.add_argument("--grad_clip", type=float, default=40, help="gradient clipping, default=40")
+    parser.add_argument("--grad_clip", type=float, default=200, help="gradient clipping, default=200")
     parser.add_argument("--plot_history", type=bool_, default=True, help="plot em learning curve, default=True")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
@@ -153,12 +152,22 @@ def main(arglist):
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
+    elif arglist.method == "birl":
+        model = BayesianIRL(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
+            obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
+            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+            obs_penalty=arglist.obs_penalty, lr=arglist.lr,
+            decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
     elif arglist.method == "il":
         model = ImitationLearning(
             arglist.act_dim, obs_dim, ctl_dim, 
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
+    else:
+        raise NotImplementedError
     
     print(model)
     
