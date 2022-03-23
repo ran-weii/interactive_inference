@@ -30,9 +30,9 @@ class ImitationLearning(nn.Module):
             out = self.agent(o, u)
             loss, stats = self.loss(out, mask)
             
-            nn.utils.clip_grad_value_(self.parameters(), self.grad_clip)
-            
             loss.backward()
+            nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+            
             for optimizer in self.optimizers:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -113,9 +113,9 @@ class MLEIRL(nn.Module):
             out = self.agent(o, u)
             loss, stats = self.loss(out, mask)
             
-            nn.utils.clip_grad_value_(self.parameters(), self.grad_clip)
-            
             loss.backward()
+            nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+            
             for optimizer in self.optimizers:
                 optimizer.step()
                 optimizer.zero_grad()
