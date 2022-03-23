@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from src.distributions.models import (
@@ -67,7 +68,7 @@ class ActiveInference(nn.Module):
         G = torch.sum(b[:-1].unsqueeze(-2) * Q.unsqueeze(0), dim=-1)
         
         if not inference:
-            logp_a = torch.softmax(G, dim=-1).log()
+            logp_a = torch.log(torch.softmax(G, dim=-1) + 1e-6)
             logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
             
             logp_b = torch.log(b[1:] + 1e-6)
@@ -82,7 +83,7 @@ class ActiveInference(nn.Module):
         C = torch.softmax(theta["C"], dim=-1).unsqueeze(-2).unsqueeze(-2)
         B = self.hmm.transform_parameters(theta["B"])
         B = torch.softmax(B, dim=-1)
-        kl = torch.sum(B * B.log() - C.log(), dim=-1)
+        kl = torch.sum(B * torch.log(B + 1e-6) - torch.log(C + 1e-6), dim=-1)
         
         R = -kl - obs_entropy
         return R
@@ -91,7 +92,9 @@ class ActiveInference(nn.Module):
         R = self.get_reward(theta)
         B = self.hmm.transform_parameters(theta["B"])
         B = torch.softmax(B, dim=-1)
-        h = poisson_pdf(theta["tau"].exp(), self.H).unsqueeze(-1).unsqueeze(-1)
+        h = poisson_pdf(
+            theta["tau"].clip(math.log(1e-6), math.log(1e6)).exp(), self.H
+        ).unsqueeze(-1).unsqueeze(-1)
         
         Q = value_iteration(R, B, self.H)
         Q = torch.sum(h * Q, dim=-3)

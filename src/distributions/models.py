@@ -46,7 +46,7 @@ class HiddenMarkovModel(nn.Module):
             B = torch.softmax(self.B, dim=-1)
         
         B_a = torch.sum(B * a.unsqueeze(-1).unsqueeze(-1), dim=-3)
-        logp_s = torch.sum(b.unsqueeze(-1) * (B_a), dim=-2).log()
+        logp_s = torch.log(torch.sum(b.unsqueeze(-1) * (B_a), dim=-2) + 1e-6)
         b_t = torch.softmax(logp_o + logp_s, dim=-1)
         return b_t
     
