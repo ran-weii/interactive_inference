@@ -107,13 +107,13 @@ class ConditionalDistribution(nn.Module):
                 mu = mu.view(-1, self.z_dim, self.x_dim)
                 lv = lv.view(-1, self.z_dim, self.x_dim)
                 tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
-                sk = None
+                sk = torch.zeros(len(params), self.z_dim, self.x_dim)
             elif self.cov == "diag":
                 mu, lv = torch.split(params, self.parameter_size, dim=-1)
                 mu = mu.view(-1, self.z_dim, self.x_dim)
                 lv = lv.view(-1, self.z_dim, self.x_dim)
                 tl = torch.zeros(len(params), self.z_dim, self.x_dim, self.x_dim)
-                sk = None
+                sk = torch.zeros(len(params), self.z_dim, self.x_dim)
             else:
                 raise NotImplementedError
         elif self.dist == "mvsn":
