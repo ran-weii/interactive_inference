@@ -25,7 +25,7 @@ class ActiveInference(nn.Module):
         self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov)
         
         nn.init.xavier_normal_(self.C, gain=1.)
-        nn.init.xavier_normal_(self.tau, gain=1.)
+        nn.init.uniform_(self.tau, a=-1, b=1)
     
     def get_default_parameters(self):
         theta = {
