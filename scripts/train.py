@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument("--obs_penalty", type=float, default=0, help="observation likelihood penalty, default=0")
     parser.add_argument("--lr", type=float, default=0.005, help="learning rate, default=1e-3")
     parser.add_argument("--decay", type=float, default=0, help="weight decay, default=0")
-    parser.add_argument("--grad_clip", type=float, default=200, help="gradient clipping, default=200")
+    parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
     parser.add_argument("--plot_history", type=bool_, default=True, help="plot em learning curve, default=True")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
