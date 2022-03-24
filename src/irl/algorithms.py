@@ -7,7 +7,7 @@ from src.agents.baseline import ExpertNetwork
 
 class ImitationLearning(nn.Module):
     def __init__(self, act_dim, obs_dim, ctl_dim, 
-            obs_penalty=0, lr=1e-3, decay=0, grad_clip=40):
+            obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.obs_penalty = obs_penalty
         self.lr = lr
@@ -31,7 +31,8 @@ class ImitationLearning(nn.Module):
             loss, stats = self.loss(out, mask)
             
             loss.backward()
-            nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
             
             for optimizer in self.optimizers:
                 optimizer.step()
@@ -88,7 +89,7 @@ class ImitationLearning(nn.Module):
 class MLEIRL(nn.Module):
     def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
-        obs_penalty=0, lr=1e-3, decay=0, grad_clip=40):
+        obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.obs_penalty = obs_penalty
         self.lr = lr
@@ -113,22 +114,11 @@ class MLEIRL(nn.Module):
             out = self.agent(o, u)
             loss, stats = self.loss(out, mask)
             
-            # if torch.isnan(loss):
-            #     raise ValueError("nan in loss")
-            
             loss.backward()
-            nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
-            
-            # # nan gradient handle
-            # num_nan = 0
-            # for n, p in self.named_parameters():
-            #     if p.grad is not None:
-            #         num_nan += torch.isnan(p.grad.data).sum()
-            # if num_nan > 0:
-            #     print(f"{num_nan} nan in grad")
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 
             for optimizer in self.optimizers:
-                # if num_nan == 0:
                 optimizer.step()
                 optimizer.zero_grad()
             
@@ -184,7 +174,7 @@ class MLEIRL(nn.Module):
 class BayesianIRL(MLEIRL):
     def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
-        obs_penalty=0, lr=1e-3, decay=0, grad_clip=40):
+        obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__(state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist, obs_cov, ctl_dist, ctl_cov,
         obs_penalty, lr, decay, grad_clip)
@@ -217,12 +207,22 @@ class BayesianIRL(MLEIRL):
         self.tau_mu = nn.Parameter(torch.randn(tau_size), requires_grad=True)
         self.tau_lv = nn.Parameter(torch.randn(tau_size), requires_grad=True)
         
-        nn.init.normal_(self.A_lv, mean=0, std=1)
-        nn.init.normal_(self.B_lv, mean=0, std=1)
-        nn.init.normal_(self.C_lv, mean=0, std=1)
-        nn.init.normal_(self.D_lv, mean=0, std=1)
-        nn.init.normal_(self.F_lv, mean=0, std=1)
-        nn.init.normal_(self.tau_lv, mean=0, std=1)
+        mu_init_std = -np.log(0.3)
+        lv_init_mean = np.log(0.3)
+        lv_init_std = 0.1
+        nn.init.uniform_(self.A_mu, a=-mu_init_std, b=mu_init_std)
+        nn.init.uniform_(self.B_mu, a=-mu_init_std, b=mu_init_std)
+        nn.init.uniform_(self.C_mu, a=-mu_init_std, b=mu_init_std)
+        nn.init.uniform_(self.D_mu, a=-mu_init_std, b=mu_init_std)
+        nn.init.uniform_(self.F_mu, a=-mu_init_std, b=mu_init_std)
+        nn.init.uniform_(self.tau_mu, a=-mu_init_std, b=mu_init_std)
+        
+        nn.init.normal_(self.A_lv, mean=lv_init_mean, std=lv_init_std)
+        nn.init.normal_(self.B_lv, mean=lv_init_mean, std=lv_init_std)
+        nn.init.normal_(self.C_lv, mean=lv_init_mean, std=lv_init_std)
+        nn.init.normal_(self.D_lv, mean=lv_init_mean, std=lv_init_std)
+        nn.init.normal_(self.F_lv, mean=lv_init_mean, std=lv_init_std)
+        nn.init.normal_(self.tau_lv, mean=lv_init_mean, std=lv_init_std)
     
     def load_map_parameters(self):
         """ Load MAP parameters to agent """
@@ -256,8 +256,9 @@ class BayesianIRL(MLEIRL):
             loss, stats = self.loss(out, mask)
             
             loss.backward()
-            nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
-                
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+            
             for optimizer in self.optimizers:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -291,7 +292,7 @@ class BayesianIRL(MLEIRL):
         lv = torch.cat(
             [self.A_lv, self.B_lv, self.C_lv, self.D_lv, self.F_lv, self.tau_lv], dim=-1
         )
-        cov = torch.diag_embed(lv.exp())
+        cov = torch.diag_embed(lv.clip(np.log(1e-6), np.log(1e6)).exp())
         
         theta = torch.distributions.MultivariateNormal(mu, cov).rsample((batch_size,))
         theta = torch.split(theta, self.parameter_size, dim=-1)
@@ -305,7 +306,7 @@ class BayesianIRL(MLEIRL):
         lv = torch.cat(
             [self.A_lv, self.B_lv, self.C_lv, self.D_lv, self.F_lv, self.tau_lv], dim=-1
         )
-        cov = torch.diag_embed(lv.exp())
+        cov = torch.diag_embed(lv.clip(np.log(1e-6), np.log(1e6)).exp())
         ent = torch.distributions.MultivariateNormal(mu, cov).entropy()
         return ent
     
