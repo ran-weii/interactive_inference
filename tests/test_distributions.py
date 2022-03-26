@@ -1,6 +1,6 @@
-from pyro import param
 import torch
 from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
+from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import poisson_pdf
 
 """ TODO: finish all test cases """
@@ -110,8 +110,66 @@ def test_poisson_pdf():
     assert torch.all(torch.isclose(pdf.sum(-1), torch.ones(1)))
     
     print("test_poisson_pdf passed")
+
+def test_batch_norm_flow():
+    torch.manual_seed(0)
+    
+    # created transformed distributions
+    x_dim = 10
+    mean = torch.zeros(x_dim)
+    variance = torch.ones(x_dim)
+    cov = torch.diag_embed(variance)
+    base_distribution = torch.distributions.MultivariateNormal(mean, cov)
+    
+    a = torch.randn(x_dim) # loc
+    b = torch.exp(0.5 * torch.randn(x_dim)) # scale
+    cov_transformed = torch.diag_embed(b**2)
+    transformed_distribution = torch.distributions.MultivariateNormal(a, cov_transformed)
+    log_abs_det_jacobian = torch.abs(torch.log(b).sum())
+    
+    # generate synthetic samples
+    batch_size = 128
+    samples = torch.randn(batch_size, x_dim)
+    transformed_samples = a + b * samples
+    log_probs = base_distribution.log_prob(samples)
+    log_probs_transformed = transformed_distribution.log_prob(transformed_samples)
+    log_probs_diff = log_probs_transformed - (log_probs + log_abs_det_jacobian)
+    
+    assert torch.all(log_probs_diff < 1e-5) # verify change of variable formula
+    
+    # get empirical means and variance
+    mu = torch.mean(transformed_samples, dim=0)
+    sd = torch.std(transformed_samples, dim=0)
+    cov_empirical = torch.diag_embed(sd**2)
+    normalized_samples = (transformed_samples - mu) / sd
+    
+    empirical_distribution = torch.distributions.MultivariateNormal(mu, cov_empirical)
+    log_probs_base = base_distribution.log_prob(normalized_samples)
+    log_probs_empirical = empirical_distribution.log_prob(transformed_samples)
+    log_abs_det_jacobian_empirical = torch.abs(torch.log(sd).sum())
+    log_probs_diff_empirical = log_probs_empirical - (log_probs_base + log_abs_det_jacobian_empirical)
+    assert torch.all(log_probs_diff_empirical < 1e-5) # verify change of variable formula
+    
+    # init flow
+    bn_flow = BatchNormTransform(x_dim, momentum=1) # give all weights to new mean and var
+    bn_flow.gamma.requires_grad = False
+    bn_flow.beta.requires_grad = False
+    
+    composed_distribution = SimpleTransformedModule(base_distribution, [bn_flow])
+    log_probs_flow = composed_distribution.log_prob(transformed_samples)
+    log_probs_diff_flow = log_probs_flow - log_probs_empirical
+    assert torch.all(log_probs_diff_flow < 1e-3)
+    
+    mean_flow = composed_distribution.mean
+    variance_flow = composed_distribution.variance
+    entropy_flow = composed_distribution.entropy()
+    assert torch.all(mean_flow == empirical_distribution.mean)
+    assert torch.all((variance_flow - empirical_distribution.variance) < 1e-5)
+    assert entropy_flow - empirical_distribution.entropy() < 1e-5
+    print("test_batch_norm_flow passed")
     
 if __name__ == "__main__":
     test_conditional_distribution()
     test_hidden_markov_model()
     test_poisson_pdf()
+    test_batch_norm_flow()
