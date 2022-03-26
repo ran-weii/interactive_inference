@@ -128,18 +128,19 @@ def test_batch_norm_flow():
     log_abs_det_jacobian = torch.abs(torch.log(b).sum())
     
     # generate synthetic samples
+    T = 32
     batch_size = 128
-    samples = torch.randn(batch_size, x_dim)
+    samples = torch.randn(T, batch_size, x_dim)
     transformed_samples = a + b * samples
     log_probs = base_distribution.log_prob(samples)
     log_probs_transformed = transformed_distribution.log_prob(transformed_samples)
     log_probs_diff = log_probs_transformed - (log_probs + log_abs_det_jacobian)
-    
     assert torch.all(log_probs_diff < 1e-5) # verify change of variable formula
     
     # get empirical means and variance
-    mu = torch.mean(transformed_samples, dim=0)
-    sd = torch.std(transformed_samples, dim=0)
+    op_dims = [0, 1]
+    mu = torch.mean(transformed_samples, dim=op_dims)
+    sd = torch.std(transformed_samples, dim=op_dims)
     cov_empirical = torch.diag_embed(sd**2)
     normalized_samples = (transformed_samples - mu) / sd
     
