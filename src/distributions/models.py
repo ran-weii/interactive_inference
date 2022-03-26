@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
+import pyro.distributions as pyro_dist
 from torch.distributions import MultivariateNormal
 from src.distributions.distributions import MultivariateSkewNormal
 from src.distributions.utils import make_covariance_matrix
+from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 
 class HiddenMarkovModel(nn.Module):
     def __init__(self, state_dim, act_dim):
@@ -52,13 +54,14 @@ class HiddenMarkovModel(nn.Module):
     
     
 class ConditionalDistribution(nn.Module):
-    def __init__(self, x_dim, z_dim, dist="mvn", cov="full"):
+    def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=False):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
             dist (str): distribution type ["mvn", "mvsn"]
             cov (str): covariance type ["diag", "full"]
+            batch_norm (bool, optional): use input batch normalization. default=True
         """
         super().__init__()
         assert dist in ["mvn", "mvsn"]
@@ -73,6 +76,7 @@ class ConditionalDistribution(nn.Module):
             z_dim * x_dim * x_dim,
             z_dim * x_dim
         ]
+        self.batch_norm = batch_norm
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
@@ -88,12 +92,19 @@ class ConditionalDistribution(nn.Module):
             nn.init.constant_(self.sk, 0)
             self.sk.requires_grad = False
             self.parameter_size = self.parameter_size[:-1]
+            self.sk.data = torch.zeros_like(self.sk.data)
         
         if cov == "diag":
             nn.init.constant_(self.tl, 0)
             self.tl.requires_grad = False
             self.parameter_size = self.parameter_size[:-1]
-    
+            self.tl.data = torch.zeros_like(self.tl.data)
+        
+        if batch_norm:
+            self.bn = BatchNormTransform(x_dim, momentum=0.1)
+            self.bn.gamma.requires_grad = False
+            self.bn.beta.requires_grad = False
+        
     def __repr__(self):
         s = "{}(x_dim={}, z_dim={}, class={}, cov={})".format(
             self.__class__.__name__, self.x_dim, self.z_dim, self.dist, self.cov
@@ -146,6 +157,9 @@ class ConditionalDistribution(nn.Module):
             distribution = MultivariateNormal(mu, scale_tril=L)
         elif self.dist == "mvsn":
             distribution = MultivariateSkewNormal(mu, sk, scale_tril=L)
+        
+        if self.batch_norm:
+            distribution = SimpleTransformedModule(distribution, [self.bn])
         return distribution
     
     def mean(self, params=None):
