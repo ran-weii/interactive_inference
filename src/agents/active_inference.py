@@ -21,8 +21,8 @@ class ActiveInference(nn.Module):
         self.C = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
         self.tau = nn.Parameter(torch.randn(1, 1), requires_grad=True)
         self.hmm = HiddenMarkovModel(state_dim, act_dim)
-        self.obs_model = ConditionalDistribution(obs_dim, state_dim, obs_dist, obs_cov)
-        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov)
+        self.obs_model = ConditionalDistribution(obs_dim, state_dim, obs_dist, obs_cov, batch_norm=True)
+        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
         
         nn.init.xavier_normal_(self.C, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
