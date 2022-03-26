@@ -172,16 +172,18 @@ def test_batch_norm_flow():
 def test_conditional_distribution_with_flow():
     x_dim = 10
     z_dim = 5
-    cond_dist = ConditionalDistribution(x_dim, z_dim, dist="mvn", cov="diag")
+    cond_dist = ConditionalDistribution(
+        x_dim, z_dim, dist="mvn", cov="diag", batch_norm=True
+    )
     cond_dist.bn.momentum = 1
     
     # synthetic observations
     batch_size = 32
     obs = 0.3 + 0.1 * torch.randn(batch_size, 1, x_dim)
-    mu = torch.zeros(batch_size, z_dim, x_dim)
-    lv = torch.zeros(batch_size, z_dim, x_dim)
-    tl = torch.zeros(batch_size, z_dim, x_dim, x_dim)
-    sk = torch.zeros(batch_size, z_dim, x_dim)
+    mu = torch.zeros(1, z_dim, x_dim)
+    lv = torch.zeros(1, z_dim, x_dim)
+    tl = torch.zeros(1, z_dim, x_dim, x_dim)
+    sk = torch.zeros(1, z_dim, x_dim)
     cond_dist.mu.data = mu
     cond_dist.lv.data = lv
     cond_dist.tl.data = tl
@@ -199,6 +201,11 @@ def test_conditional_distribution_with_flow():
     mean_cond = cond_dist.mean()
     variance_cond = cond_dist.variance()
     entropy_cond = cond_dist.entropy()
+    
+    assert list(log_probs_cond.shape) == [batch_size, z_dim]
+    assert list(mean_cond.shape) == [1, z_dim, x_dim]
+    assert list(variance_cond.shape) == [1, z_dim, x_dim]
+    assert list(entropy_cond.shape) == [1, z_dim]
     
     assert torch.all((log_probs - log_probs_cond) < 1e-2)
     assert torch.all((mean_cond - empirical_distribution.mean) < 1e-4)
