@@ -168,9 +168,47 @@ def test_batch_norm_flow():
     assert torch.all((variance_flow - empirical_distribution.variance) < 1e-5)
     assert entropy_flow - empirical_distribution.entropy() < 1e-5
     print("test_batch_norm_flow passed")
+
+def test_conditional_distribution_with_flow():
+    x_dim = 10
+    z_dim = 5
+    cond_dist = ConditionalDistribution(x_dim, z_dim, dist="mvn", cov="diag")
+    cond_dist.bn.momentum = 1
     
+    # synthetic observations
+    batch_size = 32
+    obs = 0.3 + 0.1 * torch.randn(batch_size, 1, x_dim)
+    mu = torch.zeros(batch_size, z_dim, x_dim)
+    lv = torch.zeros(batch_size, z_dim, x_dim)
+    tl = torch.zeros(batch_size, z_dim, x_dim, x_dim)
+    sk = torch.zeros(batch_size, z_dim, x_dim)
+    cond_dist.mu.data = mu
+    cond_dist.lv.data = lv
+    cond_dist.tl.data = tl
+    cond_dist.sk.data = sk
+    
+    # get empirical distribution
+    op_dims = [0, 1]
+    empirical_mean = torch.mean(obs, dim=op_dims)
+    empirical_variance = torch.var(obs, dim=op_dims)
+    empirical_cov = torch.diag_embed(empirical_variance)
+    empirical_distribution = torch.distributions.MultivariateNormal(empirical_mean, empirical_cov)
+    log_probs = empirical_distribution.log_prob(obs)
+    
+    log_probs_cond = cond_dist.log_prob(obs)
+    mean_cond = cond_dist.mean()
+    variance_cond = cond_dist.variance()
+    entropy_cond = cond_dist.entropy()
+    
+    assert torch.all((log_probs - log_probs_cond) < 1e-2)
+    assert torch.all((mean_cond - empirical_distribution.mean) < 1e-4)
+    assert torch.all((variance_cond - empirical_distribution.variance) < 1e-4)
+    assert torch.all((entropy_cond - empirical_distribution.entropy()) < 1e-4)
+    print("test_conditional_distribution_with_flow passed")
+
 if __name__ == "__main__":
     test_conditional_distribution()
     test_hidden_markov_model()
     test_poisson_pdf()
     test_batch_norm_flow()
+    test_conditional_distribution_with_flow()
