@@ -186,7 +186,7 @@ def main(arglist):
         )
         
         print("epoch: {}, train, logp_pi: {:.4f}, logp_obs: {:.4f}, t: {:.2f}".format(
-            e + 1, train_stats["logp_pi_mean"], test_stats["logp_obs_mean"], tnow
+            e + 1, train_stats["logp_pi_mean"], train_stats["logp_obs_mean"], tnow
         ))
     
     df_history = pd.DataFrame(history)
