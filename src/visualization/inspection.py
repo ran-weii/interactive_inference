@@ -20,7 +20,8 @@ def get_active_inference_parameters(agent):
     D = torch.softmax(agent.hmm.D, dim=-1).data.squeeze(0)
     F_mu = agent.ctl_model.mean().data.squeeze(0)
     F_sd = torch.sqrt(agent.ctl_model.variance()).data.squeeze(0)
-    tau = poisson_pdf(agent.tau.exp(), agent.H).argmax().data
+    tau_dist = poisson_pdf(agent.tau.exp(), agent.H).data.squeeze(0)
+    tau = tau_dist.dot(torch.arange(len(tau_dist)) + 1.)
     
     theta = {
         "A_mu": A_mu.numpy(),
@@ -63,7 +64,7 @@ def plot_active_inference_parameters(theta, figsize=(15, 12), n_round=2, cmap="v
     ax[0, 0].set_ylabel("state")
     ax[0, 1].set_xlabel("A_sd")
     ax[0, 1].set_ylabel("state")
-    ax[0, 2].set_xlabel("C (tau = {})".format(theta["tau"] + 1))
+    ax[0, 2].set_xlabel("C (tau = {:.2f})".format(theta["tau"] + 1))
     ax[0, 2].set_ylabel("state")
     ax[1, 0].set_xlabel("F_mu")
     ax[1, 0].set_ylabel("act")
