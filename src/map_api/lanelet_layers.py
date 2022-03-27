@@ -194,6 +194,9 @@ class Lane:
         self._polygon = None
         self._cells = []
         self._align_lanelets()
+        
+        self.left_adjacent_lane_id = []
+        self.right_adjacent_lane_id = []
     
     @property
     def polygon(self):

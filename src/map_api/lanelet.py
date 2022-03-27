@@ -220,7 +220,7 @@ class MapData:
         G = nx.Graph()
         lanelets = list(self.lanelets.values())
         for i in range(len(lanelets) - 1):
-            for j in range(1, len(lanelets)):
+            for j in range(i + 1, len(lanelets)):
                 node1_id, node1_val = lanelets[i].id_, lanelets[i]
                 node2_id, node2_val = lanelets[j].id_, lanelets[j]
                 if is_connected(node1_val, node2_val):
@@ -241,4 +241,18 @@ class MapData:
             # remove all nodes found on the lane
             for n_id in connected_nodes:
                 node_list.remove(n_id)
-            counter += 1        
+            counter += 1      
+            
+        # add adjacent lane id to lane property
+        for i in range(len(self.lanes) - 1):
+            for j in range(i + 1, len(self.lanes)):
+                left_bound_linestr_1 = self.lanes[i].left_bound.linestring
+                left_bound_linestr_2 = self.lanes[j].left_bound.linestring
+                right_bound_linestr_1 = self.lanes[i].right_bound.linestring
+                right_bound_linestr_2 = self.lanes[j].right_bound.linestring
+                if left_bound_linestr_1.intersects(right_bound_linestr_2):
+                    self.lanes[i].left_adjacent_lane_id.append(self.lanes[j].id_)
+                    self.lanes[j].right_adjacent_lane_id.append(self.lanes[i].id_)
+                elif right_bound_linestr_1.intersects(left_bound_linestr_2):
+                    self.lanes[i].right_adjacent_lane_id.append(self.lanes[j].id_)
+                    self.lanes[j].left_adjacent_lane_id.append(self.lanes[i].id_)
