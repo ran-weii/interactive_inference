@@ -8,10 +8,10 @@ import pandas as pd
 import swifter
 from tqdm.auto import tqdm
 
-from src.data.lanelet import load_lanelet_df
+from src.map_api.lanelet import MapData
 from src.data.kalman_filter import BatchKalmanFilter
 from src.data.agent_filter import (
-    get_lane_pos, get_neighbor_vehicles, get_car_following_episode)
+    get_neighbor_vehicle_ids, get_car_following_episode)
 
 # to use apply progress bar
 tqdm.pandas()
@@ -30,18 +30,19 @@ def parse_args():
     parser.add_argument(
         "--kf_path", type=str, default="../exp/kalman_filter"
     )
-    parser.add_argument(
-        "--map_path", type=str, default="../exp/lanelet"
-    )
     parser.add_argument("--scenario", type=str, default="Merging")
     parser.add_argument("--use_kf", type=bool_, default=True, 
                         help="use kalman filter, default=False")
+    parser.add_argument("--cell_len", type=float, default=10, 
+                        help="length of drivable cells, default=10")
+    parser.add_argument("--max_cells", type=int, default=5, 
+                        help="maximum number of lookahead cells, default=5")
     parser.add_argument("--max_dist", type=float, default=50., 
                         help="max dist to be considered neighbor, default=50")
     parser.add_argument("--parallel", type=bool_, default=True, 
                         help="parallel apply, default=True")
     parser.add_argument("--save", type=bool_, default=True)
-    parser.add_argument("--debug", type=bool_, default=True)
+    parser.add_argument("--debug", type=bool_, default=False)
     arglist = parser.parse_args()
     return arglist
 
@@ -78,24 +79,17 @@ def smooth_one_track(df_one_track, kf):
         columns=["x_kf", "y_kf", "vx_kf", "vy_kf", "ax_kf", "ay_kf"]
     )
     return df_s_mean
-    
-def get_lead_vehicle_id(df_ego, df_track, max_dist):
-    """ 
-    Args:
-        df_ego (pd.series): pd series of ego vehicle 
-        df_track (pd.dataframe): dataframe of all vehilce in the track record
-        max_dist (float): max dist to ego to be considered neighbors
 
-    Returns:
-        out (pd.series): lead vehicle track id
-    """
-    df_frame = df_track.loc[df_track["frame_id"] == df_ego["frame_id"]]
-    df_neighbor = get_neighbor_vehicles(df_ego, df_frame, max_dist)
-    df_neighbor = df_neighbor.loc[df_neighbor["is_ego"] == False]
-    df_lead = df_neighbor.loc[df_neighbor["is_lead"]].sort_values(by="dist_to_ego")
-    id_lead = df_lead.head(1)["track_id"].iloc[0] if len(df_lead) > 0 else None
-    out = pd.Series({"lead_track_id": id_lead})
-    return out
+def match_lane(map_data, x, y, max_cells):
+    """ Match point (x, y) to lane """
+    lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings = map_data.match(x, y, max_cells)
+    df_lane_pos = pd.Series({
+        "lane_id": lane_id, 
+        "cell_id": cell_id, 
+        "left_bound_dist": left_bound_dist,
+        "right_bound_dist": right_bound_dist
+    })
+    return df_lane_pos
 
 def parallel_apply(df, f, parallel, axis=1, desc=""):
     if parallel:
@@ -104,7 +98,7 @@ def parallel_apply(df, f, parallel, axis=1, desc=""):
         print(desc)
         return df.progress_apply(f, axis=axis)
 
-def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter, parallel=False):
+def preprocess_pipeline(df_track, map_data, max_cells, max_dist, dt, kf_filter, parallel=False):
     """ Preprocess pipeline: 
     1. Identify ego lane
     2. Identify lead vehicle id
@@ -115,16 +109,16 @@ def preprocess_pipeline(df_track, df_lanelet, max_dist, dt, kf_filter, parallel=
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
     # identify ego lane
-    f_ego_lane = lambda x: get_lane_pos(x["x"], x["y"], x["psi_rad"], df_lanelet)
+    f_ego_lane = lambda x: match_lane(map_data, x["x"], x["y"], max_cells)
     df_ego_lane = parallel_apply(
         df_track, f_ego_lane, parallel, axis=1, desc="identify ego lane"
     )
     df_track = pd.concat([df_track, df_ego_lane], axis=1)
     
     # identify lead vehicle
-    f_lead_vehicle = lambda x: get_lead_vehicle_id(x, df_track, max_dist)
+    f_neighbor_vehicle = lambda x: get_neighbor_vehicle_ids(x, df_track, map_data, max_dist)
     df_lead_vehicle = parallel_apply(
-        df_track, f_lead_vehicle, parallel, axis=1, desc="identify lead vehicle"
+        df_track, f_neighbor_vehicle, parallel, axis=1, desc="identify lead vehicle"
     ).reset_index(drop=True)
     
     print("identify car following episode")
@@ -172,10 +166,12 @@ def main(arglist):
                 os.path.join(scenario_path, "*.csv")
             )
             
-            df_lanelet = load_lanelet_df(
-                os.path.join(arglist.map_path, scenario + ".json")
+            map_data = MapData(cell_len=arglist.cell_len)
+            map_data.parse(
+                os.path.join(arglist.data_path, "maps", f"{scenario}.osm"), 
+                verbose=True
             )
-            
+        
             for j, track_path in enumerate(track_paths):
                 track_filename = os.path.basename(track_path)
                 track_record_id = track_filename.replace(".csv", "").split("_")[-1]
@@ -188,7 +184,8 @@ def main(arglist):
                 
                 start_time = time.time()
                 df_processed = preprocess_pipeline(
-                    df_track, df_lanelet, arglist.max_dist, dt, kf, arglist.parallel
+                    df_track, map_data, arglist.max_cells, 
+                    arglist.max_dist, dt, kf, arglist.parallel
                 )
                 df_processed.insert(0, "scenario", scenario)
                 df_processed.insert(1, "record_id", track_record_id)
@@ -199,11 +196,16 @@ def main(arglist):
                     if not os.path.exists(scenario_save_path):
                         os.mkdir(scenario_save_path)
                         
+                    # df_processed.to_csv(
+                    #     os.path.join(scenario_save_path, track_filename), index=False
+                    # )
                     df_processed.to_csv(
-                        os.path.join(scenario_save_path, track_filename), index=False
+                        os.path.join(scenario_save_path, "test.csv"), index=False
                     )
             
                 num_processed += 1
+                if num_processed > 0:
+                    return 
                 if arglist.debug and num_processed > 0:
                     return
 
