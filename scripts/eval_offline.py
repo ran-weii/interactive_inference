@@ -120,8 +120,8 @@ def plot_action_trajectory(u_true, u_pred, mask, title="", figsize=(8, 4)):
         ax = [ax]
         
     for i, x in enumerate(ax):
-        x.plot(u_true, label="true")
-        x.plot(u_pred, label="pred")
+        x.plot(u_true[:, i], label="true")
+        x.plot(u_pred[:, i], label="pred")
         x.set_xlabel("time")
         x.set_ylabel(f"u_{i}")
         x.legend()
@@ -193,6 +193,9 @@ def main(arglist):
     if not config["lateral_control"]:
         u_true_pad = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
         u_pred_pad = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
+    else:
+        u_true_pad = u_true
+        u_pred_pad = u_pred
         
     # get speed
     ego_fields = test_loader.dataset.ego_fields
