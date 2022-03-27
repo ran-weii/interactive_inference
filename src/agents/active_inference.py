@@ -118,7 +118,7 @@ class ActiveInference(nn.Module):
         if num_samples is None: # bayesian model averaging
             mu_u = self.ctl_model.mean(F)      
             u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
-        else:
+        else: # ancestral sampling
             a = torch.distributions.Categorical(p_a).sample((num_samples,))
             u_ = self.ctl_model.sample((num_samples,), F)
             
