@@ -67,6 +67,8 @@ def test_active_inference_agent():
     assert agent.tau.grad.norm() != 0
     
     """ test inference """
+    num_samples = 10
+    
     # test with supplied parameters
     agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
     theta = {
@@ -80,6 +82,7 @@ def test_active_inference_agent():
     with torch.no_grad():
         G, b = agent(obs, u, theta=theta, inference=True)
         ctl = agent.choose_action(obs, u, theta=theta)
+        ctl_samples = agent.choose_action(obs, u, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -91,6 +94,7 @@ def test_active_inference_agent():
         )
         
     assert list(ctl.shape) == [T, batch_size, ctl_dim]
+    assert list(ctl_samples.shape) == [num_samples, T, batch_size, ctl_dim]
     assert list(mae.shape) == [ctl_dim]
     assert list(tre.shape) == [ctl_dim]
     
@@ -99,6 +103,7 @@ def test_active_inference_agent():
     with torch.no_grad():
         G, b = agent(obs, u, inference=False)
         ctl = agent.choose_action(obs, u)
+        ctl_samples = agent.choose_action(obs, u, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -110,6 +115,7 @@ def test_active_inference_agent():
         )
         
     assert list(ctl.shape) == [T, batch_size, ctl_dim]
+    assert list(ctl_samples.shape) == [num_samples, T, batch_size, ctl_dim]
     assert list(mae.shape) == [ctl_dim]
     assert list(tre.shape) == [ctl_dim]
     
