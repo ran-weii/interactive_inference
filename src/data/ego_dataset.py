@@ -1,9 +1,8 @@
-from enum import unique
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data.dataset import Dataset
-from src.data.agent_filter import get_neighbor_vehicles
+from src.data.legacy.agent_filter import get_neighbor_vehicles
 from src.data.data_filter import (
     filter_car_follow_eps, get_relative_df, get_ego_centric_df)
 
@@ -39,7 +38,7 @@ class EgoDataset(Dataset):
         unique_eps = df_track["eps_id"].unique()
         self.unique_eps = unique_eps[unique_eps != -1]
         self.df_track = df_track.copy()
-        self.df_lanelet = df_lanelet.copy()
+        self.df_lanelet = df_lanelet
         self.min_eps_len = min_eps_len
         self.max_eps_len = max_eps_len
         self.max_dist = max_dist
@@ -179,3 +178,74 @@ class RelativeDataset(EgoDataset):
         }
         return out_dict
         
+class RelativeDatasetNew(EgoDataset):
+    def __init__(self, df_track, map_data, df_train_labels=None, 
+        min_eps_len=10, max_eps_len=100, max_cells=5, lateral_control=True):
+        super().__init__(
+            df_track, None, df_train_labels=df_train_labels, 
+            min_eps_len=min_eps_len, max_eps_len=max_eps_len,
+            max_dist=50, max_agents=1, car_following=True
+        )
+        """ TODO: temporary data filtering solution """
+        df_rel = get_relative_df(self.df_track, self.df_track["lead_track_id"])
+        df_ego = pd.concat([self.df_track, df_rel], axis=1)
+        self.df_track = get_ego_centric_df(df_ego)
+        self.map_data = map_data
+        self.max_cells = max_cells
+        
+        self.ego_fields = [
+            "x", "y", "vx_ego", "vy_ego", 
+            "left_bound_dist", "right_bound_dist", 
+            "x_rel_ego", "y_rel_ego", "vx_rel_ego", 
+            "vy_rel_ego", "psi_rad_rel", 
+        ]
+        self.act_fields = ["ax_ego", "ay_ego"]
+        
+        """ TODO: temporary solution of feeding only longitudinal control """
+        if not lateral_control:
+            self.act_fields = ["ax_ego"]
+        
+    def __getitem__(self, idx):
+        df_ego = self.df_track.loc[
+            self.df_track["eps_id"] == self.unique_eps[idx]
+        ].reset_index(drop=True)
+        
+        """ TODO: add seed to max length filtering """
+        if len(df_ego) > self.max_eps_len: 
+            sample_id = np.random.randint(0, len(df_ego) - self.max_eps_len)
+            df_ego = df_ego.iloc[sample_id:sample_id+self.max_eps_len]
+        
+        obs_ego = df_ego[self.ego_fields].to_dict(orient="list")
+        act_ego = df_ego[self.act_fields].to_numpy()
+        
+        cell_headings = [self.map_data.match(
+            obs_ego["x"][i], obs_ego["y"][i], max_cells=self.max_cells
+        )[4] for i in range(len(df_ego))]
+        
+        obs_ego = {k: torch.tensor(v).to(torch.float32) for k, v in obs_ego.items()}
+        obs_ego["cell_headings"] = torch.tensor(cell_headings).to(torch.float32)
+        act_ego = torch.from_numpy(act_ego).to(torch.float32)
+        
+        out_dict = {
+            "ego": obs_ego,
+            "act": act_ego
+        }
+        return out_dict
+    
+    
+def relative_collate_fn(batch):
+    def pad_sequence(x, max_len):
+        padding = torch.zeros_like(x)[:max_len - len(x)]
+        return torch.cat([x, padding], dim=0)
+    
+    obs_keys = [k for k in batch[0]["ego"].keys()]
+    batch_len = [len(b["act"]) for b in batch]
+    max_len = max(batch_len)
+    mask = [torch.ones(l) for l in batch_len]
+    
+    pad_obs = {k: torch.stack(
+        [pad_sequence(b["ego"][k], max_len) for b in batch]
+    ).transpose(0, 1) for k in obs_keys}
+    pad_act = torch.stack([pad_sequence(b["act"], max_len) for b in batch]).transpose(0, 1)
+    mask = torch.stack([pad_sequence(m, max_len) for m in mask]).transpose(0, 1)
+    return pad_obs, pad_act, mask
