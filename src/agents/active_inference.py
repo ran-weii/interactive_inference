@@ -100,7 +100,7 @@ class ActiveInference(nn.Module):
         Q = torch.sum(h * Q, dim=-3)
         return Q
     
-    def choose_action(self, o, u, theta=None):
+    def choose_action(self, o, u, theta=None, num_samples=None):
         """ Choose action via Bayesian model averaging
 
         Args:
@@ -113,12 +113,17 @@ class ActiveInference(nn.Module):
         """
         G, b = self.forward(o, u, theta=theta, inference=True)
         p_a = torch.softmax(G, dim=-1)
+        F = None if theta is None else theta["F"]
         
-        # bayesian model averaging
-        if theta is None:
-            mu_u = self.ctl_model.mean()
+        if num_samples is None: # bayesian model averaging
+            mu_u = self.ctl_model.mean(F)      
+            u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
         else:
-            mu_u = self.ctl_model.mean(theta["F"])
-        
-        u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
+            a = torch.distributions.Categorical(p_a).sample((num_samples,))
+            u_ = self.ctl_model.sample((num_samples,), F)
+            
+            # sample component
+            a_ = nn.functional.one_hot(a, self.act_dim).unsqueeze(-1)
+            u_ = u_.unsqueeze(1)
+            u = torch.sum(a_ * u_, dim=-2)
         return u
