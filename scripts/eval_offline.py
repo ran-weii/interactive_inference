@@ -50,27 +50,30 @@ def collate_fn(batch):
     mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
 
-def eval_epoch(agent, loader):
+def eval_epoch(agent, loader, num_samples=10):
     agent.eval()
     
     # get data and predictions
-    u_true, u_pred, obs, masks = [], [], [], []
+    u_true, u_pred, u_sample, obs, masks = [], [], [], [], []
     for i, batch in enumerate(loader):
             o, u, mask = batch
             with torch.no_grad():
                 ctl = agent.choose_action(o, u)
+                ctl_sample = agent.choose_action(o, u, num_samples=num_samples)
             
             u_true.append(u)
             u_pred.append(ctl)
+            u_sample.append(ctl_sample)
             obs.append(o)
             masks.append(mask)
     
     """ TODO: add padding for batch evaluation """
     u_true = torch.cat(u_true, dim=1).data.numpy()
     u_pred = torch.cat(u_pred, dim=1).data.numpy()
+    u_sample = torch.cat(u_sample, dim=2).data.numpy()
     obs = torch.cat(obs, dim=1).data.numpy()
     masks = torch.cat(masks, dim=1).data.numpy()
-    return u_true, u_pred, obs, masks
+    return u_true, u_pred, u_sample, obs, masks
 
 def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     """
@@ -105,14 +108,20 @@ def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     return df_eps
 
 """ TODO: temporary plotting solution """
-def plot_action_trajectory(u_true, u_pred, mask, title="", figsize=(8, 4)):
+def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(8, 4)):
     import matplotlib.pyplot as plt
+    
+    # get u_sample stats
+    u_mu = np.mean(u_sample, axis=0)
+    u_std = np.std(u_sample, axis=0)
     
     # mask actions
     nan_mask = np.expand_dims(mask, axis=-1).copy()
     nan_mask[nan_mask == 0] = float("nan")
     u_true *= nan_mask
     u_pred *= nan_mask
+    u_mu *= nan_mask
+    u_std *= nan_mask
     
     n_rows = u_true.shape[-1]
     fig, ax = plt.subplots(n_rows, 1, figsize=figsize, sharex=True)
@@ -120,8 +129,15 @@ def plot_action_trajectory(u_true, u_pred, mask, title="", figsize=(8, 4)):
         ax = [ax]
         
     for i, x in enumerate(ax):
-        x.plot(u_true[:, i], label="true")
-        x.plot(u_pred[:, i], label="pred")
+        x.plot(np.arange(len(u_mu)), u_true[:, i], label="true")
+        x.plot(np.arange(len(u_mu)), u_pred[:, i], label="pred")
+        x.fill_between(
+            np.arange(len(u_mu)),
+            u_mu[:, i] + u_std[:, i], 
+            u_mu[:, i] - u_std[:, i], 
+            alpha=0.4,
+            label="1std"
+        )
         x.set_xlabel("time")
         x.set_ylabel(f"u_{i}")
         x.legend()
@@ -187,9 +203,10 @@ def main(arglist):
     model.load_state_dict(state_dict)
     agent = model.agent
     
-    u_true, u_pred, obs, masks = eval_epoch(agent, test_loader)
+    u_true, u_pred, u_sample, obs, masks = eval_epoch(agent, test_loader, num_samples=10)
     
     """ TODO: temporary solution for lateral control"""
+    # add padding for metrics calculation
     if not config["lateral_control"]:
         u_true_pad = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
         u_pred_pad = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
@@ -241,7 +258,7 @@ def main(arglist):
             frames, lanelet_source, title=f"track_{track_id}_cluster_{cluster_id:.0f}"
         )
         fig_acc, ax = plot_action_trajectory(
-            u_true[:, idx], u_pred[:, idx], masks[:, idx], title=f"track_{track_id}_cluster_{cluster_id:.0f}"
+            u_true[:, idx], u_pred[:, idx], u_sample[:, :, idx], masks[:, idx], title=f"track_{track_id}_cluster_{cluster_id:.0f}"
         )
         scene_figs.append(fig_scene)
         acc_figs.append(fig_acc)
