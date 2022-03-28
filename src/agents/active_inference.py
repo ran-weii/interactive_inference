@@ -34,7 +34,6 @@ class ActiveInference(nn.Module):
         }
         return theta
     
-    """ TODO: add parameter flow control """
     def forward(self, o, u, theta=None, inference=False):
         """
         Args:
@@ -50,10 +49,10 @@ class ActiveInference(nn.Module):
         if theta is None:
             theta = self.get_default_parameters()
             
-        T = len(o)
+        T = len(u)
         # encode observation and control
-        logp_o = self.obs_model.log_prob(o.unsqueeze(-2), theta["A"])
-        logp_u = self.ctl_model.log_prob(u.unsqueeze(-2), theta["F"])
+        logp_o = self.obs_model.log_prob(o, theta["A"])
+        logp_u = self.ctl_model.log_prob(u, theta["F"])
         p_a = torch.softmax(logp_u, dim=-1)
         
         # belief update

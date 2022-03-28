@@ -177,11 +177,11 @@ class ConditionalDistribution(nn.Module):
     def log_prob(self, x, params=None):
         """
         Args:
-            x (torch.tensor): [batch_size, 1, x_dim]
+            x (torch.tensor): [batch_size, x_dim]
             params (torch.tensor, optional): parameter vector. Defaults to None.
         """
         distribution = self.get_distribution_class(params)
-        return distribution.log_prob(x)
+        return distribution.log_prob(x.unsqueeze(-2))
     
     def sample(self, sample_shape, params=None):
         distribution = self.get_distribution_class(params)
