@@ -76,8 +76,9 @@ class BatchNormTransform(TransformModule):
         
         if self.training:
             mean, var = y.mean(op_dims), y.var(op_dims)
-            self.moving_mean.mul_(1 - self.momentum).add_(mean * self.momentum)
-            self.moving_variance.mul_(1 - self.momentum).add_(var * self.momentum)
+            with torch.no_grad():
+                self.moving_mean.mul_(1 - self.momentum).add_(mean * self.momentum)
+                self.moving_variance.mul_(1 - self.momentum).add_(var * self.momentum)
         else:
             mean, var = self.moving_mean, self.moving_variance
         return (y - mean) * self.constrained_gamma / torch.sqrt(
