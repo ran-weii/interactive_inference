@@ -1,0 +1,3 @@
+[submodule "InteractionSimulator"]
+	path = InteractionSimulator
+	url = https://github.com/sisl/InteractionSimulator.git
