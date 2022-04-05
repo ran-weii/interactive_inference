@@ -5,6 +5,7 @@ from src.distributions.models import (
     HiddenMarkovModel, ConditionalDistribution)
 from src.distributions.utils import poisson_pdf
 from src.agents.planners import value_iteration
+from src.agents.models import StructuredPerceptionModel
 
 class ActiveInference(nn.Module):
     def __init__(
@@ -34,6 +35,10 @@ class ActiveInference(nn.Module):
         }
         return theta
     
+    """ TODO: 
+    the agent's planned action distribution should be its prior belief 
+    change the perception action loop to integrate with GLM
+    """
     def forward(self, o, u, theta=None, inference=False):
         """
         Args:
@@ -126,3 +131,11 @@ class ActiveInference(nn.Module):
             u_ = u_.unsqueeze(1)
             u = torch.sum(a_ * u_, dim=-2)
         return u
+    
+
+class StructuredActiveInference(ActiveInference):
+    def __init__(self, state_dim, act_dim, ctl_dim, H, 
+        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full"):
+        super().__init__(state_dim, act_dim, 11, ctl_dim, H, 
+        obs_dist, obs_cov, ctl_dist, ctl_cov)
+        self.obs_model = StructuredPerceptionModel(state_dim, obs_dist, obs_cov)

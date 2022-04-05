@@ -3,6 +3,11 @@ For more detailed description of the lanelet framework please see [paper](https:
 
 ![Lanelet map example](./fig/DR_CHN_Merging_ZS.png) 
 
+## Map corrections
+(todo: update lane matching methods)
+1. DR_DEU_Merging_MT
+    * (show figure here) We replaced lanelet 30012's original left bound 10024 with 10003. This way the upper lane does not overlap with the lower lane. 
+
 1. How is the lanelet maps files (.osm) structured? 
     * Lanelet files are structured according to the layers they are defined on: nodes, ways, and relations. They are stored separately as objects in a format similar to .xml files. Nodes are key points that are connected to form roads and road objects. Ways are list of nodes - they are typically a line segment connecting multiple nodes. For categorization and visualization purposes, each way is associated with a type (e.g., line_thin) and a subtype (e.g., dashed). Relations are list of ways that are next to each other. 
 2. How do the relations store information?

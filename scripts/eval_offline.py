@@ -3,6 +3,7 @@ import os
 import json
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import bokeh
 
 import torch 
@@ -108,9 +109,7 @@ def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     return df_eps
 
 """ TODO: temporary plotting solution """
-def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(8, 4)):
-    import matplotlib.pyplot as plt
-    
+def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6, 3.5)):
     # get u_sample stats
     u_mu = np.mean(u_sample, axis=0)
     u_std = np.std(u_sample, axis=0)
@@ -123,27 +122,42 @@ def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(8,
     u_mu *= nan_mask
     u_std *= nan_mask
     
+    font_size = 12
     n_rows = u_true.shape[-1]
     fig, ax = plt.subplots(n_rows, 1, figsize=figsize, sharex=True)
     if n_rows == 1:
         ax = [ax]
-        
+    
+    time = np.arange(len(u_mu))/10
     for i, x in enumerate(ax):
-        x.plot(np.arange(len(u_mu)), u_true[:, i], label="true")
-        x.plot(np.arange(len(u_mu)), u_pred[:, i], label="pred")
+        x.plot(time, u_true[:, i], label="true")
+        x.plot(time, u_pred[:, i], label="pred")
         x.fill_between(
-            np.arange(len(u_mu)),
+            time,
             u_mu[:, i] + u_std[:, i], 
             u_mu[:, i] - u_std[:, i], 
             alpha=0.4,
             label="1std"
         )
-        x.set_xlabel("time")
-        x.set_ylabel(f"u_{i}")
-        x.legend()
+        x.set_xlabel("time (s)", fontsize=font_size)
+        x.set_ylabel(f"u_{i} (m/s^2)", fontsize=font_size)
+        x.legend(fontsize=font_size)
     
-    ax[0].set_title(title)
+    ax[0].set_title(title, fontsize=font_size)
             
+    plt.tight_layout()
+    return fig, ax
+
+def plot_action_units(agent, figsize=(6, 4)):
+    grid = torch.linspace(-2, 2, 100).unsqueeze(-1)
+    pdf = agent.ctl_model.log_prob(grid).exp().T.data
+    
+    font_size = 12
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    for i in range(len(pdf)):
+        ax.plot(grid, pdf[i])
+    ax.set_xlabel("longitudinal control", fontsize=font_size)
+    ax.set_ylabel("pdf", fontsize=font_size)
     plt.tight_layout()
     return fig, ax
 
@@ -233,7 +247,10 @@ def main(arglist):
         u_true_pad, u_pred_pad, mask=masks, alpha=0.1
     ).tolist()
     metrics_dict = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
-        
+    
+    # plot action units
+    # fig_action, ax = plot_action_units(agent)
+    
     # plot sample test scenes
     num_samples = 1
     df_eps = sample_trajectory_by_cluster(
@@ -281,7 +298,8 @@ def main(arglist):
         # save figures
         if arglist.method == "mleirl":
             fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
-        
+            # fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
+            
         for i, fig in enumerate(scene_figs):
             bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
             acc_figs[i].savefig(os.path.join(save_path, f"test_scene_{i}.png"), dpi=100)

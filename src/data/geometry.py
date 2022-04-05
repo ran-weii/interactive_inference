@@ -1,5 +1,17 @@
 import numpy as np
 
+def wrap_angles(x):
+    """ Round angles to interval [-pi, pi] 
+    Args:
+        x (np.array): input angles in range [-inf, inf]
+        return_revs(bool, optional): return wrap revolutions
+
+    Returns:
+        y (np.array): output angels in range [-pi, pi]
+    """
+    y = (x + np.pi) % (2 * np.pi) - np.pi
+    return y
+
 def dist_two_points(x1, y1, x2, y2):
     """ Two point distance formula """
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
@@ -68,12 +80,13 @@ def get_cardinal_direction(x, y, heading, a, b):
     vec = (a - x, b - y)
     heading_vec = np.arctan2(vec[1], vec[0])
     diff_heading = heading_vec - heading
-    
+
     # normalize to range (-pi, pi)
-    if diff_heading > np.pi:
-        diff_heading = diff_heading - 2 * np.pi
-    elif diff_heading < -np.pi:
-        diff_heading = diff_heading + 2 * np.pi
+    # if diff_heading > np.pi:
+    #     diff_heading = diff_heading - 2 * np.pi
+    # elif diff_heading < -np.pi:
+    #     diff_heading = diff_heading + 2 * np.pi
+    diff_heading = wrap_angles(diff_heading)
     return diff_heading
       
 def is_above_line(x, y, heading, a, b):
@@ -95,7 +108,7 @@ def is_above_line(x, y, heading, a, b):
         return 1
     
 def vector_projection(x1, y1, x2, y2, return_vec=False):
-    """ Project vector (x1, y1) onto vector (x12, y2)
+    """ Project vector (x1, y1) onto vector (x2, y2)
     
     Args:
         x1 (np.array): vector 1 x coor

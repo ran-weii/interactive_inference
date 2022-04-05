@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch 
 import torch.nn as nn
-from src.agents.active_inference import ActiveInference
+from src.agents.active_inference import ActiveInference, StructuredActiveInference
 from src.agents.baseline import ExpertNetwork
 
 class ImitationLearning(nn.Module):
@@ -85,7 +85,8 @@ class ImitationLearning(nn.Module):
         }
         return loss, stats_dict
     
-    
+
+""" TODO: make agent an input to algos """
 class MLEIRL(nn.Module):
     def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
@@ -115,6 +116,7 @@ class MLEIRL(nn.Module):
             loss, stats = self.loss(out, mask)
             
             loss.backward()
+            
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 
@@ -123,7 +125,7 @@ class MLEIRL(nn.Module):
                 optimizer.zero_grad()
             
             epoch_stats.append(stats)
-            num_samples += o.shape[1]
+            num_samples += u.shape[1]
         
         df_stats = pd.DataFrame(epoch_stats).mean()
         return df_stats
@@ -170,6 +172,23 @@ class MLEIRL(nn.Module):
         }
         return loss, stats_dict
     
+
+class MLEIRL_new(MLEIRL):
+    def __init__(self, state_dim, act_dim, ctl_dim, H, 
+        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full", 
+        obs_penalty=0, lr=0.001, decay=0, grad_clip=None):
+        super().__init__(state_dim, act_dim, 11, ctl_dim, H, 
+        obs_dist, obs_cov, ctl_dist, ctl_cov, 
+        obs_penalty, lr, decay, grad_clip)
+        
+        self.agent = StructuredActiveInference(
+            state_dim, act_dim, ctl_dim, H, 
+            obs_dist, obs_cov, ctl_dist, ctl_cov
+        )
+        self.optimizers = [torch.optim.Adam(
+            self.agent.parameters(), lr=lr, weight_decay=decay
+        )]  
+
 
 class BayesianIRL(MLEIRL):
     def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 

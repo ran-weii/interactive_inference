@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from src.data.geometry import vector_projection
+from src.data.geometry import vector_projection, wrap_angles
 
 def filter_car_follow_eps(df_track, min_eps_len):
     """
@@ -51,8 +51,9 @@ def get_relative_df(df, agent_id, vars=["x", "y", "vx", "vy", "psi_rad"]):
     agent_vars = [v + "_agent" for v in vars]
     rel_state = df_rel[agent_vars].to_numpy() - df_rel[vars].to_numpy()
     df_rel = pd.DataFrame(rel_state, columns=[v + "_rel" for v in vars])
-    df_rel["psi_rad_rel"].loc[df_rel["psi_rad_rel"] > np.pi] -= 2 * np.pi
-    df_rel["psi_rad_rel"].loc[df_rel["psi_rad_rel"] < -np.pi] += 2 * np.pi
+    # df_rel["psi_rad_rel"].loc[df_rel["psi_rad_rel"] > np.pi] -= 2 * np.pi
+    # df_rel["psi_rad_rel"].loc[df_rel["psi_rad_rel"] < -np.pi] += 2 * np.pi
+    df_rel["psi_rad_rel"] = wrap_angles(df_rel["psi_rad_rel"])
     return df_rel
 
 def get_ego_centric_df(df):

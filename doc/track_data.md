@@ -1,6 +1,21 @@
 # Processed track data
-A description of the raw dataset fields can be found on the INTERACTION dataset [website](https://interaction-dataset.com/details-and-format). We list below the processed dataset used for car-following beahvior modeling. 
 
+## Raw data fields
+Raw dataset fields provided by the INTERACTION dataset [website](https://interaction-dataset.com/details-and-format).
+* track_id: id of the tracked vehicle. For each vehicle_tracks_xxx.csv file track_id starts from 1.
+* frame_id: id of the video frame. For each track, frame_id starts from 1.
+* timestamp_ms: time the agent appeared in the video at interval 100ms. Unit in ms.
+* agent_type: type of tracked agent. 
+* x: x position of agent. Unit in m.
+* y: y position of agent. Unit in m.
+* vx: x velocity of agent. Unit in m/s.
+* vy: y velocity of agent. Unit in m/s.
+* psi_rad: heading angle of agent in the map coordinate. For static agents psi_rad != vy/vx. Unit in rad.
+* length: length of agent. Unit in m.
+* width: width of agent. Unit in m.
+
+## Extracted data fields
+Processed dataset fields saved in "./interaction-dataset-master/processed_trackfiles/" for car-following beahvior modeling. 
 * scenario: traffic scenario, e.g., DR_CHN_Merging_ZS
 * record_id: id of the recorded track file in a scenario, e.g. 007
 * track_id: id of the tracked vehicle
@@ -36,6 +51,17 @@ A description of the raw dataset fields can be found on the INTERACTION dataset 
     * act: array of ego action with dimension [num_frames, num_act] with fields: ["ax", "ay"]
 
 2. SimpleEgoDataset: Subclass of EgoDataset with a single agent being the lead vehicle, i.e., num_agents=1. 
+
+3. RelativeDataset: Subclass of EgoDataset with a single agent and relative observations. Relevant observations are converted to the ego coordinate defined by the ego heading. This dataset contains the follow ego fields:
+    * vx_ego: x velocity in ego coordinate
+    * vy_ego: y velocity in ego coordinate 
+    * lane_left_min_dist: same in extracted data fileds
+    * lane_right_min_dist: same in extracted data fileds
+    * x_rel_ego: relative x distance to lead vehicle in ego coordinate
+    * y_rel_ego:relative x distance to lead vehicle in ego coordinate
+    * vx_rel_ego: relative x velocity to lead vehicle in ego coordinate
+    * vy_rel_ego: relative y velocity to lead vehicle in ego coordinate
+    * psi_rad_rel: relative heading to lead vehicle
 
 # Preprocess FAQ
 1. How do you identify lead vehicles?

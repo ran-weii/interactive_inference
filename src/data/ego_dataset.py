@@ -197,7 +197,7 @@ class RelativeDatasetNew(EgoDataset):
             "x", "y", "vx_ego", "vy_ego", 
             "left_bound_dist", "right_bound_dist", 
             "x_rel_ego", "y_rel_ego", "vx_rel_ego", 
-            "vy_rel_ego", "psi_rad_rel", 
+            "vy_rel_ego", "psi_rad_rel", "psi_rad"
         ]
         self.act_fields = ["ax_ego", "ay_ego"]
         
@@ -235,7 +235,8 @@ class RelativeDatasetNew(EgoDataset):
     
 def relative_collate_fn(batch):
     def pad_sequence(x, max_len):
-        padding = torch.zeros_like(x)[:max_len - len(x)]
+        padding_shape = [max_len - len(x)] + list(x.shape)[1:]
+        padding = torch.zeros(padding_shape)
         return torch.cat([x, padding], dim=0)
     
     obs_keys = [k for k in batch[0]["ego"].keys()]
