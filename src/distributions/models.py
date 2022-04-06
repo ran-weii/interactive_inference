@@ -186,6 +186,20 @@ class ConditionalDistribution(nn.Module):
     def sample(self, sample_shape, params=None):
         distribution = self.get_distribution_class(params)
         return distribution.sample(sample_shape)
+    
+    def bayesian_average(self, pi, params=None):
+        mu = self.mean(params)
+        x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
+        return x
+
+    def ancestral_sample(self, pi, num_samples, params=None):
+        a = torch.distributions.Categorical(pi).sample((num_samples,))
+        x_ = self.sample((num_samples,), params)
+        
+        # sample component
+        a_ = nn.functional.one_hot(a, self.z_dim).unsqueeze(-1)
+        x = torch.sum(a_ * x_.unsqueeze(1), dim=-2)
+        return x
 
 
 """ TODO: 
