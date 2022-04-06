@@ -80,12 +80,6 @@ def get_cardinal_direction(x, y, heading, a, b):
     vec = (a - x, b - y)
     heading_vec = np.arctan2(vec[1], vec[0])
     diff_heading = heading_vec - heading
-
-    # normalize to range (-pi, pi)
-    # if diff_heading > np.pi:
-    #     diff_heading = diff_heading - 2 * np.pi
-    # elif diff_heading < -np.pi:
-    #     diff_heading = diff_heading + 2 * np.pi
     diff_heading = wrap_angles(diff_heading)
     return diff_heading
       
@@ -125,11 +119,11 @@ def vector_projection(x1, y1, x2, y2, return_vec=False):
     a = np.stack([x1, y1]).T
     b = np.stack([x2, y2]).T
     if not return_vec:
-        b_norm = np.linalg.norm(b, ord=1, axis=1)
+        b_norm = np.linalg.norm(b, ord=1, axis=-1)
         x3 = x1*x2 + y1*y2
         y3 = (y1*x2 - x1*y2) / b_norm
     else:
-        b_norm = np.linalg.norm(b, axis=1, keepdims=True)
+        b_norm = np.linalg.norm(b, axis=-1, keepdims=True)
         b_unit = b / b_norm
         x3 = (x1*x2 + y1*y2).reshape(-1, 1) * b_unit
         y3 = a - x3
