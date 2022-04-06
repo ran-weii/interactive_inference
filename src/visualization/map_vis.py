@@ -1,3 +1,5 @@
+import numpy as np
+
 def get_way_styling(way_type, way_subtype):
     """ Get styling dict of a way
 
@@ -42,13 +44,19 @@ def get_way_styling(way_type, way_subtype):
         pass
     return type_dict
 
-def set_visible_area(min_x, min_y, max_x, max_y, ax):
+def set_visible_area(map_data, ax):
+    """ Set canvas to map size """
+    point_coords = np.array([(p.point.x, p.point.y) for p in map_data.points.values()])
+    min_coords = point_coords.min(axis=0)
+    max_coords = point_coords.max(axis=0)
+    
     ax.patch.set_facecolor('lightgrey')
     ax.set_aspect('equal', adjustable='box')
-    ax.set_xlim([min_x - 10, max_x + 10])
-    ax.set_ylim([min_y - 10, max_y + 10])
+    ax.set_xlim([min_coords[0] - 10, max_coords[0] + 10])
+    ax.set_ylim([min_coords[1] - 10, max_coords[1] + 10])
     
 def plot_points(map_data, ax, annot=False):
+    set_visible_area(map_data, ax)
     for point in map_data.points.values():
         p = point.point
         ax.plot(p.x, p.y, "ko")
@@ -61,10 +69,12 @@ def plot_points(map_data, ax, annot=False):
     return ax
 
 def plot_ways(map_data, ax, annot=True):
+    set_visible_area(map_data, ax)
+    marker = "-o" if annot else "-"
     for (way_id, way) in map_data.linestrings.items():
         coords = list(way.linestring.coords)[0]
         style_dict = get_way_styling(way.type_, way.subtype)
-        ax.plot(*way.linestring.xy, "-o", markersize=2, **style_dict)
+        ax.plot(*way.linestring.xy, marker, markersize=2, **style_dict)
         if annot:
             ax.text(
                 coords[0], coords[1], 
@@ -75,6 +85,7 @@ def plot_ways(map_data, ax, annot=True):
     return ax
 
 def plot_lanelets(map_data, ax, plot_cells=False, fill=True, annot=False, alpha=0.4):
+    set_visible_area(map_data, ax)
     for (lanelet_id, lanelet) in map_data.lanelets.items():
         polygon = lanelet.polygon
         centroid_coords = list(polygon.centroid.coords)[0]
@@ -99,6 +110,7 @@ def plot_lanelets(map_data, ax, plot_cells=False, fill=True, annot=False, alpha=
     return ax
 
 def plot_lanes(map_data, ax, plot_cells=False, annot=True, alpha=0.4):
+    set_visible_area(map_data, ax)
     for lane_id, lane in map_data.lanes.items():
         polygon = lane.polygon
         left_bound_linestr = lane.left_bound.linestring

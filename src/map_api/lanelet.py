@@ -11,10 +11,9 @@ speedups.disable()
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
-from src.map_api.visualization import (set_visible_area, plot_points, 
-    plot_ways, plot_lanelets, plot_lanes)
+from src.visualization.map_vis import plot_ways, plot_lanelets, plot_lanes
 
-class MapData:
+class MapReader:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
     def __init__(self, cell_len=5):
         """
@@ -97,28 +96,24 @@ class MapData:
             lane_id = None
         return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
     
-    def plot(self, option="ways", figsize=(15, 6)):
+    def plot(self, option="ways", annot=True, figsize=(15, 6)):
         """
         Args:
             option (str, optional): plotting options, 
                 one of ["ways", "lanelets", "cells", "lanes"]. Defaults to "ways".
+            annot (bool, optional): annotate map elements. Defaults to False.
             figsize (tuple, optional): figure size. Defaults to (15, 6).
         """
-        point_coords = np.array([(p.point.x, p.point.y) for p in self.points.values()])
-        min_coords = point_coords.min(axis=0)
-        max_coords = point_coords.max(axis=0)
-        
         fig, ax = plt.subplots(1, 1, figsize=figsize)
-        set_visible_area(min_coords[0], min_coords[1], max_coords[0], max_coords[1], ax)
         
         if option == "ways":
-            plot_ways(self, ax)
+            plot_ways(self, ax, annot=annot)
         elif option == "lanelets":
-            plot_lanelets(self, ax, plot_cells=False, fill=True, annot=True, alpha=0.4)
+            plot_lanelets(self, ax, plot_cells=False, fill=True, annot=annot, alpha=0.4)
         elif option == "cells":
-            plot_lanes(self, ax, plot_cells=True, annot=True, alpha=0.4)
+            plot_lanes(self, ax, plot_cells=True, annot=annot, alpha=0.4)
         elif option == "lanes":
-            plot_lanes(self, ax, annot=True, alpha=0.4)
+            plot_lanes(self, ax, annot=annot, alpha=0.4)
         return fig, ax
     
     def parse(self, filepath, verbose=False):
