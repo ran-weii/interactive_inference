@@ -61,8 +61,11 @@ def set_visible_area(point_dict, axes):
     axes.set_xlim([min_x - 10, max_x + 10])
     axes.set_ylim([min_y - 10, max_y + 10])
 
-def plot_all_ways(point_dict, way_dict, figsize=(15, 6), show=False, pause=0):
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
+def plot_all_ways(point_dict, way_dict, ax=None, figsize=(15, 6), show=False, pause=0):
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+    else:
+        fig = None
     ax.set_aspect('equal', adjustable='box')
     ax.patch.set_facecolor('lightgrey')
     set_visible_area(point_dict, ax)
