@@ -2,18 +2,13 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data.dataset import Dataset
-from src.data.legacy.agent_filter import get_neighbor_vehicles
 from src.data.data_filter import (
     filter_car_follow_eps, get_relative_df, get_ego_centric_df)
-
-""" TODO: 
-identify neighor vehicle by region (front, front left/right, back, back left/right)
-"""
 
 class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
-        self, df_track, df_lanelet, df_train_labels=None, min_eps_len=10, max_eps_len=100,
+        self, df_track, map_data, df_train_labels=None, min_eps_len=10, max_eps_len=100,
         max_dist=50., max_agents=10, car_following=True
         ):
         super().__init__()
@@ -38,7 +33,7 @@ class EgoDataset(Dataset):
         unique_eps = df_track["eps_id"].unique()
         self.unique_eps = unique_eps[unique_eps != -1]
         self.df_track = df_track.copy()
-        self.df_lanelet = df_lanelet
+        self.map_data = map_data
         self.min_eps_len = min_eps_len
         self.max_eps_len = max_eps_len
         self.max_dist = max_dist
@@ -46,11 +41,14 @@ class EgoDataset(Dataset):
         
         self.meta_fields = ["scenario", "record_id", "track_id", "agent_type"]
         self.ego_fields = [
-            "x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id",
-            "lane_left_type", "lane_left_min_dist", 
-            "lane_right_type", "lane_right_min_dist"
+            "x", "y", "vx", "vy", "psi_rad", "length", "width", 
+            "left_bound_dist", "right_bound_dist"
         ]
-        self.agent_fields = self.ego_fields[:-4] + ["is_lead", "is_left", "dist_to_ego"]
+        self.agent_id_fields = [
+            "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",
+            "left_lead_track_id", "right_lead_track_id",
+            "left_follow_track_id", "right_follow_track_id"
+        ]
         self.act_fields = ["ax", "ay"]
             
     def __len__(self):
@@ -84,16 +82,15 @@ class EgoDataset(Dataset):
         df_record = df_scenario.loc[df_scenario["record_id"] == record_id]
         df_record = df_record.loc[df_record["track_id"] != ego_id]
         
-        obs_agents = -1 * np.ones((T, self.max_agents, len(self.agent_fields)))
+        obs_agents = -np.nan * np.ones((T, self.max_agents, len(self.ego_fields)))
         for t in range(T):
             frame_id = df_ego["frame_id"].iloc[t]
             df_frame = df_record.loc[df_record["frame_id"] == frame_id]
             
-            df_neighbor = get_neighbor_vehicles(df_ego.iloc[t], df_frame, self.max_dist)
-            df_neighbor = df_neighbor[self.agent_fields]
-            
-            num_agents = min(len(df_neighbor), self.max_agents)
-            obs_agents[t, :num_agents] = df_neighbor.to_numpy()[:num_agents]
+            agent_ids = df_ego.iloc[t][self.agent_id_fields].values
+            df_agents = df_frame.loc[df_frame["track_id"].isin(agent_ids)]
+            num_agents = min(len(df_agents), self.max_agents)
+            obs_agents[t, :num_agents] = df_agents[self.ego_fields].to_numpy()[:num_agents]
         return obs_agents
 
 
@@ -147,7 +144,7 @@ class RelativeDataset(EgoDataset):
         self.df_track["loom_x"] = self.df_track["vx_rel"] / (self.df_track["x_rel"] + 1e-6)
         
         self.ego_fields = [
-            "vx_ego", "vy_ego", "lane_left_min_dist", "lane_right_min_dist", 
+            "vx_ego", "vy_ego", "left_bound_dist", "right_bound_dist", 
             "x_rel_ego", "y_rel_ego", "vx_rel_ego", 
             "vy_rel_ego", "psi_rad_rel", "loom_x"
         ]

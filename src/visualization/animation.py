@@ -1,13 +1,11 @@
-import xml.etree.ElementTree as xml
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from src.data.lanelet import find_all_points, find_all_ways
-from src.visualization.lanelet_vis import plot_all_ways
+from src.visualization.map_vis import plot_ways
 
-def animate(osm_path, states, agents, **kwargs):
+def animate(map_data, states, agents, **kwargs):
     fps = kwargs.get('fps', 15)
     bitrate = kwargs.get('bitrate', 1800)
     enc = kwargs.get('encoder', 'ffmpeg')
@@ -16,7 +14,7 @@ def animate(osm_path, states, agents, **kwargs):
 
     fig = plt.figure()
     ax = plt.axes()
-    av = AnimationVisualizer(ax, osm_path, states, agents)
+    av = AnimationVisualizer(ax, map_data, states, agents)
     ani = animation.FuncAnimation(
         fig, av.update, frames=len(states),
         interval=iv, blit=blit, init_func=av.initfun,repeat=False)
@@ -28,7 +26,6 @@ def animate(osm_path, states, agents, **kwargs):
 def rotate_around_center(pts, center, yaw):
     return np.dot(pts - center, np.array([[np.cos(yaw), np.sin(yaw)], [-np.sin(yaw), np.cos(yaw)]])) + center
 
-
 def polygon_xy_from_motionstate(x, y, psi, width, length):
     lowleft = (x - length / 2., y - width / 2.)
     lowright = (x + length / 2., y - width / 2.)
@@ -37,15 +34,12 @@ def polygon_xy_from_motionstate(x, y, psi, width, length):
     return rotate_around_center(np.array([lowleft, lowright, upright, upleft]), np.array([x, y]), yaw=psi)
 
 class AnimationVisualizer:
-    def __init__(self, ax, osm_path, states, track_data):
+    def __init__(self, ax, map_data, states, track_data):
         self.ax = ax
+        self.map_data = map_data
+
         ego = track_data["ego"]
         agents = track_data["agents"]
-        self.num_agents = agents.shape[1]
-        
-        e = xml.parse(osm_path).getroot()
-        self.point_dict = find_all_points(e, lat_origin=0, lon_origin=0)
-        self.way_dict = find_all_ways(e, self.point_dict)
         
         x_ego = states[:, 0].reshape(-1, 1)
         y_ego = states[:, 1].reshape(-1, 1)
@@ -64,13 +58,14 @@ class AnimationVisualizer:
         self.psi = np.concatenate([psi_ego, psi_agents], axis=1)
         self.l = np.concatenate([l_ego, l_agents], axis=1)
         self.w = np.concatenate([w_ego, w_agents], axis=1)
+        self.num_agents = agents.shape[1]
     
     @property
     def assets(self):
         return self._carrects
 
     def initfun(self):
-        plot_all_ways(self.point_dict, self.way_dict, self.ax)
+        plot_ways(self.map_data, self.ax, annot=False)
         
         carrects = []
         for i in range(self.num_agents + 1):
@@ -83,9 +78,8 @@ class AnimationVisualizer:
         return self.assets
 
     def update(self, frame):
-        # plot_all_ways(self.point_dict, self.way_dict, self.ax)
         for i, carrect in enumerate(self._carrects):
-            if self.x[frame][i] != -1:
+            if not np.isnan(self.x[frame][i]):
                 x = self.x[frame][i]
                 y = self.y[frame][i]
                 psi = self.psi[frame][i]
