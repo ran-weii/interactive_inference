@@ -5,23 +5,19 @@ import matplotlib.animation as animation
 
 from src.visualization.map_vis import plot_ways
 
-def animate(map_data, states, agents, **kwargs):
-    fps = kwargs.get('fps', 15)
-    bitrate = kwargs.get('bitrate', 1800)
-    enc = kwargs.get('encoder', 'ffmpeg')
-    iv = kwargs.get('interval', 20)
-    blit = kwargs.get('blit', True)
-
+def animate(map_data, states, agents):
     fig = plt.figure()
     ax = plt.axes()
     av = AnimationVisualizer(ax, map_data, states, agents)
     ani = animation.FuncAnimation(
         fig, av.update, frames=len(states),
-        interval=iv, blit=blit, init_func=av.initfun,repeat=False)
+        interval=20, blit=True, init_func=av.initfun,repeat=False)
+    return ani
 
-    Writer = animation.writers[enc]
-    writer = Writer(fps=fps, bitrate=bitrate)
-    ani.save('/Users/rw422/Documents/render_ani.mp4', writer)
+def save_animation(ani, path):
+    Writer = animation.writers["ffmpeg"]
+    writer = Writer(fps=15, bitrate=1800)
+    ani.save(path, writer)
 
 def rotate_around_center(pts, center, yaw):
     return np.dot(pts - center, np.array([[np.cos(yaw), np.sin(yaw)], [-np.sin(yaw), np.cos(yaw)]])) + center
