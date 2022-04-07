@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
-from src.data.lanelet import load_lanelet_df
+from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset, EgoDataset
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
@@ -59,8 +59,8 @@ def eval_epoch(agent, loader, num_samples=10):
     for i, batch in enumerate(loader):
             o, u, mask = batch
             with torch.no_grad():
-                ctl = agent.choose_action(o, u)
-                ctl_sample = agent.choose_action(o, u, num_samples=num_samples)
+                ctl = agent.choose_action_batch(o, u)
+                ctl_sample = agent.choose_action_batch(o, u, num_samples=num_samples)
             
             u_true.append(u)
             u_pred.append(ctl)
@@ -149,20 +149,33 @@ def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6,
     return fig, ax
 
 def plot_action_units(agent, figsize=(6, 4)):
-    grid = torch.linspace(-2, 2, 100).unsqueeze(-1)
-    pdf = agent.ctl_model.log_prob(grid).exp().T.data
+    grid = torch.linspace(-2, 2, 100).view(-1, 1)
+    grid_ = torch.stack([grid, grid]).permute(1, 2, 0)
+
+    mean = agent.ctl_model.mean().data
+    std = torch.sqrt(agent.ctl_model.variance()).data
+
+    pdf = torch.distributions.Normal(
+        mean, std
+    ).log_prob(grid_).exp().data 
     
     font_size = 12
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
-    for i in range(len(pdf)):
-        ax.plot(grid, pdf[i])
-    ax.set_xlabel("longitudinal control", fontsize=font_size)
-    ax.set_ylabel("pdf", fontsize=font_size)
+    n_rows = agent.ctl_dim
+    fig, ax = plt.subplots(n_rows, 1, figsize=figsize)
+    if n_rows == 1:
+        ax = [ax]
+    
+    for i in range(n_rows):
+        for j in range(pdf.shape[1]):
+            ax[i].plot(grid, pdf[:, j, i])
+        ax[i].set_xlabel(f"u_{i}", fontsize=font_size)
+        ax[i].set_ylabel("pdf", fontsize=font_size)
     plt.tight_layout()
     return fig, ax
 
 def main(arglist):
     exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
+    print(f"evalusting exp: {arglist.exp_name}")
     
     # load args
     with open(os.path.join(exp_path, "args.json"), "rb") as f:
@@ -173,7 +186,6 @@ def main(arglist):
     torch.manual_seed(config["seed"])
     
     # load raw data
-    df_lanelet = load_lanelet_df(os.path.join(arglist.lanelet_path, arglist.scenario + ".json"))
     df_processed = pd.read_csv(
         os.path.join(arglist.data_path, "processed_trackfiles", arglist.scenario, arglist.filename)
     )
@@ -189,8 +201,12 @@ def main(arglist):
     )
     df_train_labels["is_train"] = ~df_train_labels["is_train"]
     
+    # load map
+    map_data = MapReader()
+    map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
+    
     dataset = RelativeDataset(
-        df_track, df_lanelet, df_train_labels=df_train_labels, 
+        df_track, map_data, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
         lateral_control=config["lateral_control"]
     )
@@ -249,7 +265,7 @@ def main(arglist):
     metrics_dict = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
     
     # plot action units
-    # fig_action, ax = plot_action_units(agent)
+    fig_action, ax = plot_action_units(agent)
     
     # plot sample test scenes
     num_samples = 1
@@ -257,7 +273,7 @@ def main(arglist):
         dataset, num_samples, sample=True, seed=arglist.seed
     )
     ego_dataset = EgoDataset(
-        df_track, df_lanelet, df_train_labels=df_train_labels, 
+        df_track, map_data, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000
     )
     scene_figs = []
@@ -266,16 +282,18 @@ def main(arglist):
         idx = df_eps.iloc[i]["idx"]
         track_data = ego_dataset[idx]
         frames, lanelet_source = build_bokeh_sources(
-            track_data, df_lanelet, ego_dataset.ego_fields, ego_dataset.agent_fields,
+            track_data, map_data, ego_dataset.ego_fields,
             acc_true=u_true_pad[:, idx], acc_pred=u_pred_pad[:, idx]
         )
         track_id = df_eps.iloc[i]["track_id"]
+        eps_id = df_eps.iloc[i]["eps_id"]
         cluster_id = df_eps.iloc[i]["cluster"]
+        title = f"track_{track_id}_id_{idx}_cluster_{cluster_id:.0f}"
         fig_scene = visualize_scene(
-            frames, lanelet_source, title=f"track_{track_id}_cluster_{cluster_id:.0f}"
+            frames, lanelet_source, title=title
         )
         fig_acc, ax = plot_action_trajectory(
-            u_true[:, idx], u_pred[:, idx], u_sample[:, :, idx], masks[:, idx], title=f"track_{track_id}_cluster_{cluster_id:.0f}"
+            u_true[:, idx], u_pred[:, idx], u_sample[:, :, idx], masks[:, idx], title=title
         )
         scene_figs.append(fig_scene)
         acc_figs.append(fig_acc)
@@ -298,7 +316,7 @@ def main(arglist):
         # save figures
         if arglist.method == "mleirl":
             fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
-            # fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
+            fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
             
         for i, fig in enumerate(scene_figs):
             bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
