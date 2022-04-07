@@ -8,7 +8,7 @@ from src.data.data_filter import (
 class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
-        self, df_track, map_data, df_train_labels=None, min_eps_len=10, max_eps_len=100,
+        self, df_track, map_data, df_train_labels=None, min_eps_len=8, max_eps_len=100,
         max_dist=50., max_agents=10, car_following=True
         ):
         super().__init__()
@@ -88,9 +88,10 @@ class EgoDataset(Dataset):
             df_frame = df_record.loc[df_record["frame_id"] == frame_id]
             
             agent_ids = df_ego.iloc[t][self.agent_id_fields].values
-            df_agents = df_frame.loc[df_frame["track_id"].isin(agent_ids)]
-            num_agents = min(len(df_agents), self.max_agents)
-            obs_agents[t, :num_agents] = df_agents[self.ego_fields].to_numpy()[:num_agents]
+            for i, agent_id in enumerate(agent_ids):
+                if not np.isnan(agent_id) and (i + 1) <= self.max_agents:
+                    df_agent = df_frame.loc[df_frame["track_id"] == agent_id]
+                    obs_agents[t, i] = df_agent[self.ego_fields].to_numpy().flatten()
         return obs_agents
 
 
@@ -130,10 +131,10 @@ class SimpleEgoDataset(EgoDataset):
         return obs_agents
     
 class RelativeDataset(EgoDataset):
-    def __init__(self, df_track, df_lanelet, df_train_labels=None, 
+    def __init__(self, df_track, map_data, df_train_labels=None, 
                  min_eps_len=10, max_eps_len=100, max_dist=50., lateral_control=True):
         super().__init__(
-            df_track, df_lanelet, df_train_labels=df_train_labels, 
+            df_track, map_data, df_train_labels=df_train_labels, 
             min_eps_len=min_eps_len, max_eps_len=max_eps_len,
             max_dist=max_dist, max_agents=1, car_following=True
         )

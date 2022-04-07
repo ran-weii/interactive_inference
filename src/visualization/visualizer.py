@@ -32,17 +32,10 @@ def get_vector_dict(x, y, vx, vy, psi_rad, global_coor=True):
     out = {"vx_psi": [x, x + v_norm], "vy_psi": [y, y + v_norm * tan]}
     return out
 
-def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_true=None, acc_pred=None):
-    # build lanelet data source
-    df_lanelet["color"] = [d["color"] for d in df_lanelet["vis_dict"]]
-    df_lanelet["dash"] = [d["dashes"] if "dashes" in d.keys() else "solid" for d in df_lanelet["vis_dict"]]
-    df_lanelet["linewidth"] = [d["linewidth"] for d in df_lanelet["vis_dict"]]
-
-    df_lanelet["max_x"] = [max(x) for x in df_lanelet["x"]]
-    df_lanelet["min_x"] = [min(x) for x in df_lanelet["x"]]
-    df_lanelet["max_y"] = [max(y) for y in df_lanelet["y"]]
-    df_lanelet["min_y"] = [min(y) for y in df_lanelet["y"]]
-
+def build_bokeh_sources(track_data, map_data, ego_fields, acc_true=None, acc_pred=None):
+    # # build lanelet data source
+    dict_lanelet = map_data.get_way_dict()
+    df_lanelet = pd.DataFrame(dict_lanelet)
     lanelet_source = ColumnDataSource(df_lanelet)
     
     # build trajectory data sources
@@ -63,8 +56,7 @@ def build_bokeh_sources(track_data, df_lanelet, ego_fields, agent_fields, acc_tr
         agent_data = track_data["agents"][i]
         agent_data[agent_data == -1] = np.nan
         
-        df_agent = pd.DataFrame(agent_data, columns=agent_fields)
-        df_agent = df_agent.loc[df_agent["dist_to_ego"] != 0]
+        df_agent = pd.DataFrame(agent_data, columns=ego_fields)
         
         frames.append({
             "ego": ColumnDataSource(df_ego),

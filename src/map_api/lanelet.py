@@ -11,7 +11,8 @@ speedups.disable()
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
-from src.visualization.map_vis import plot_ways, plot_lanelets, plot_lanes
+from src.visualization.map_vis import (
+    get_way_styling, plot_ways, plot_lanelets, plot_lanes)
 
 class MapReader:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
@@ -148,7 +149,32 @@ class MapReader:
             print("found {} points, {} ways, {} lanelets, {} lanes".format(
                 len(self.points), len(self.linestrings), len(self.lanelets), len(self.lanes)
             ))
-        
+    
+    def get_way_dict(self):
+        way_dict = []
+        for i, (way_id, way) in enumerate(self.linestrings.items()):
+            coords = list(way.linestring.coords)
+            x = [c[0] for c in coords]
+            y = [c[1] for c in coords]
+            style_dict = get_way_styling(way.type_, way.subtype)
+            dash = style_dict["dashes"] if "dashes" in style_dict.keys() else "solid"
+            
+            way_dict.append({
+                "way_id": way_id,
+                "type": way.type_,
+                "subtype": way.subtype,
+                "x": x,
+                "y": y,
+                "max_x": max(x),
+                "max_y": max(y),
+                "min_x": min(x),
+                "min_y": min(y),
+                "color": style_dict["color"],
+                "linewidth": style_dict["linewidth"],
+                "dash": dash
+            })
+        return way_dict
+
     def _extract_point(self, id_, lon, lat, type_, subtype, ele, x, y, geo_projector):
         x, y = geo_projector.latlon2xy(lat, lon)
         
