@@ -11,7 +11,7 @@ class InteractionSimulator(gym.Env):
         self.map_data = map_data
         self.dynamics_model = ConstantAcceleration(self.dt)
         
-        self.action_limits = np.array([10, 5])
+        self.action_limits = np.array([10, 5]).astype(np.float32)
         self.action_space = gym.spaces.Box(
             low=-self.action_limits,
             high=self.action_limits,

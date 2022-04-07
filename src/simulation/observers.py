@@ -5,6 +5,8 @@ from src.data.geometry import wrap_angles, vector_projection
 class RelativeObserver:
     def __init__(self, map_data):
         self.map_data = map_data
+        self.obs_dim = 10
+        self.ctl_dim = 2
 
     def observe(self, obs):
         obs_ego = obs["ego"]
@@ -35,7 +37,7 @@ class RelativeObserver:
             vx_ego, vy_ego, left_bound_dist, right_bound_dist,
             x_rel, y_rel, vx_rel, vy_rel, psi_rel, loom_x
         ])
-        obs = torch.from_numpy(obs).to(torch.float32)
+        obs = torch.from_numpy(obs).view(1, -1).to(torch.float32)
         return obs
 
     def control(self, ctl, obs):
