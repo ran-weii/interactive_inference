@@ -81,8 +81,8 @@ def test_active_inference_agent():
     }
     with torch.no_grad():
         G, b = agent(obs, u, theta=theta, inference=True)
-        ctl = agent.choose_action(obs, u, theta=theta)
-        ctl_samples = agent.choose_action(obs, u, num_samples=num_samples)
+        ctl = agent.choose_action_batch(obs, u, theta=theta)
+        ctl_samples = agent.choose_action_batch(obs, u, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -102,8 +102,8 @@ def test_active_inference_agent():
     agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
     with torch.no_grad():
         G, b = agent(obs, u, inference=False)
-        ctl = agent.choose_action(obs, u)
-        ctl_samples = agent.choose_action(obs, u, num_samples=num_samples)
+        ctl = agent.choose_action_batch(obs, u)
+        ctl_samples = agent.choose_action_batch(obs, u, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -146,6 +146,48 @@ def test_get_active_inference_parameters():
     
     print("test_get_active_inference_parameters passed")
 
+def test_active_inference_agent_simulation():
+    torch.manual_seed(0)
+    
+    state_dim = 10
+    obs_dim = 12
+    act_dim = 5
+    ctl_dim = 3
+    H = 15
+    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
+    agent.eval()
+
+    # test bayesian average action selection
+    agent.reset()
+    batch_size = 32
+    T = 10
+    obs = torch.randn(T, batch_size, obs_dim)
+    ctl = None
+    for t in range(T):
+        ctl = agent.choose_action(obs[t], ctl)
+        assert list(ctl.shape) == [batch_size, ctl_dim]
+    
+    agent.reset()
+    batch_size = 1
+    T = 10
+    obs = torch.randn(T, batch_size, obs_dim)
+    ctl = None
+    for t in range(T):
+        ctl = agent.choose_action(obs[t], ctl)
+        assert list(ctl.shape) == [batch_size, ctl_dim]
+
+    # test ancestral sampling action selection
+    agent.reset()
+    num_samples = 10
+    obs = torch.randn(T, batch_size, obs_dim)
+    ctl = None
+    for t in range(T):
+        ctl_sample = agent.choose_action(obs[t], ctl, num_samples=num_samples)
+        assert list(ctl_sample.shape) == [num_samples, batch_size, ctl_dim]
+    
+    print("test_active_inference_agent_simulation passed")
+
 if __name__ == "__main__":
     test_active_inference_agent()
     test_get_active_inference_parameters()
+    test_active_inference_agent_simulation()
