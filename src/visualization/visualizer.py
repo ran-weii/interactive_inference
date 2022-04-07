@@ -97,9 +97,10 @@ def visualize_scene(frames, lanelet_source, title="", plot_width=900):
         names=["ego", "agents"],
         tooltips=[
             ("Track id", "@track_id{00}"),
+            ("pos", "(@x{0000.0}, @y{0000.0})"),
             ("Vel", "(@vx{00.0}, @vy{00.0})"),
             ("Psi", "@psi_rad{00.0}"),
-            ("Lane pos", "(@lane_left_min_dist{00.0}, @lane_right_min_dist{00.0})")
+            ("Lane pos", "(@left_bound_dist{00.0}, @right_bound_dist{00.0})")
         ]
     )
 
