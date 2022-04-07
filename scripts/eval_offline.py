@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
+    parser.add_argument("--plot_params", type=bool_, default=False)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -299,7 +300,7 @@ def main(arglist):
         acc_figs.append(fig_acc)
     
     # plot active inference parameters
-    if arglist.method == "mleirl":
+    if arglist.method == "mleirl" and arglist.plot_params:
         theta_dict = get_active_inference_parameters(agent)
         fig_params, _ = plot_active_inference_parameters(theta_dict, cmap="inferno")
 
@@ -315,8 +316,9 @@ def main(arglist):
         
         # save figures
         if arglist.method == "mleirl":
-            fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
             fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
+            if arglist.plot_params:
+                fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
             
         for i, fig in enumerate(scene_figs):
             bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
