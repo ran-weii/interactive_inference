@@ -183,6 +183,7 @@ def test_active_inference_agent_simulation():
     ctl = None
     for t in range(T):
         ctl_sample = agent.choose_action(obs[t], ctl, num_samples=num_samples)
+        ctl = ctl_sample.mean(0)
         assert list(ctl_sample.shape) == [num_samples, batch_size, ctl_dim]
     
     print("test_active_inference_agent_simulation passed")
