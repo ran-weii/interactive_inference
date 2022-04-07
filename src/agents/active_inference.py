@@ -27,7 +27,15 @@ class ActiveInference(nn.Module):
         
         nn.init.xavier_normal_(self.C, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
+        
+        self.reset()
     
+    def reset(self):
+        """ reset internal states for online inference """
+        self._b = None
+        self._a = None
+        self._Q = None
+
     def get_default_parameters(self):
         theta = {
             "A": None, "B": self.hmm.B, "C": self.C, 
@@ -38,6 +46,7 @@ class ActiveInference(nn.Module):
     """ TODO: 
     the agent's planned action distribution should be its prior belief 
     change the perception action loop to integrate with GLM
+    learning performance fault, figure out why
     """
     def forward(self, o, u, theta=None, inference=False):
         """
@@ -51,24 +60,22 @@ class ActiveInference(nn.Module):
             logp_pi (torch.tensor): predicted control likelihood [T, batch_size]
             logp_obs (torch.tensor): predicted observation likelihood [T, batch_size]
         """
+        T = len(u)
         if theta is None:
             theta = self.get_default_parameters()
-            
-        T = len(u)
-        # encode observation and control
+        
         logp_o = self.obs_model.log_prob(o, theta["A"])
         logp_u = self.ctl_model.log_prob(u, theta["F"])
         p_a = torch.softmax(logp_u, dim=-1)
-        
+
         # belief update
         b = [torch.empty(0)] * (T + 1)
-        b[0] = torch.softmax(theta["D"], dim=-1) * torch.ones_like(logp_o[0])
+        Q, b[0] = self.init_hidden(o, theta)
         for t in range(T):
             b[t+1] = self.hmm(logp_o[t], p_a[t], b[t], B=theta["B"])
         b = torch.stack(b)
         
         # decode actions
-        Q = self.plan(theta)
         G = torch.sum(b[:-1].unsqueeze(-2) * Q.unsqueeze(0), dim=-1)
         
         if not inference:
@@ -81,6 +88,19 @@ class ActiveInference(nn.Module):
         else:
             return G, b
     
+    def init_hidden(self, o, theta):
+        Q = self.plan(theta)
+        b = torch.softmax(theta["D"], dim=-1)
+        b = b * torch.ones(o.shape[-2], self.state_dim)
+        return Q, b
+
+    def update_belief(self, o, u, b, theta):
+        logp_o = self.obs_model.log_prob(o, theta["A"])
+        logp_u = self.ctl_model.log_prob(u, theta["F"])
+        p_a = torch.softmax(logp_u, dim=-1)
+        b_next = self.hmm(logp_o, p_a, b, B=theta["B"])
+        return b_next, logp_o, logp_u
+
     def get_reward(self, theta):
         obs_entropy = self.obs_model.entropy(theta["A"]).unsqueeze(-2)
         
@@ -105,6 +125,23 @@ class ActiveInference(nn.Module):
         return Q
     
     def choose_action(self, o, u, theta=None, num_samples=None):
+        if theta is None:
+            theta = self.get_default_parameters()
+
+        if self._b is None:
+            self._Q, self._b = self.init_hidden(o, theta)
+        else:
+            self._b, _, _ = self.update_belief(o, u, self._b, theta)
+
+        G = torch.sum(self._b.unsqueeze(-2) * self._Q.unsqueeze(0), dim=-1)
+        p_a = torch.softmax(G, dim=-1)
+        if num_samples is None:
+            u = self.ctl_model.bayesian_average(p_a, theta["F"])
+        else:
+            u = self.ctl_model.ancestral_sample(p_a, num_samples, theta["F"])
+        return u.squeeze(-3)
+
+    def choose_action_batch(self, o, u, theta=None, num_samples=None):
         """ Choose action via Bayesian model averaging
 
         Args:
@@ -119,17 +156,10 @@ class ActiveInference(nn.Module):
         p_a = torch.softmax(G, dim=-1)
         F = None if theta is None else theta["F"]
         
-        if num_samples is None: # bayesian model averaging
-            mu_u = self.ctl_model.mean(F)      
-            u = torch.sum(p_a.unsqueeze(-1) * mu_u.unsqueeze(0), dim=-2)
-        else: # ancestral sampling
-            a = torch.distributions.Categorical(p_a).sample((num_samples,))
-            u_ = self.ctl_model.sample((num_samples,), F)
-            
-            # sample component
-            a_ = nn.functional.one_hot(a, self.act_dim).unsqueeze(-1)
-            u_ = u_.unsqueeze(1)
-            u = torch.sum(a_ * u_, dim=-2)
+        if num_samples is None:
+            u = self.ctl_model.bayesian_average(p_a, F)
+        else:
+            u = self.ctl_model.ancestral_sample(p_a, num_samples, F)
         return u
     
 
