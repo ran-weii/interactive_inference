@@ -46,13 +46,14 @@ class ActiveInference(nn.Module):
     """ TODO: 
     the agent's planned action distribution should be its prior belief 
     change the perception action loop to integrate with GLM
-    learning performance fault, figure out why
     """
-    def forward(self, o, u, theta=None, inference=False):
+    def forward(self, o, u, h=None, theta=None, inference=False):
         """
         Args:
             o (torch.tensor): observation sequence [T, batch_size, obs_dim]
             u (torch.tensor): control sequence [T, batch_size, ctl_dim]
+            h (list of torch.tensor, optional): hidden states [b, a, Q] 
+                used for online inference. Defaults to None.
             theta (dict, optional): agent parameters dict. Defaults to None.
             inference (bool, optional): whether in inference model. Defaults to False
             
@@ -63,43 +64,41 @@ class ActiveInference(nn.Module):
         T = len(u)
         if theta is None:
             theta = self.get_default_parameters()
+
+        b = [torch.empty(0)] * (T + 1)
+        a = [torch.empty(0)] * (T + 1)
+        if h is None:
+            b[0], a[0], Q = self.init_hidden(o, theta)
+        else:
+            b[0], a[0], Q = h
         
         logp_o = self.obs_model.log_prob(o, theta["A"])
         logp_u = self.ctl_model.log_prob(u, theta["F"])
         p_a = torch.softmax(logp_u, dim=-1)
-
-        # belief update
-        b = [torch.empty(0)] * (T + 1)
-        Q, b[0] = self.init_hidden(o, theta)
         for t in range(T):
+            a[t+1] = torch.softmax(torch.sum(b[t].unsqueeze(-2) * Q, dim=-1), dim=-1)
             b[t+1] = self.hmm(logp_o[t], p_a[t], b[t], B=theta["B"])
+        a = torch.stack(a)
         b = torch.stack(b)
         
-        # decode actions
-        G = torch.sum(b[:-1].unsqueeze(-2) * Q.unsqueeze(0), dim=-1)
-        
         if not inference:
-            logp_a = torch.log(torch.softmax(G, dim=-1) + 1e-6)
+            logp_a = torch.log(a[:-1] + 1e-6)
             logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
             
             logp_b = torch.log(b[1:] + 1e-6)
             logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
             return logp_pi, logp_obs
         else:
-            return G, b
+            return b[1:], a[1:], Q
     
     def init_hidden(self, o, theta):
         Q = self.plan(theta)
         b = torch.softmax(theta["D"], dim=-1)
         b = b * torch.ones(o.shape[-2], self.state_dim)
-        return Q, b
-
-    def update_belief(self, o, u, b, theta):
-        logp_o = self.obs_model.log_prob(o, theta["A"])
-        logp_u = self.ctl_model.log_prob(u, theta["F"])
-        p_a = torch.softmax(logp_u, dim=-1)
-        b_next = self.hmm(logp_o, p_a, b, B=theta["B"])
-        return b_next, logp_o, logp_u
+        a = torch.softmax(torch.sum(
+            b.unsqueeze(-2) * Q, dim=-1
+        ), dim=-1)
+        return b, a, Q
 
     def get_reward(self, theta):
         obs_entropy = self.obs_model.entropy(theta["A"]).unsqueeze(-2)
@@ -124,43 +123,36 @@ class ActiveInference(nn.Module):
         Q = torch.sum(h * Q, dim=-3)
         return Q
     
-    def choose_action(self, o, u, theta=None, num_samples=None):
-        if theta is None:
-            theta = self.get_default_parameters()
-
-        if self._b is None:
-            self._Q, self._b = self.init_hidden(o, theta)
-        else:
-            self._b, _, _ = self.update_belief(o, u, self._b, theta)
-
-        G = torch.sum(self._b.unsqueeze(-2) * self._Q.unsqueeze(0), dim=-1)
-        p_a = torch.softmax(G, dim=-1)
-        if num_samples is None:
-            u = self.ctl_model.bayesian_average(p_a, theta["F"])
-        else:
-            u = self.ctl_model.ancestral_sample(p_a, num_samples, theta["F"])
-        return u.squeeze(-3)
-
-    def choose_action_batch(self, o, u, theta=None, num_samples=None):
-        """ Choose action via Bayesian model averaging
-
+    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+        """ 
         Args:
             o (torch.tensor): observation sequence [T, batch_size, obs_dim]
             u (torch.tensor): control sequence [T, batch_size, ctl_dim]
+            batch (bool, optional): whether to perform batch inference, Defaults to False
             theta (dict, optional): agent parameters dict. Defaults to None.
-
+            num_samples (int, optional): number of samples for ancestral sampling. 
+                Use bayesian averaging if None. Defaulst to None.
+            
         Returns:
             u: predicted control [T, batch_size, ctl_dim]
         """
-        G, b = self.forward(o, u, theta=theta, inference=True)
-        p_a = torch.softmax(G, dim=-1)
-        F = None if theta is None else theta["F"]
-        
-        if num_samples is None:
-            u = self.ctl_model.bayesian_average(p_a, F)
+        if batch:
+            b, a, Q = self.forward(o, u, theta=theta, inference=True)
         else:
-            u = self.ctl_model.ancestral_sample(p_a, num_samples, F)
-        return u
+            o, u = o.unsqueeze(0), u.unsqueeze(0)
+            if self._b is None: # initial step
+                b, a, Q = self.forward(o, u, theta=theta, inference=True)
+            else:
+                h = [self._b, self._a, self._Q]
+                b, a, Q = self.forward(o, u, h=h, theta=theta, inference=True)
+            self._b, self._a, self._Q = b.squeeze(0), a.squeeze(0), Q
+
+        F = None if theta is None else theta["F"]
+        if num_samples is None:
+            u_pred = self.ctl_model.bayesian_average(a, F)
+        else:
+            u_pred = self.ctl_model.ancestral_sample(a, num_samples, F)
+        return u_pred.squeeze(-3)
     
 
 class StructuredActiveInference(ActiveInference):
