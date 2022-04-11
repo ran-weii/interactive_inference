@@ -1,4 +1,5 @@
 *.pyc
+*.sh
 doc/fig/*
 examples/*
 exp/*
