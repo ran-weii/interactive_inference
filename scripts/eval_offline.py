@@ -3,6 +3,7 @@ import os
 import json
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import bokeh
 
@@ -11,16 +12,27 @@ from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
 from src.map_api.lanelet import MapReader
-from src.data.ego_dataset import RelativeDataset, EgoDataset
+from src.data.ego_dataset import RelativeDataset
+from src.agents.active_inference import ActiveInference
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import (
     get_active_inference_parameters, plot_active_inference_parameters)
-from src.visualization.visualizer import build_bokeh_sources, visualize_scene
 
 import warnings
 warnings.filterwarnings("ignore")
+
+# set plotting style
+strip_size = 12
+label_size = 12
+mpl.rcParams["axes.labelsize"] = label_size
+mpl.rcParams["xtick.labelsize"] = strip_size
+mpl.rcParams["ytick.labelsize"] = strip_size
+mpl.rcParams["legend.title_fontsize"] = strip_size
+mpl.rcParams["legend.fontsize"] = strip_size
+mpl.rcParams["axes.titlesize"] = label_size
+mpl.rcParams["figure.titlesize"] = label_size
 
 def parse_args():
     bool_ = lambda x: x if isinstance(x, bool) else x == "True"
@@ -60,8 +72,8 @@ def eval_epoch(agent, loader, num_samples=10):
     for i, batch in enumerate(loader):
             o, u, mask = batch
             with torch.no_grad():
-                ctl = agent.choose_action_batch(o, u)
-                ctl_sample = agent.choose_action_batch(o, u, num_samples=num_samples)
+                ctl = agent.choose_action(o, u, batch=True)
+                ctl_sample = agent.choose_action(o, u, batch=True, num_samples=num_samples)
             
             u_true.append(u)
             u_pred.append(ctl)
@@ -110,7 +122,7 @@ def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     return df_eps
 
 """ TODO: temporary plotting solution """
-def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6, 3.5)):
+def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6, 4.5)):
     # get u_sample stats
     u_mu = np.mean(u_sample, axis=0)
     u_std = np.std(u_sample, axis=0)
@@ -123,7 +135,6 @@ def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6,
     u_mu *= nan_mask
     u_std *= nan_mask
     
-    font_size = 12
     n_rows = u_true.shape[-1]
     fig, ax = plt.subplots(n_rows, 1, figsize=figsize, sharex=True)
     if n_rows == 1:
@@ -140,11 +151,11 @@ def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6,
             alpha=0.4,
             label="1std"
         )
-        x.set_xlabel("time (s)", fontsize=font_size)
-        x.set_ylabel(f"u_{i} (m/s^2)", fontsize=font_size)
-        x.legend(fontsize=font_size)
+        x.set_xlabel("time (s)")
+        x.set_ylabel(f"u_{i} (m/s^2)")
+        x.legend()
     
-    ax[0].set_title(title, fontsize=font_size)
+    ax[0].set_title(title)
             
     plt.tight_layout()
     return fig, ax
@@ -209,7 +220,7 @@ def main(arglist):
     dataset = RelativeDataset(
         df_track, map_data, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
-        lateral_control=config["lateral_control"]
+        control_direction=config["control_direction"]
     )
     test_loader = DataLoader(
         dataset, len(dataset), shuffle=False, 
@@ -219,15 +230,16 @@ def main(arglist):
     # get dimensions from data 
     [obs, ctl, mask] = next(iter(test_loader))
     obs_dim = obs.shape[-1]
-    ctl_dim = ctl.shape[-1]
+    ctl_dim = 2 if config["control_direction"] == "both" else 1
     
     # load model
     if arglist.method == "mleirl":
-        model = MLEIRL(
+        agent = ActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
-            obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
-            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
         )
+        model = MLEIRL(agent)
     elif arglist.method == "il":
         model = ImitationLearning(config["act_dim"], obs_dim, ctl_dim)
     
@@ -238,9 +250,12 @@ def main(arglist):
     
     """ TODO: temporary solution for lateral control"""
     # add padding for metrics calculation
-    if not config["lateral_control"]:
+    if config["control_direction"] == "lon":
         u_true_pad = np.concatenate([u_true, np.zeros_like(u_true)], axis=-1)
         u_pred_pad = np.concatenate([u_pred, np.zeros_like(u_pred)], axis=-1)
+    elif config["control_direction"] == "lat":
+        u_true_pad = np.concatenate([np.zeros_like(u_true), u_true], axis=-1)
+        u_pred_pad = np.concatenate([np.zeros_like(u_pred), u_pred], axis=-1)
     else:
         u_true_pad = u_true
         u_pred_pad = u_pred
@@ -265,39 +280,24 @@ def main(arglist):
     ).tolist()
     metrics_dict = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
     
-    # plot action units
-    fig_action, ax = plot_action_units(agent)
-    
     # plot sample test scenes
     num_samples = 1
     df_eps = sample_trajectory_by_cluster(
         dataset, num_samples, sample=True, seed=arglist.seed
     )
-    ego_dataset = EgoDataset(
-        df_track, map_data, df_train_labels=df_train_labels, 
-        min_eps_len=config["min_eps_len"], max_eps_len=1000
-    )
-    scene_figs = []
     acc_figs = []
     for i in range(len(df_eps)):
         idx = df_eps.iloc[i]["idx"]
-        track_data = ego_dataset[idx]
-        frames, lanelet_source = build_bokeh_sources(
-            track_data, map_data, ego_dataset.ego_fields,
-            acc_true=u_true_pad[:, idx], acc_pred=u_pred_pad[:, idx]
-        )
         track_id = df_eps.iloc[i]["track_id"]
-        eps_id = df_eps.iloc[i]["eps_id"]
         cluster_id = df_eps.iloc[i]["cluster"]
-        title = f"track_{track_id}_id_{idx}_cluster_{cluster_id:.0f}"
-        fig_scene = visualize_scene(
-            frames, lanelet_source, title=title
-        )
+        title = f"track_{track_id}_id_{idx}_cluster_{cluster_id:.0f} agent control: {config['control_direction']}"
         fig_acc, ax = plot_action_trajectory(
             u_true[:, idx], u_pred[:, idx], u_sample[:, :, idx], masks[:, idx], title=title
         )
-        scene_figs.append(fig_scene)
         acc_figs.append(fig_acc)
+    
+    # plot action units
+    fig_action, ax = plot_action_units(agent)
     
     # plot active inference parameters
     if arglist.method == "mleirl" and arglist.plot_params:
@@ -319,16 +319,14 @@ def main(arglist):
             fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
             if arglist.plot_params:
                 fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
-            
-        for i, fig in enumerate(scene_figs):
-            bokeh.plotting.save(fig, os.path.join(save_path, f"test_scene_{i}.html"))
-            acc_figs[i].savefig(os.path.join(save_path, f"test_scene_{i}.png"), dpi=100)
+        
+        for i, fig in enumerate(acc_figs):
+            fig.savefig(os.path.join(save_path, f"test_scene_{i}_offline_ctl.png"), dpi=100)
             
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
             arglist.exp_name
         ))
-    return 
 
 if __name__ == "__main__":
     arglist = parse_args()

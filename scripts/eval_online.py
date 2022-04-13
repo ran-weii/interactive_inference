@@ -4,6 +4,7 @@ import json
 import pickle
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import torch 
@@ -21,8 +22,16 @@ from src.visualization.animation import animate, save_animation
 import warnings
 warnings.filterwarnings("ignore")
 
-# plotting config
-font_size = 12
+# set plotting style
+strip_size = 12
+label_size = 12
+mpl.rcParams["axes.labelsize"] = label_size
+mpl.rcParams["xtick.labelsize"] = strip_size
+mpl.rcParams["ytick.labelsize"] = strip_size
+mpl.rcParams["legend.title_fontsize"] = strip_size
+mpl.rcParams["legend.fontsize"] = strip_size
+mpl.rcParams["axes.titlesize"] = label_size
+mpl.rcParams["figure.titlesize"] = label_size
 
 def parse_args():
     bool_ = lambda x: x if isinstance(x, bool) else x == "True"
@@ -86,12 +95,12 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
 
     obs_env = env.reset(eps_id)
     obs = observer.observe(obs_env)
-    ctl = torch.zeros(1, 2)
+    ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
     for t in range(max_steps):
-        ctl_agent = agent.choose_action(obs, ctl).view(-1)
+        ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
         
         if control_direction == "both":
-            pass
+            ctl = ctl_agent
         elif control_direction == "lon":
             ctl = torch.tensor([ctl_agent[0], ctl_data[t][1]])
         elif control_direction == "lat":
@@ -118,23 +127,23 @@ def plot_map_trajectories(map_data, states, track, title):
     fig, ax = map_data.plot(option="ways", annot=False, figsize=(8, 4))
     ax.plot(states[:, 0], states[:, 1], "o", label="agent")
     ax.plot(track["ego"][:, 0], track["ego"][:, 1], "o", label="data")
-    ax.legend(fontsize=font_size)
-    ax.set_title(title, fontsize=font_size)
+    ax.legend()
+    ax.set_title(title)
     return fig, ax
 
 def plot_actions(acts, track, title):
     fig, ax = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
     ax[0].plot(acts[:, 0], label="agent")
     ax[0].plot(track["act"][:, 0], label="data")
-    ax[0].set_ylabel("lon (m/s^2)", fontsize=font_size)
-    ax[0].legend(fontsize=font_size)
-    ax[0].set_title(title, fontsize=font_size)
+    ax[0].set_ylabel("lon (m/s^2)")
+    ax[0].legend()
+    ax[0].set_title(title)
 
     ax[1].plot(acts[:, 1], label="agent")
     ax[1].plot(track["act"][:, 1], label="data")
     ax[1].set_xlabel("time (0.1 s)")
-    ax[1].set_ylabel("lat (m/s^2)", fontsize=font_size)
-    ax[1].legend(fontsize=font_size)
+    ax[1].set_ylabel("lat (m/s^2)")
+    ax[1].legend()
     plt.tight_layout()
     return fig, ax
 
@@ -197,7 +206,6 @@ def main(arglist):
 
     agent = model.agent
     
-    """ NOTE: train agent with action prior """
     rel_dataset = RelativeDataset(
         df_track, map_data, df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
