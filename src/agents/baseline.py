@@ -1,9 +1,94 @@
 import torch
 import torch.nn as nn
+from src.agents.models import MLP
+from src.distributions.models import ConditionalDistribution
+from src.distributions.flows import BatchNormTransform
+
+""" TODO: make ActiveInference a subclass of this """
+class AbstractAgent(nn.Module):
+    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H):
+        super().__init__()
+        self.state_dim = state_dim
+        self.act_dim = act_dim
+        self.obs_dim = obs_dim
+        self.ctl_dim = ctl_dim
+        self.H = H
+
+        self.reset()
+    
+    def reset(self):
+        raise NotImplementedError
+
+    def forward(self, o, u, h=None, theta=None, inference=False):
+        raise NotImplementedError
+
+    def init_hidden(self):
+        raise NotImplementedError 
+
+    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+        raise NotImplementedError
+
+
+class RecurrentAgent(AbstractAgent):
+    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, ctl_dist="mvn", ctl_cov="full", **kwargs):
+        super().__init__(state_dim, act_dim, obs_dim, ctl_dim, H)
+        hidden_dim = 32
+        num_hidden = 2
+
+        self.rnn = nn.GRU(obs_dim, state_dim)
+        self.planner = MLP(state_dim, act_dim, hidden_dim, num_hidden, "relu")
+        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
+        
+        self.bn = BatchNormTransform(obs_dim, affine=False)
+
+    def reset(self):
+        self._b = None
+
+    def forward(self, o, u, h=None, theta=None, inference=False):
+        if h is None:
+            b = self.init_hidden(o)
+        else:
+            b = h
+        
+        o = self.bn._inverse(o)
+        b, _ = self.rnn(o, b)
+        b = torch.softmax(b, dim=-1)
+        
+        a = self.planner(b)
+        a = torch.softmax(a, dim=-1)
+        
+        if not inference:
+            logp_pi = self.ctl_model.mixture_log_prob(a, u)
+            logp_obs = torch.zeros_like(o)[:, :, 0]
+            return logp_pi, logp_obs
+        else:
+            return b, a
+
+    def init_hidden(self, o):
+        return torch.zeros(1, o.shape[1], self.state_dim)
+
+    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+        if batch:
+            b, a = self.forward(o, u, inference=True)
+        else:
+            o, u = o.unsqueeze(0), u.unsqueeze(0)
+            if self._b is None: # initial step
+                b, a = self.forward(o, u, inference=True)
+            else:
+                h = self._b
+                b, a = self.forward(o, u, h=h, inference=True)
+            self._b = b
+
+        if num_samples is None:
+            u_pred = self.ctl_model.bayesian_average(a)
+        else:
+            u_pred = self.ctl_model.ancestral_sample(a, num_samples)
+        return u_pred.squeeze(-3)
+
 
 class ExpertNetwork(nn.Module):
     def __init__(self, act_dim, obs_dim, ctl_dim, nb=False, prod=False):
-        """
+        """ Naive Bayes classifier + gaussian mixture output
         Args:
             act_dim (int): action dimension
             obs_dim (int): observation dimension
