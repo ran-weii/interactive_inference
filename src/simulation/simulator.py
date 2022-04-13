@@ -30,6 +30,7 @@ class InteractionSimulator(gym.Env):
         self.t = 0
         self.T = len(self._track["act"])
         self._states = np.zeros((self.T, 5))
+        self._acts = np.zeros((self.T, 2))
         
         self._states[0] = self._track["ego"][0][:5]
         obs_dict = {
@@ -49,6 +50,7 @@ class InteractionSimulator(gym.Env):
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
         heading = np.arctan2(next_state[-1], next_state[-2])
         self._states[self.t+1] = np.hstack([next_state, heading])
+        self._acts[self.t] = action
 
         self.t += 1
         obs_dict = {
