@@ -9,7 +9,7 @@ class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
         self, df_track, map_data, df_train_labels=None, min_eps_len=8, max_eps_len=100,
-        max_dist=50., max_agents=10, car_following=True
+        max_dist=50., max_agents=8, car_following=True
         ):
         super().__init__()
         assert all(v in df_track.columns for v in ["track_id", "car_follow_eps"])
@@ -42,7 +42,7 @@ class EgoDataset(Dataset):
         self.meta_fields = ["scenario", "record_id", "track_id", "agent_type"]
         self.ego_fields = [
             "x", "y", "vx", "vy", "psi_rad", "length", "width", 
-            "left_bound_dist", "right_bound_dist"
+            "left_bound_dist", "right_bound_dist", "track_id"
         ]
         self.agent_id_fields = [
             "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",
@@ -132,7 +132,7 @@ class SimpleEgoDataset(EgoDataset):
     
 class RelativeDataset(EgoDataset):
     def __init__(self, df_track, map_data, df_train_labels=None, 
-                 min_eps_len=10, max_eps_len=100, max_dist=50., lateral_control=True):
+                 min_eps_len=10, max_eps_len=100, max_dist=50., control_direction="both"):
         super().__init__(
             df_track, map_data, df_train_labels=df_train_labels, 
             min_eps_len=min_eps_len, max_eps_len=max_eps_len,
@@ -152,8 +152,14 @@ class RelativeDataset(EgoDataset):
         self.act_fields = ["ax_ego", "ay_ego"]
         
         """ TODO: temporary solution of feeding only longitudinal control """
-        if not lateral_control:
+        if control_direction == "both":
+            pass
+        elif control_direction == "lon":
             self.act_fields = ["ax_ego"]
+        elif control_direction == "lat":
+            self.act_fields = ["ay_ego"]
+        else:
+            raise ValueError
         
     def __getitem__(self, idx):
         df_ego = self.df_track.loc[
