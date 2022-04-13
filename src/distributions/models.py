@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import pyro.distributions as pyro_dist
 from torch.distributions import MultivariateNormal
 from src.distributions.distributions import MultivariateSkewNormal
 from src.distributions.utils import make_covariance_matrix
@@ -101,9 +100,7 @@ class ConditionalDistribution(nn.Module):
             self.tl.data = torch.zeros_like(self.tl.data)
         
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1)
-            self.bn.gamma.requires_grad = False
-            self.bn.beta.requires_grad = False
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
         
     def __repr__(self):
         s = "{}(x_dim={}, z_dim={}, class={}, cov={})".format(
