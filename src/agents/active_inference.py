@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from src.distributions.models import (
-    HiddenMarkovModel, ConditionalDistribution)
+    HiddenMarkovModel, ConditionalDistribution, GeneralizedLinearModel)
 from src.distributions.utils import poisson_pdf
 from src.agents.planners import value_iteration
 from src.agents.models import StructuredPerceptionModel
@@ -10,7 +10,8 @@ from src.agents.models import StructuredPerceptionModel
 class ActiveInference(nn.Module):
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, H, 
-        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full"
+        obs_model="gmm", obs_dist="mvn", obs_cov="full", 
+        ctl_model="gmm", ctl_dist="mvn", ctl_cov="full"
         ):
         super(). __init__()
         self.state_dim = state_dim
@@ -22,9 +23,17 @@ class ActiveInference(nn.Module):
         self.C = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
         self.tau = nn.Parameter(torch.randn(1, 1), requires_grad=True)
         self.hmm = HiddenMarkovModel(state_dim, act_dim)
-        self.obs_model = ConditionalDistribution(obs_dim, state_dim, obs_dist, obs_cov, batch_norm=True)
-        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
-        
+        if obs_model == "gmm":
+            self.obs_model = ConditionalDistribution(obs_dim, state_dim, obs_dist, obs_cov, batch_norm=True)
+        else:
+            raise NotImplementedError
+        if ctl_model == "gmm":
+            self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
+        elif ctl_model == "glm":
+            self.ctl_model = GeneralizedLinearModel(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
+        else:
+            raise NotImplementedError
+
         nn.init.xavier_normal_(self.C, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
         
@@ -74,24 +83,25 @@ class ActiveInference(nn.Module):
         
         logp_o = self.obs_model.log_prob(o, theta["A"])
         logp_u = self.ctl_model.log_prob(u, theta["F"])
-        p_a = torch.softmax(logp_u, dim=-1)
         for t in range(T):
-            a[t+1] = torch.softmax(torch.sum(b[t].unsqueeze(-2) * Q, dim=-1), dim=-1)
-            b[t+1] = self.hmm(logp_o[t], p_a[t], b[t], B=theta["B"])
+            p_a = self.infer_action(a[t], logp_u[t])
+            b[t+1] = self.hmm(logp_o[t], p_a, b[t], B=theta["B"])
+            a[t+1] = torch.softmax(torch.sum(b[t+1].unsqueeze(-2) * Q, dim=-1), dim=-1)
         a = torch.stack(a)
         b = torch.stack(b)
         
         if not inference:
-            logp_a = torch.log(a[:-1] + 1e-6)
-            logp_pi = torch.logsumexp(logp_a + logp_u, dim=-1)
+            logp_pi = self.ctl_model.mixture_log_prob(a[:-1], u, theta["A"])
             
             logp_b = torch.log(b[1:] + 1e-6)
             logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
             return logp_pi, logp_obs
         else:
-            return b[1:], a[1:], Q
+            return b, a, Q
     
     def init_hidden(self, o, theta):
+        if theta is None:
+            theta = self.get_default_parameters()
         Q = self.plan(theta)
         b = torch.softmax(theta["D"], dim=-1)
         b = b * torch.ones(o.shape[-2], self.state_dim)
@@ -99,6 +109,13 @@ class ActiveInference(nn.Module):
             b.unsqueeze(-2) * Q, dim=-1
         ), dim=-1)
         return b, a, Q
+    
+    def infer_action(self, a, logp_u):
+        if self.ctl_model == "gmm":
+            p_a = torch.softmax(torch.log(a + 1e-6) + logp_u, dim=-1)
+        else:
+            p_a = a
+        return p_a
 
     def get_reward(self, theta):
         obs_entropy = self.obs_model.entropy(theta["A"]).unsqueeze(-2)
@@ -122,7 +139,7 @@ class ActiveInference(nn.Module):
         Q = value_iteration(R, B, self.H)
         Q = torch.sum(h * Q, dim=-3)
         return Q
-    
+
     def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
         """ 
         Args:
@@ -138,14 +155,16 @@ class ActiveInference(nn.Module):
         """
         if batch:
             b, a, Q = self.forward(o, u, theta=theta, inference=True)
+            b, a = b[:-1], a[:-1]
         else:
             o, u = o.unsqueeze(0), u.unsqueeze(0)
             if self._b is None: # initial step
-                b, a, Q = self.forward(o, u, theta=theta, inference=True)
+                b, a, Q = self.init_hidden(o, theta=theta)
             else:
                 h = [self._b, self._a, self._Q]
                 b, a, Q = self.forward(o, u, h=h, theta=theta, inference=True)
-            self._b, self._a, self._Q = b.squeeze(0), a.squeeze(0), Q
+                b, a = b[1], a[1]
+            self._b, self._a, self._Q = b, a, Q
 
         F = None if theta is None else theta["F"]
         if num_samples is None:
