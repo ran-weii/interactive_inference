@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from src.agents.models import MLP
@@ -132,7 +133,8 @@ class FullyRecurrentAgent(AbstractAgent):
         
         if not inference:
             mu, lv = torch.split(a[:-1], self.ctl_dim, dim=-1)
-            logp_pi = torch.distributions.Normal(mu, lv.exp()).log_prob(u).sum(-1)
+            sd = lv.clip(math.log(1e-6), math.log(1e6)).exp()
+            logp_pi = torch.distributions.Normal(mu, sd).log_prob(u).sum(-1)
             logp_obs = torch.zeros_like(o)[:, :, 0]
             return logp_pi, logp_obs
         else:
@@ -161,7 +163,8 @@ class FullyRecurrentAgent(AbstractAgent):
         if num_samples is None:
             u_pred = mu
         else:
-            u_pred = torch.distributions.Normal(mu, lv.exp()).sample((num_samples,))
+            sd = lv.clip(math.log(1e-6), math.log(1e6)).exp()
+            u_pred = torch.distributions.Normal(mu, sd).sample((num_samples,))
         return u_pred.squeeze(-3)
 
 
