@@ -34,50 +34,60 @@ class RecurrentAgent(AbstractAgent):
         super().__init__(state_dim, act_dim, obs_dim, ctl_dim, H)
         hidden_dim = 32
         num_hidden = 2
-
+        
+        self.D = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
         self.rnn = nn.GRU(obs_dim, state_dim)
         self.planner = MLP(state_dim, act_dim, hidden_dim, num_hidden, "relu")
         self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
-        
         self.bn = BatchNormTransform(obs_dim, affine=False)
+
+        nn.init.xavier_normal_(self.D, gain=1.)
 
     def reset(self):
         self._b = None
-
+        self._a = None
+    
+    """ TODO: inference order still seems off """
     def forward(self, o, u, h=None, theta=None, inference=False):
         if h is None:
-            b = self.init_hidden(o)
+            h0, _ = self.init_hidden(o)
         else:
-            b = h
-        
+            h0 = h
+
         o = self.bn._inverse(o)
-        b, _ = self.rnn(o, b)
-        b = torch.softmax(b, dim=-1)
+        h, _ = self.rnn(o, h0)
+        h = torch.cat([h0, h], dim=0)
+        b = torch.softmax(h, dim=-1)
         
         a = self.planner(b)
         a = torch.softmax(a, dim=-1)
         
         if not inference:
-            logp_pi = self.ctl_model.mixture_log_prob(a, u)
+            logp_pi = self.ctl_model.mixture_log_prob(a[:-1], u)
             logp_obs = torch.zeros_like(o)[:, :, 0]
             return logp_pi, logp_obs
         else:
-            return b, a
+            return h, a
 
     def init_hidden(self, o):
-        return torch.zeros(1, o.shape[1], self.state_dim)
+        h0 = self.D.unsqueeze(0) * torch.ones(o.shape[-2], self.state_dim)
+        a0 = self.planner(torch.softmax(h0, dim=-1))
+        a0 = torch.softmax(a0, dim=-1)
+        return h0, a0
 
     def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
         if batch:
             b, a = self.forward(o, u, inference=True)
+            b, a = b[:-1], a[:-1]
         else:
             o, u = o.unsqueeze(0), u.unsqueeze(0)
             if self._b is None: # initial step
-                b, a = self.forward(o, u, inference=True)
+                b, a = self.init_hidden(o)
             else:
                 h = self._b
                 b, a = self.forward(o, u, h=h, inference=True)
-            self._b = b
+                b, a = b[1:], a[1:]
+            self._b, self._a = b, a
 
         if num_samples is None:
             u_pred = self.ctl_model.bayesian_average(a)
