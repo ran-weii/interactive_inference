@@ -1,4 +1,5 @@
 import argparse
+from email.policy import default
 import os
 import json
 import time
@@ -11,8 +12,10 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
-from src.data.lanelet import load_lanelet_df
+from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
+from src.agents.active_inference import ActiveInference
+from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
 from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
 import warnings
@@ -37,13 +40,18 @@ def parse_args():
     parser.add_argument("--state_dim", type=int, default=10, help="agent state dimension, default=10")
     parser.add_argument("--act_dim", type=int, default=5, help="agent action dimension, default=5")
     parser.add_argument("--horizon", type=int, default=10, help="agent max planning horizon, default=10")
+    parser.add_argument("--obs_model", type=str, choices=["gmm"], default="gmm", help="agent observation model class, default=gmm")
     parser.add_argument("--obs_dist", type=str, default="mvn", help="agent observation distribution, default=mvn")
     parser.add_argument("--obs_cov", type=str, default="diag", help="agent observation covariance, default=diag")
+    parser.add_argument("--ctl_model", type=str, choices=["gmm", "glm"], default="gmm", help="agent control model class, default=gmm")
     parser.add_argument("--ctl_dist", type=str, default="mvn", help="agent control distribution, default=mvn")
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
-    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il"], 
+    parser.add_argument("--hidden_dim", type=int, default=32, help="neural network hidden dim, default=32")
+    parser.add_argument("--num_hidden", type=int, default=2, help="neural network hidden layers, default=2")
+    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "srnn", "frnn"], 
         default="active_inference", help="algorithm, default=mleirl")
-    parser.add_argument("--lateral_control", type=bool_, default=True, help="predict lateral control, default=True")
+    parser.add_argument("--control_direction", type=str, choices=["lon", "lat", "both"], 
+        default="both", help="predict lateral control, default=True")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=100, help="max track length, default=200")
@@ -111,7 +119,6 @@ def main(arglist):
     torch.manual_seed(arglist.seed)
     
     # load raw data
-    df_lanelet = load_lanelet_df(os.path.join(arglist.lanelet_path, arglist.scenario + ".json"))
     df_processed = pd.read_csv(
         os.path.join(arglist.data_path, "processed_trackfiles", arglist.scenario, arglist.filename)
     )
@@ -121,6 +128,10 @@ def main(arglist):
     df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
+    # load map
+    map_data = MapReader()
+    map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
+
     # load test labels
     merge_keys = ["scenario", "record_id", "track_id"]
     df_train_labels = pd.read_csv(
@@ -128,9 +139,9 @@ def main(arglist):
     )
     
     dataset = RelativeDataset(
-        df_track, df_lanelet, df_train_labels=df_train_labels,
+        df_track, map_data, df_train_labels=df_train_labels,
         min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
-        lateral_control=arglist.lateral_control
+        control_direction=arglist.control_direction
     )
     train_loader, test_loader = train_test_split(
         dataset, arglist.train_ratio, arglist.batch_size, arglist.seed
@@ -139,16 +150,17 @@ def main(arglist):
     # get dimensions from data 
     [obs, ctl, mask] = next(iter(train_loader))
     obs_dim = obs.shape[-1]
-    ctl_dim = ctl.shape[-1]
-    if not arglist.lateral_control:
-        ctl_dim = 1
+    ctl_dim = 2 if arglist.control_direction == "both" else 1
     
     # init model
     if arglist.method == "mleirl":
-        model = MLEIRL(
+        agent = ActiveInference(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
-            obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
-            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+            obs_model=arglist.obs_model, obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
+            ctl_model=arglist.ctl_model, ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+        )
+        model = MLEIRL(
+            agent,
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
@@ -163,6 +175,28 @@ def main(arglist):
     elif arglist.method == "il":
         model = ImitationLearning(
             arglist.act_dim, obs_dim, ctl_dim, 
+            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
+            decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
+    elif arglist.method == "srnn":
+        agent = StructuredRecurrentAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
+            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov, 
+            hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
+        )
+        model = MLEIRL(
+            agent,
+            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
+            decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
+    elif arglist.method == "frnn":
+        agent = FullyRecurrentAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
+            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+            hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
+        )
+        model = MLEIRL(
+            agent,
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )

@@ -14,6 +14,7 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
+from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
@@ -49,7 +50,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--plot_params", type=bool_, default=False)
@@ -242,7 +243,21 @@ def main(arglist):
         model = MLEIRL(agent)
     elif arglist.method == "il":
         model = ImitationLearning(config["act_dim"], obs_dim, ctl_dim)
-    
+    elif arglist.method == "frnn":
+        agent = FullyRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = MLEIRL(agent)
+    elif arglist.method == "srnn":
+        agent = StructuredRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = MLEIRL(agent)
+
     model.load_state_dict(state_dict)
     agent = model.agent
     
@@ -315,11 +330,11 @@ def main(arglist):
             json.dump(metrics_dict, f)
         
         # save figures
-        if arglist.method == "mleirl":
-            fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
-            if arglist.plot_params:
-                fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
+        if arglist.method == "mleirl" and arglist.plot_params:
+            fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
         
+        fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
+
         for i, fig in enumerate(acc_figs):
             fig.savefig(os.path.join(save_path, f"test_scene_{i}_offline_ctl.png"), dpi=100)
             

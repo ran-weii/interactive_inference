@@ -14,6 +14,7 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.agents.active_inference import ActiveInference
+from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
 from src.irl.algorithms import MLEIRL
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import RelativeObserver
@@ -48,7 +49,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--seed", type=int, default=0)
@@ -96,9 +97,10 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
     obs_env = env.reset(eps_id)
     obs = observer.observe(obs_env)
     ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
+    ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
+    b.append(agent._b.view(-1))
+    a.append(agent._a.view(-1))
     for t in range(max_steps):
-        ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
-        
         if control_direction == "both":
             ctl = ctl_agent
         elif control_direction == "lon":
@@ -110,14 +112,16 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
         obs_env, r, done, info = env.step(ctl_env)
         if done:
             break
+
         obs = observer.observe(obs_env)
+        ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
 
         # collect agent states
-        b.append(agent._b)
-        a.append(agent._a)
+        b.append(agent._b.view(-1))
+        a.append(agent._a.view(-1))
     
-    b = torch.cat(b, dim=0).data.numpy()
-    a = torch.cat(a, dim=0).data.numpy()
+    b = torch.cat(b).data.numpy()
+    a = torch.cat(a).data.numpy()
     states = env._states[:t+1]
     acts = env._acts[:t+1]
     track = {k:v[:t+1] for (k, v) in env._track.items()}
@@ -194,6 +198,20 @@ def main(arglist):
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
             obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
             ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
+        )
+        model = MLEIRL(agent)
+    elif arglist.method == "frnn":
+        agent = FullyRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = MLEIRL(agent)
+    elif arglist.method == "srnn":
+        agent = StructuredRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = MLEIRL(agent)
     else:
