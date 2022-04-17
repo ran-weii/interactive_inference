@@ -7,6 +7,10 @@ class RelativeObserver:
         self.map_data = map_data
         self.obs_dim = 10
         self.ctl_dim = 2
+    
+    def reset(self):
+        self.t = 0
+        self.target_lane_id = None
 
     def observe(self, obs):
         obs_ego = obs["ego"]
@@ -16,11 +20,11 @@ class RelativeObserver:
         psi_rel = wrap_angles(rel_obs[4])
 
         [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = obs_ego[:5].tolist()
-        lane_id, cell_id, left_bound_dist, right_bound_dist, _ = self.map_data.match(x_ego, y_ego)
-        
-        # out of lane handle
-        left_bound_dist = 10 if left_bound_dist is None else left_bound_dist
-        right_bound_dist = 10 if right_bound_dist is None else right_bound_dist
+
+        target_lane_id = None if self.t == 0 else self.target_lane_id
+        lane_id, cell_id, left_bound_dist, right_bound_dist, _ = self.map_data.match(
+            x_ego, y_ego, target_lane_id=target_lane_id
+        )
 
         # convert observations to ego centric
         psi_x = np.cos(psi_ego)
@@ -38,6 +42,9 @@ class RelativeObserver:
             x_rel, y_rel, vx_rel, vy_rel, psi_rel, loom_x
         ])
         obs = torch.from_numpy(obs).view(1, -1).to(torch.float32)
+        
+        self.t += 1
+        self.target_lane_id = lane_id
         return obs
 
     def control(self, ctl, obs):

@@ -11,6 +11,7 @@ speedups.disable()
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
+from src.data.geometry import get_cardinal_direction
 from src.visualization.map_vis import (
     get_way_styling, plot_ways, plot_lanelets, plot_lanes)
 
@@ -53,13 +54,14 @@ class MapReader:
             for cell in lanelet.cells:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
-    
-    def match(self, x, y, max_cells=5):
+
+    def match(self, x, y, target_lane_id=None, max_cells=5):
         """ Match point to map
 
         Args:
             x (float): target point x coordinate
             y (float): target point y coordinate
+            target_lane_id (int, optional): lane id to be matched. default=None
             max_cells (int, optional): maximum number of cells adhead to return. default=5
 
         Returns:
@@ -70,29 +72,58 @@ class MapReader:
             cell_headings (np.array): array of left and right lookahead cell headings [max_cells, 2]. 
                 nonpresent cells are filled with zeros.
         """
+        def get_target_cell_id(p, cells):
+            if target_lane_id is None:
+                for cell_id, cell in enumerate(cells):
+                    if cell.polygon.contains(p):
+                        break
+            else:
+                dist_to_cells = []
+                for cell_id, cell in enumerate(cells):
+                    dist_to_cells.append(cell.polygon.exterior.distance(p))
+                cell_id = np.argmin(dist_to_cells)
+            return cell_id
+
         p = Point(x, y)
-        
+
+        search_lanes = self.lanes 
+        if target_lane_id is not None:
+            search_lanes = {target_lane_id: self.lanes[target_lane_id]}
+
         matched = False
         lane_id = None
         cell_id = None
         left_bound_dist = None
         right_bound_dist = None
         cell_headings = np.zeros((max_cells, 2)) 
-        for lane_id, lane in self.lanes.items():
-            if lane.polygon.contains(p):
+        for lane_id, lane in search_lanes.items():
+            is_contain = lane.polygon.contains(p)
+            is_continue = True if target_lane_id is not None or is_contain else False
+
+            if is_continue:
                 num_cells = len(lane.cells)
-                for cell_id, cell in enumerate(lane.cells):
-                    if cell.polygon.contains(p):
-                        left_bound_dist = p.distance(cell.left_bound)
-                        right_bound_dist = p.distance(cell.right_bound)
-                        
-                        # compute lookahead cell headings
-                        last_cell_id = min(num_cells, cell_id + max_cells)
-                        cell_headings[:last_cell_id - cell_id] += np.array(
-                            [[l.left_bound_heading, l.right_bound_heading] 
-                            for l in lane.cells[cell_id:last_cell_id]]
-                        )
-                        return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
+                cell_id = get_target_cell_id(p, lane.cells)
+                cell = lane.cells[cell_id]
+                left_bound_coords = cell.left_bound.coords
+                right_bound_coords = cell.right_bound.coords
+
+                # compute directed lane distance
+                left_bound_card = get_cardinal_direction(
+                    left_bound_coords[0][0], left_bound_coords[0][1], cell.heading, x, y
+                )
+                right_bound_card = get_cardinal_direction(
+                    right_bound_coords[0][0], right_bound_coords[0][1], cell.heading, x, y
+                )
+                left_bound_dist = -np.sign(left_bound_card) * p.distance(cell.left_bound)
+                right_bound_dist = np.sign(right_bound_card) * p.distance(cell.right_bound)
+
+                # compute lookahead cell headings
+                last_cell_id = min(num_cells, cell_id + max_cells)
+                cell_headings[:last_cell_id - cell_id] += np.array(
+                    [[l.left_bound_heading, l.right_bound_heading] 
+                    for l in lane.cells[cell_id:last_cell_id]]
+                )
+                return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
         if not matched:
             lane_id = None
         return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
