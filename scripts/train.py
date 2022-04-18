@@ -1,5 +1,4 @@
 import argparse
-from email.policy import default
 import os
 import json
 import time
@@ -15,7 +14,8 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
-from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
+from src.agents.baseline import (
+    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
 from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
 import warnings
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
     parser.add_argument("--hidden_dim", type=int, default=32, help="neural network hidden dim, default=32")
     parser.add_argument("--num_hidden", type=int, default=2, help="neural network hidden layers, default=2")
-    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "srnn", "frnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "srnn", "frnn", "hrnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--control_direction", type=str, choices=["lon", "lat", "both"], 
         default="both", help="predict lateral control, default=True")
@@ -191,6 +191,17 @@ def main(arglist):
         )
     elif arglist.method == "frnn":
         agent = FullyRecurrentAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
+            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+            hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
+        )
+        model = MLEIRL(
+            agent,
+            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
+            decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
+    elif arglist.method == "hrnn":
+        agent = HMMRecurrentAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
             ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
             hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
