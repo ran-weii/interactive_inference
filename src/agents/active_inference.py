@@ -123,9 +123,10 @@ class ActiveInference(nn.Module):
         C = torch.softmax(theta["C"], dim=-1).unsqueeze(-2).unsqueeze(-2)
         B = self.hmm.transform_parameters(theta["B"])
         B = torch.softmax(B, dim=-1)
-        kl = torch.sum(B * torch.log(B + 1e-6) - torch.log(C + 1e-6), dim=-1)
-        
-        R = -kl - obs_entropy
+
+        kl = torch.sum(B * (torch.log(B + 1e-6) - torch.log(C + 1e-6)), dim=-1)
+        eh = torch.sum(B * obs_entropy.unsqueeze(-2), dim=-1)
+        R = -kl - eh
         return R
     
     def plan(self, theta):
