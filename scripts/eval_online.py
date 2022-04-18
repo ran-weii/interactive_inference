@@ -14,11 +14,13 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.agents.active_inference import ActiveInference
-from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
+from src.agents.baseline import (
+    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
 from src.irl.algorithms import MLEIRL
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import RelativeObserver
 from src.visualization.animation import animate, save_animation
+from src.visualization.inspection import ModelExplainer
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -49,9 +51,10 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
+    parser.add_argument("--explain_agent", type=bool_, default=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -89,17 +92,20 @@ def eval_offline(track_data, agent):
 def eval_episode(env, observer, agent, eps_id, data, control_direction, max_steps=1000):
     agent.eval()
     agent.reset()
+    observer.reset()
     
     ctl_data = data["act"]
-    a = []
-    b = []
+    ego_dict = {"b": [], "a": [], "obs": [], "ctl": []}
 
     obs_env = env.reset(eps_id)
     obs = observer.observe(obs_env)
     ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
-    ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
-    b.append(agent._b.view(-1))
-    a.append(agent._a.view(-1))
+    ctl_agent = agent.choose_action(obs, ctl_agent)
+    
+    ego_dict["b"].append(agent._b.view(-1))
+    ego_dict["a"].append(agent._a.view(-1))
+    ego_dict["obs"].append(obs.view(-1))
+    ego_dict["ctl"].append(ctl_agent.view(-1))
     for t in range(max_steps):
         if control_direction == "both":
             ctl = ctl_agent
@@ -114,42 +120,66 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
             break
 
         obs = observer.observe(obs_env)
-        ctl_agent = agent.choose_action(obs, ctl_agent).view(-1)
+        ctl_agent = agent.choose_action(obs, ctl_agent)
 
         # collect agent states
-        b.append(agent._b.view(-1))
-        a.append(agent._a.view(-1))
+        ego_dict["b"].append(agent._b.view(-1))
+        ego_dict["a"].append(agent._a.view(-1))
+        ego_dict["obs"].append(obs.view(-1))
+        ego_dict["ctl"].append(ctl_agent.view(-1))
     
-    b = torch.cat(b).data.numpy()
-    a = torch.cat(a).data.numpy()
+    ego_dict["b"] = torch.stack(ego_dict["b"]).data.numpy()
+    ego_dict["a"] = torch.stack(ego_dict["a"]).data.numpy()
+    ego_dict["obs"] = torch.stack(ego_dict["obs"]).data.numpy()
+    ego_dict["ctl"] = torch.stack(ego_dict["ctl"]).data.numpy()
+
     states = env._states[:t+1]
     acts = env._acts[:t+1]
     track = {k:v[:t+1] for (k, v) in env._track.items()}
-    return states, acts, track, [b, a]
+    return states, acts, track, ego_dict
 
 def plot_map_trajectories(map_data, states, track, title):
     fig, ax = map_data.plot(option="ways", annot=False, figsize=(8, 4))
-    ax.plot(states[:, 0], states[:, 1], "o", label="agent")
-    ax.plot(track["ego"][:, 0], track["ego"][:, 1], "o", label="data")
+    ax.plot(track["ego"][:, 0], track["ego"][:, 1], "o", alpha=0.6, label="data")
+    ax.plot(states[:, 0], states[:, 1], ".", label="agent")
     ax.legend()
     ax.set_title(title)
     return fig, ax
 
-def plot_actions(acts, track, title):
+def plot_action_trajectory(acts, track, title):
     fig, ax = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
-    ax[0].plot(acts[:, 0], label="agent")
     ax[0].plot(track["act"][:, 0], label="data")
+    ax[0].plot(acts[:, 0], label="agent")    
     ax[0].set_ylabel("lon (m/s^2)")
     ax[0].legend()
     ax[0].set_title(title)
-
-    ax[1].plot(acts[:, 1], label="agent")
+    
     ax[1].plot(track["act"][:, 1], label="data")
+    ax[1].plot(acts[:, 1], label="agent")
     ax[1].set_xlabel("time (0.1 s)")
     ax[1].set_ylabel("lat (m/s^2)")
     ax[1].legend()
     plt.tight_layout()
     return fig, ax
+
+def plot_agent_model(explainer):
+    fig_cd, ax = plt.subplots(1, 4, figsize=(12, 3))
+    explainer.plot_C(ax[0])
+    explainer.plot_D(ax[1])
+    explainer.plot_S(ax[2])
+    explainer.plot_tau(ax[3])
+    plt.tight_layout()
+    
+    fig_ab, ax = plt.subplots(1, 3, figsize=(15, 8))
+    explainer.plot_B_pi(ax[0], annot=False)
+    explainer.plot_A(ax[1], ax[2], annot=True)
+    plt.tight_layout()
+    return fig_cd, fig_ab
+
+def plot_belief_trajectory(explainer, sim_data):
+    obs_keys = []
+    fig, _ = explainer.plot_episode(sim_data, obs_keys, figsize=(10, 8))
+    return fig
 
 def main(arglist):
     exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
@@ -214,6 +244,13 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = MLEIRL(agent)
+    elif arglist.method == "hrnn":
+        agent = HMMRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = MLEIRL(agent)
     else:
         raise NotImplementedError
     
@@ -238,19 +275,28 @@ def main(arglist):
     for i in test_eps_id:
         rel_track = rel_dataset[i]
 
-        states, ctl, track, out = eval_episode(env, observer, agent, i, rel_track, config["control_direction"])
+        states, ctl, track, ego_dict = eval_episode(env, observer, agent, i, rel_track, config["control_direction"])
         
         title = f"track_{track['meta'][2]}_id_{i} agent control: {config['control_direction']}"
         ani = animate(map_data, states, track, title=title)
         fig_map, _ = plot_map_trajectories(map_data, states, track, title)
-        fig_act, _ = plot_actions(ctl, track, title)
+        fig_act, _ = plot_action_trajectory(ctl, track, title)
         
-        sim_data.append({"states": states, "ctl": ctl, "track": track, "b": out[0], "a": out[1]})
+        sim_data.append({"states": states, "ctl": ctl, "track": track, "ego": ego_dict})
         map_figs.append(fig_map)
         ctl_figs.append(fig_act)
         animations.append(ani)
         # break
     
+    # explain active inference agent
+    if arglist.method == "mleirl" and arglist.explain_agent:
+        explainer = ModelExplainer(agent)
+        explainer.sort(by="C")
+        fig_agent_cd, fig_agent_ab = plot_agent_model(explainer)
+        belief_figs = []
+        for data in sim_data:
+            belief_figs.append(plot_belief_trajectory(explainer, data))
+
     # save results
     if arglist.save:
         save_path = os.path.join(exp_path, "eval_offline")
@@ -265,6 +311,13 @@ def main(arglist):
             fig_a.savefig(os.path.join(save_path, f"test_scene_{i}_online_ctl.png"), dpi=100)
             save_animation(ani, os.path.join(save_path, f"test_scene_{i}_online_ani.mp4"))
         
+        if arglist.method == "mleirl" and arglist.explain_agent:
+            fig_agent_cd.savefig(os.path.join(save_path, f"agent_model_0.png"), dpi=100)
+            fig_agent_ab.savefig(os.path.join(save_path, f"agent_model_1.png"), dpi=100)
+            for i, f in enumerate(belief_figs):
+                f.savefig(os.path.join(save_path, f"test_scene_{i}_online_belief.png"), dpi=100)
+            
+
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
             arglist.exp_name
