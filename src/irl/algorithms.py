@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch 
 import torch.nn as nn
-from src.agents.active_inference import ActiveInference, StructuredActiveInference
+from src.agents.active_inference import StructuredActiveInference
 from src.agents.baseline import ExpertNetwork
 
 class ImitationLearning(nn.Module):
@@ -86,10 +86,8 @@ class ImitationLearning(nn.Module):
         return loss, stats_dict
     
 
-""" TODO: make agent an input to algos """
 class MLEIRL(nn.Module):
-    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H, 
-        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full",
+    def __init__(self, agent, 
         obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.obs_penalty = obs_penalty
@@ -97,10 +95,7 @@ class MLEIRL(nn.Module):
         self.decay = decay
         self.grad_clip = grad_clip
         
-        self.agent = ActiveInference(
-            state_dim, act_dim, obs_dim, ctl_dim, H,
-            obs_dist, obs_cov, ctl_dist, ctl_cov
-        )
+        self.agent = agent
         self.optimizers = [torch.optim.Adam(
             self.agent.parameters(), lr=lr, weight_decay=decay
         )]
