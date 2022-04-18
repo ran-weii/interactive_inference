@@ -14,12 +14,11 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
-from src.agents.baseline import StructuredRecurrentAgent, FullyRecurrentAgent
+from src.agents.baseline import (
+    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
-from src.visualization.inspection import (
-    get_active_inference_parameters, plot_active_inference_parameters)
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -50,10 +49,9 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
-    parser.add_argument("--plot_params", type=bool_, default=False)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -257,6 +255,13 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = MLEIRL(agent)
+    elif arglist.method == "hrnn":
+        agent = HMMRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = MLEIRL(agent)
 
     model.load_state_dict(state_dict)
     agent = model.agent
@@ -313,11 +318,6 @@ def main(arglist):
     
     # plot action units
     fig_action, ax = plot_action_units(agent)
-    
-    # plot active inference parameters
-    if arglist.method == "mleirl" and arglist.plot_params:
-        theta_dict = get_active_inference_parameters(agent)
-        fig_params, _ = plot_active_inference_parameters(theta_dict, cmap="inferno")
 
     # save results
     if arglist.save:
@@ -330,11 +330,7 @@ def main(arglist):
             json.dump(metrics_dict, f)
         
         # save figures
-        if arglist.method == "mleirl" and arglist.plot_params:
-            fig_params.savefig(os.path.join(save_path, "params.png"), dpi=100)
-        
         fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
-
         for i, fig in enumerate(acc_figs):
             fig.savefig(os.path.join(save_path, f"test_scene_{i}_offline_ctl.png"), dpi=100)
             
