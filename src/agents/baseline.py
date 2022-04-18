@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from src.agents.models import MLP
-from src.distributions.models import ConditionalDistribution
+from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
 from src.distributions.flows import BatchNormTransform
 
 """ TODO: make ActiveInference a subclass of this """
@@ -160,6 +160,86 @@ class FullyRecurrentAgent(AbstractAgent):
             self._b, self._a = b, a
         
         mu, lv = torch.split(a, self.ctl_dim, dim=-1)
+        if num_samples is None:
+            u_pred = mu
+        else:
+            sd = lv.clip(math.log(1e-6), math.log(1e6)).exp()
+            u_pred = torch.distributions.Normal(mu, sd).sample((num_samples,))
+        return u_pred.squeeze(-3)
+
+
+class HMMRecurrentAgent(AbstractAgent):
+    """ Recurrent agent with HMM recurrent units and fully connected output units
+        ctl_model and bn modules are dummy for eval scripts
+    """
+    def __init__(
+        self, state_dim, act_dim, obs_dim, ctl_dim, H, 
+        ctl_dist="mvn", ctl_cov="full", hidden_dim=32, num_hidden=2
+        ):
+        super().__init__(state_dim, act_dim, obs_dim, ctl_dim, H)
+        self.D = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
+        self.hmm = HiddenMarkovModel(state_dim, act_dim)
+        self.obs_model = ConditionalDistribution(obs_dim, state_dim, "mvn", "full", batch_norm=True)
+        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
+        self.planner = MLP(state_dim, ctl_dim * 2, hidden_dim, num_hidden, "relu")
+        self.bn = BatchNormTransform(obs_dim, affine=False)
+
+        nn.init.xavier_normal_(self.D, gain=1.)
+
+    def reset(self):
+        self._b = None
+        self._a = None
+    
+    def forward(self, o, u, h=None, theta=None, inference=False):
+        T = len(u)
+        b = [torch.empty(0)] * (T + 1)
+        a = [torch.empty(0)] * (T + 1)
+        if h is None:
+            b[0], a[0], _ = self.init_hidden(o)
+        else:
+            b[0], a[0] = h
+        
+        logp_o = self.obs_model.log_prob(o)
+        logp_u = self.ctl_model.log_prob(u)
+        for t in range(T):
+            a[t+1] = torch.softmax(logp_u[t], dim=-1)
+            b[t+1] = self.hmm(logp_o[t], a[t+1], b[t])
+        a = torch.stack(a)
+        b = torch.stack(b)
+        
+        pi = self.planner(b)
+        if not inference:
+            mu, lv = torch.split(pi[:-1], self.ctl_dim, dim=-1)
+            sd = lv.clip(math.log(1e-6), math.log(1e6)).exp()
+            logp_pi = torch.distributions.Normal(mu, sd).log_prob(u).sum(-1)
+            logp_b = torch.log(b[1:] + 1e-6)
+            logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
+            return logp_pi, logp_obs
+        else:
+            return b, a, pi
+
+    def init_hidden(self, o):
+        b0 = torch.softmax(self.D, dim=-1) 
+        b0 = b0 * torch.ones(o.shape[-2], self.state_dim)
+        a0 = torch.softmax(torch.ones(o.shape[-2], self.act_dim), dim=-1)
+        pi0 = self.planner(b0).unsqueeze(0)
+        return b0, a0, pi0
+
+    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+        if batch:
+            b, a, pi = self.forward(o, u, inference=True)
+            b, a, pi = b[:-1], a[:-1], pi[:-1]
+        else:
+            o, u = o.unsqueeze(0), u.unsqueeze(0)
+            if self._b is None: # initial step
+                b, a, pi = self.init_hidden(o)
+            else:
+                h = [self._b, self._a]
+                b, a, pi = self.forward(o, u, h=h, inference=True)
+                b, a, pi = b[1:], a[1:], pi[1:]
+            self._b, self._a = b.view(-1, self.state_dim), a.view(-1, self.act_dim)
+        
+        mu, lv = torch.split(pi, self.ctl_dim, dim=-1)
         if num_samples is None:
             u_pred = mu
         else:
