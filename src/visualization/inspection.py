@@ -1,10 +1,12 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 
 from src.distributions.utils import poisson_pdf
 
+""" TODO: add model explainer class """
 def get_active_inference_parameters(agent):
     """ 
     Args:
@@ -31,10 +33,214 @@ def get_active_inference_parameters(agent):
         "D": D.numpy(),
         "F_mu": F_mu.numpy(),
         "F_sd": F_sd.numpy(),
+        "tau_dist": tau_dist.numpy(),
         "tau": tau.numpy()
         
     }
     return theta
+
+def markov_stationary_dist(B):
+    evals, evecs = np.linalg.eig(B.T)
+    evec1 = evecs[:, np.isclose(evals, 1)]
+    evec1 = evec1[:,0]
+
+    stationary = evec1 / evec1.sum()
+    stationary = stationary.real
+    return stationary
+
+
+class ModelExplainer:
+    def __init__(self, agent):
+        self.theta = get_active_inference_parameters(agent)
+        self.agent = agent
+        self.init_parameters()
+
+        self.sort_a_id = None
+        self.sort_s_id = None
+        self.A_fields = [
+            "vx", "vy", "left_bound_dist", "right_bound_dist", 
+            "x_rel", "y_rel", "vx_rel", 
+            "vy_rel", "psi_rad_rel", "loom_x"]
+    
+    def init_parameters(self):
+        self.A_mu = self.theta["A_mu"]
+        self.A_sd = self.theta["A_sd"]
+        self.B = self.theta["B"]
+        self.C = self.theta["C"]
+        self.D = self.theta["D"]
+        self.F_mu = self.theta["F_mu"]
+        self.F_sd = self.theta["F_sd"]
+        self.tau = self.theta["tau_dist"]
+        
+        self.pi = self.get_policy()
+        self.B_pi = np.sum(self.pi[..., None] * self.B, axis=0)
+        self.S = markov_stationary_dist(self.B_pi)
+
+    def get_policy(self):
+        theta = self.agent.get_default_parameters()
+        Q = self.agent.plan(theta)
+        pi = torch.softmax(Q, dim=-2).squeeze(0)
+        return pi.data.numpy()
+
+    def sort(self, by=None):
+        assert by in [None, "C", "D", "S"]
+        # sort actions
+        sort_a_id = np.argsort(self.F_mu[:, 0])[::-1]
+
+        # sort states
+        if by == "C":
+            sort_s_id = np.argsort(self.C)[::-1]
+        elif by == "D":
+            sort_s_id = np.argsort(self.D)[::-1]
+        elif by == "S":
+            sort_s_id = np.argsort(self.S)[::-1]
+
+        self.A_mu = self.A_mu[sort_s_id]
+        self.A_sd = self.A_sd[sort_s_id]
+        self.B = self.B[sort_a_id]
+        self.B = self.B[:, sort_s_id]
+        self.B = self.B[:, :, sort_s_id]
+        self.C = self.C[sort_s_id]
+        self.D = self.D[sort_s_id]
+        self.F_mu = self.F_mu[sort_a_id]
+        self.F_sd = self.F_sd[sort_a_id]
+
+        self.pi = self.pi[sort_a_id]
+        self.pi = self.pi[:, sort_s_id]
+        self.B_pi = self.B_pi[sort_s_id]
+        self.B_pi = self.B_pi[:, sort_s_id]
+        self.S = self.S[sort_s_id]
+
+        self.sort_a_id = sort_a_id
+        self.sort_s_id = sort_s_id
+
+    def plot_A(self, ax1, ax2, annot=True):
+        df_A_mu = pd.DataFrame(self.A_mu, columns=self.A_fields)
+        df_A_sd = pd.DataFrame(self.A_sd, columns=self.A_fields)
+
+        sns.heatmap(df_A_mu.round(3), annot=annot, cbar=False, ax=ax1)
+        sns.heatmap(df_A_sd.round(3), annot=annot, cbar=False, ax=ax2)
+
+        ax1.set_xlabel("obs mean")
+        ax1.set_ylabel("state")
+        ax1.set_xticklabels(
+            ax1.get_xticklabels(), rotation=45, horizontalalignment="right"
+        )
+
+        ax2.set_xlabel("obs std")
+        ax2.set_ylabel("state")
+        ax2.set_xticklabels(
+            ax2.get_xticklabels(), rotation=45, horizontalalignment="right"
+        )
+
+        plt.tight_layout()
+        return ax1, ax2
+
+    def plot_B(self, axes, annot=False):
+        act_dim = self.B.shape[0]
+        for i, x in enumerate(axes.flat):
+            sns.heatmap(
+                self.B[i], cmap="Greys", 
+                annot=annot, cbar=False, ax=x
+            )
+            x.set_xlabel("next state")
+            x.set_ylabel("state")
+            x.set_title(f"act {i}")
+            if (i + 1) == act_dim:
+                break
+        return axes
+    
+    def plot_B_pi(self, ax, annot=False, cbar=False):
+        sns.heatmap(
+            self.B_pi.round(3), cmap="Greys", annot=annot, 
+            cbar=cbar, ax=ax
+        )
+        ax.set_xlabel("next state")
+        ax.set_ylabel("state")
+        return ax
+
+    def plot_C(self, ax):
+        ax.bar(np.arange(len(self.C)), self.C)
+        ax.set_xlabel("state")
+        ax.set_ylabel("pdf (C)")
+        return ax
+
+    def plot_D(self, ax):
+        ax.bar(np.arange(len(self.D)), self.D)
+        ax.set_xlabel("state")
+        ax.set_ylabel("pdf (D)")
+        return ax
+
+    def plot_F(self, ax1, ax2, annot=True):
+        sns.heatmap(
+            self.F_mu.round(3), cmap="vlag", annot=annot, cbar=False, ax=ax1
+        )
+        sns.heatmap(
+            self.F_sd.round(3), annot=annot, cbar=False, ax=ax2
+        )
+
+        ax1.set_xlabel("ctl mean")
+        ax1.set_ylabel("state")
+
+        ax2.set_xlabel("ctl std")
+        ax2.set_ylabel("state")
+
+        plt.tight_layout()
+        return ax1, ax2
+
+    def plot_tau(self, ax):
+        ax.bar(np.arange(len(self.tau)), self.tau)
+        ax.set_xlabel("plan horizon")
+        ax.set_ylabel("pdf")
+        return ax
+
+    def plot_S(self, ax):
+        ax.bar(np.arange(len(self.S)), self.S)
+        ax.set_xlabel("state")
+        ax.set_ylabel("stationary pdf")
+        return ax
+
+    def plot_pi(self, ax, annot=True):
+        sns.heatmap(
+            self.pi.T.round(3), cmap="Greys", annot=annot, cbar=False, ax=ax
+        )
+        ax.set_xlabel("action")
+        ax.set_ylabel("state")
+        return ax
+
+    def plot_episode(self, sim_data, obs_keys, annot=False, cbar=False, figsize=(10, 8)):
+        b = sim_data["ego"]["b"].T
+        a = sim_data["ego"]["a"].T
+        obs = sim_data["ego"]["obs"]
+        ctl = sim_data["ego"]["ctl"]
+        timestamp = np.arange(a.shape[1])
+
+        df_obs = pd.DataFrame(obs, columns=self.A_fields)
+
+        if self.sort_a_id is not None:
+            a = a[self.sort_a_id]
+        if self.sort_s_id is not None:
+            b = b[self.sort_s_id]
+
+        fig, ax = plt.subplots(3 + len(obs_keys), 1, figsize=figsize, sharex=True)
+        sns.heatmap(b, cmap="rocket", annot=annot, cbar=cbar, ax=ax[0])
+        sns.heatmap(a, cmap="rocket", annot=annot, cbar=cbar, ax=ax[1])
+        ax[2].plot(timestamp, ctl)
+
+        for i in range(len(obs_keys)):
+            ax[i + 3].plot(timestamp, df_obs[obs_keys[i]])
+            ax[i + 3].set_ylabel(obs_keys[i])
+
+        ax[0].set_ylabel("belief")
+        ax[1].set_ylabel("action")
+        ax[2].set_ylabel("control")
+        ax[-1].set_xlabel("time (0.1.s)")
+        ax[-1].set_xticklabels(
+            ax[-1].get_xticklabels(), rotation=45, horizontalalignment="right"
+        )
+
+        plt.tight_layout()
+        return fig, ax
 
 def plot_active_inference_parameters(theta, figsize=(15, 12), n_round=2, cmap="viridis"):
     """
