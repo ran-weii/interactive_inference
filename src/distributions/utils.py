@@ -34,3 +34,11 @@ def poisson_pdf(gamma, K):
     poisson_dist = torch.distributions.Poisson(gamma)
     pdf = torch.softmax(poisson_dist.log_prob(Ks), dim=-1)
     return pdf
+
+def kl_divergence(p, q, eps=1e-6):
+    """ Discrete kl divergence """
+    assert p.shape[-1] == q.shape[-1]
+    log_p = torch.log(p + eps)
+    log_q = torch.log(q + eps)
+    kl = torch.sum(p * (log_p - log_q), dim=-1)
+    return kl
