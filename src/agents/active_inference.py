@@ -53,7 +53,7 @@ class ActiveInference(nn.Module):
         Args:
             o (torch.tensor): observation sequence [T, batch_size, obs_dim]
             u (torch.tensor): control sequence [T, batch_size, ctl_dim]
-            h (list of torch.tensor, optional): hidden states [b, a, Q] 
+            h (list of torch.tensor, optional): hidden states [b, a] 
                 used for online inference. Defaults to None.
             theta (dict, optional): agent parameters dict. Defaults to None.
             inference (bool, optional): whether in inference model. Defaults to False
@@ -94,13 +94,11 @@ class ActiveInference(nn.Module):
     def init_hidden(self, o, theta):
         if theta is None:
             theta = self.get_default_parameters() 
-        Q = self.planner.plan(theta)
+        self.planner.plan(theta)
 
         b = torch.softmax(theta["D"], dim=-1)
         b = b * torch.ones(o.shape[-2], self.state_dim)
-        a = torch.softmax(torch.sum(
-            b.unsqueeze(-2) * Q, dim=-1
-        ), dim=-1)
+        a = self.planner(b)
         return b, a
     
     def infer_action(self, a, logp_u):
