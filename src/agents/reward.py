@@ -17,23 +17,26 @@ class ExpectedFreeEnergy(nn.Module):
             self.__class__.__name__, self.state_dim
         )
         return s
+    
+    def forward(self, s_next, b_next, A=None, C=None):
+        """
+        Args:
+            s_next (torch.tensor): predictive state distribution [..., state_dim]
+            b_next (torch.tensor): predictive belief distribution [..., state_dim]
+            A (torch.tensor): observaiton model parameters
+            C (torch.tensor): reward model parameters
+        """
+        assert b_next.shape[-1] == self.C.shape[-1]
+        
+        # reshape C to align with belief shape
+        C = self.C if C is None else C
+        diff_dims = len(b_next.shape) - len(self.C.shape)
+        target_shape = list(C.shape) + [1 for i in range(diff_dims)]
+        
+        H = self.obs_model.entropy(A).view(target_shape).transpose(1, -1)
+        C = torch.softmax(C, dim=-1).view(target_shape).transpose(1, -1)
 
-    def get_default_params(self):
-        theta = {
-            "A": None, "B": self.hmm.B, "C": self.C, 
-            "D": None, "F": None, "tau": None
-        }
-        return theta
-
-    def state_reward(self, theta=None):
-        if theta == None:
-            theta = self.get_default_params()
-
-        H = self.obs_model.entropy(theta["A"]).unsqueeze(-2)
-        C = torch.softmax(theta["C"], dim=-1).unsqueeze(-2).unsqueeze(-2)
-        B = torch.softmax(self.hmm.transform_parameters(theta["B"]), dim=-1)
-
-        kl = kl_divergence(B, C)
-        eh = torch.sum(B * H.unsqueeze(-2), dim=-1)
-        R = -kl - eh
-        return R
+        kl = kl_divergence(b_next, C)
+        eh = torch.sum(s_next * H, dim=-1)
+        r = -kl - eh
+        return r
