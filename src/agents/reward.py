@@ -25,9 +25,12 @@ class ExpectedFreeEnergy(nn.Module):
             b_next (torch.tensor): predictive belief distribution [..., state_dim]
             A (torch.tensor): observaiton model parameters
             C (torch.tensor): reward model parameters
+
+        Returns:
+            r (torch.tensor): negative EFE belief action reward [..., act_dim]
         """
         assert b_next.shape[-1] == self.C.shape[-1]
-        
+
         # reshape C to align with belief shape
         C = self.C if C is None else C
         diff_dims = len(b_next.shape) - len(self.C.shape)
