@@ -3,14 +3,16 @@ import torch.nn as nn
 from src.distributions.models import (
     HiddenMarkovModel, ConditionalDistribution, GeneralizedLinearModel)
 from src.agents.reward import ExpectedFreeEnergy
-from src.agents.planners import QMDP
+from src.agents.planners import QMDP, MCVI
 from src.agents.models import StructuredPerceptionModel
 
 class ActiveInference(nn.Module):
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_model="gmm", obs_dist="mvn", obs_cov="full", 
-        ctl_model="gmm", ctl_dist="mvn", ctl_cov="full"
+        ctl_model="gmm", ctl_dist="mvn", ctl_cov="full",
+        planner="qmdp", tau=1, hidden_dim=64, num_hidden=2, 
+        activation="relu"
         ):
         super(). __init__()
         self.state_dim = state_dim
@@ -32,8 +34,15 @@ class ActiveInference(nn.Module):
             raise NotImplementedError
         
         self.rwd_model = ExpectedFreeEnergy(self.hmm, self.obs_model)
-        self.planner = QMDP(self.hmm, self.obs_model, self.rwd_model, self.H)
-        
+
+        if planner == "qmdp":
+            self.planner = QMDP(self.hmm, self.obs_model, self.rwd_model, self.H)
+        elif planner == "mcvi":
+            self.planner = MCVI(
+                self.hmm, self.obs_model, self.rwd_model, tau,
+                hidden_dim=hidden_dim, num_hidden=num_hidden, activation=activation
+            )
+
         self.reset()
     
     def reset(self):
@@ -87,7 +96,7 @@ class ActiveInference(nn.Module):
             
             logp_b = torch.log(b[1:] + 1e-6)
             logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
-            return logp_pi, logp_obs
+            return logp_pi, logp_obs, b
         else:
             return b, a
     
