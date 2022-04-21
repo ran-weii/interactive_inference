@@ -42,3 +42,12 @@ def kl_divergence(p, q, eps=1e-6):
     log_q = torch.log(q + eps)
     kl = torch.sum(p * (log_p - log_q), dim=-1)
     return kl
+
+def straight_through_sample(y_soft, dim=-1):
+    """ Differentiable sampling of discrete random variable """
+    index = y_soft.max(dim, keepdim=True)[1]
+    y_hard = torch.zeros_like(
+        y_soft, memory_format=torch.legacy_contiguous_format
+    ).scatter_(dim, index, 1.0)
+    out = y_hard - y_soft.detach() + y_soft
+    return out
