@@ -113,7 +113,7 @@ class PopArt(nn.Module):
 
     def forward(self, x):
         y_norm = self.lin(x)
-        y = y_norm * self.sigma + self.mu
+        y = y_norm * self.sigma.data + self.mu.data
         return y, y_norm
 
     def normalize(self, y):
