@@ -46,8 +46,11 @@ def parse_args():
     parser.add_argument("--ctl_model", type=str, choices=["gmm", "glm"], default="gmm", help="agent control model class, default=gmm")
     parser.add_argument("--ctl_dist", type=str, default="mvn", help="agent control distribution, default=mvn")
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
+    parser.add_argument("--planner", type=str, choices=["qmdp", "mcvi"], default="qmdp", help="agent planner, default=qmdp")
+    parser.add_argument("--tau", type=float, default=0.9, help="agent planner discount, default=0.9")
     parser.add_argument("--hidden_dim", type=int, default=32, help="neural network hidden dim, default=32")
     parser.add_argument("--num_hidden", type=int, default=2, help="neural network hidden layers, default=2")
+    parser.add_argument("--activation", type=str, default="relu", help="neural network activation, default=relu")
     parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "srnn", "frnn", "hrnn"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--control_direction", type=str, choices=["lon", "lat", "both"], 
@@ -59,6 +62,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
     parser.add_argument("--obs_penalty", type=float, default=0, help="observation likelihood penalty, default=0")
+    parser.add_argument("--plan_penalty", type=float, default=0, help="planner loss penalty, default=0")
     parser.add_argument("--lr", type=float, default=0.005, help="learning rate, default=1e-3")
     parser.add_argument("--decay", type=float, default=0, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
@@ -158,11 +162,12 @@ def main(arglist):
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
             obs_model=arglist.obs_model, obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
             ctl_model=arglist.ctl_model, ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
+            planner=arglist.planner, tau=arglist.tau, hidden_dim=arglist.hidden_dim, 
+            num_hidden=arglist.num_hidden, activation=arglist.activation
         )
         model = MLEIRL(
-            agent,
-            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
+            agent, obs_penalty=arglist.obs_penalty, plan_penalty=arglist.plan_penalty, 
+            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     elif arglist.method == "birl":
         model = BayesianIRL(
@@ -230,8 +235,8 @@ def main(arglist):
             pd.Series({"epoch": e+1, "time": tnow, "train": "test"}).append(test_stats)
         )
         
-        print("epoch: {}, train, logp_pi: {:.4f}, logp_obs: {:.4f}, t: {:.2f}".format(
-            e + 1, train_stats["logp_pi_mean"], train_stats["logp_obs_mean"], tnow
+        print("epoch: {}, train, logp_pi: {:.4f}, logp_obs: {:.4f}, plan_error: {:.4f}, t: {:.2f}".format(
+            e + 1, train_stats["logp_pi_mean"], train_stats["logp_obs_mean"], train_stats["loss_plan_mean"], tnow
         ))
     
     df_history = pd.DataFrame(history)
