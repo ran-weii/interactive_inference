@@ -1,7 +1,7 @@
 import math
 import torch
 import torch.nn as nn
-from src.agents.models import MLP
+from src.agents.models import MLP, PopArt
 from src.distributions.utils import poisson_pdf
 
 def value_iteration(R, B, H):
@@ -43,7 +43,7 @@ class AbstractPlanner(nn.Module):
         return None
 
     def loss(self, b):
-        return 0
+        return torch.zeros(1)
 
 
 class QMDP(AbstractPlanner):
@@ -94,7 +94,7 @@ class QMDP(AbstractPlanner):
         return Q
 
 
-class NNPlanner(AbstractPlanner):
+class MCVI(AbstractPlanner):
     """ Monte Carlo POMDP solvers with neural network value function """
     def __init__(
         self, hmm, obs_model, rwd_model, tau, hidden_dim, num_hidden, activation
@@ -104,14 +104,30 @@ class NNPlanner(AbstractPlanner):
         self.tau  = tau
         self.state_dim = hmm.state_dim
         self.act_dim = hmm.act_dim
+        self.hidden_dim = hidden_dim
+        self.num_hidden = num_hidden
+        self.activation = activation
 
         self.mlp = MLP(
             self.state_dim, self.act_dim, hidden_dim, num_hidden, activation
         )
+        self.head = PopArt(self.act_dim, self.act_dim)
+    
+    def __repr__(self):
+        s = "{}(tau={}, hidden_dim={}, num_hidden={}, activation={})".format(
+            self.__class__.__name__, self.tau, self.hidden_dim, self.num_hidden, self.activation
+        )
+        return s
 
     def forward(self, b):
-        a = torch.softmax(self.mlp(b), dim=-1)
+        q, _ = self.q_function(b)
+        a = torch.softmax(q, dim=-1)
         return a
+    
+    def q_function(self, b):
+        q = self.mlp(b)
+        q, q_norm = self.head(q)
+        return q, q_norm
 
     def loss(self, b):
         """ 
@@ -125,10 +141,13 @@ class NNPlanner(AbstractPlanner):
         r = self.rwd_model(s_next, b_next)
 
         # compute td error
-        Q = self.mlp(b)
-        V_next = torch.logsumexp(self.mlp(b_next), dim=-1)
-        Q_target = r + self.tau * V_next
-        td_error = 0.5 * (Q - Q_target).pow(2)
+        q_next, _ = self.q_function(b_next)
+        v_next = torch.logsumexp(q_next, dim=-1)
+        q_target = r + self.tau * v_next
+        q_target_norm = self.head.normalize(q_target)
+
+        _, q_norm = self.q_function(b)
+        td_error = 0.5 * (q_norm - q_target_norm).pow(2)
         return td_error
 
     def sample_next_belief(self, b):
