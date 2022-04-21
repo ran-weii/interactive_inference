@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
 from src.distributions.distributions import MultivariateSkewNormal
-from src.distributions.utils import make_covariance_matrix
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
+from src.distributions.utils import make_covariance_matrix, straight_through_sample
 
 class HiddenMarkovModel(nn.Module):
     def __init__(self, state_dim, act_dim):
@@ -195,13 +195,12 @@ class ConditionalDistribution(nn.Module):
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
         return x
     
-    """ NOTE: the computation graph at pi gets broken """
     def ancestral_sample(self, pi, num_samples, params=None):
-        a = torch.distributions.Categorical(pi).sample((num_samples,))
-        x_ = self.sample((num_samples,), params)
+        a_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
+        a_ = straight_through_sample(a_, dim=-1).unsqueeze(-1)
         
         # sample component
-        a_ = nn.functional.one_hot(a, self.z_dim).unsqueeze(-1)
+        x_ = self.sample((num_samples,), params)
         x = torch.sum(a_ * x_.unsqueeze(1), dim=-2)
         return x
 
