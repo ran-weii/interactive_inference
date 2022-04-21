@@ -87,10 +87,13 @@ class ImitationLearning(nn.Module):
     
 
 class MLEIRL(nn.Module):
-    def __init__(self, agent, 
-        obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(
+        self, agent, obs_penalty=0, plan_penalty=0, 
+        lr=1e-3, decay=0, grad_clip=None
+        ):
         super().__init__()
         self.obs_penalty = obs_penalty
+        self.plan_penalty = plan_penalty
         self.lr = lr
         self.decay = decay
         self.grad_clip = grad_clip
@@ -140,12 +143,32 @@ class MLEIRL(nn.Module):
         df_stats = pd.DataFrame(epoch_stats).mean()
         return df_stats
     
+    def planner_loss(self, b):
+        batch_size = b.shape[1]
+        state_dim = b.shape[-1]
+        b = b[1:].view(-1, state_dim).data
+
+        # sample beliefs
+        idx = torch.multinomial(
+            torch.ones(len(b)), num_samples=batch_size * 2, replacement=False
+        )
+        b_batch = b[idx]
+        b_sample = torch.distributions.Dirichlet(
+            1.5 * torch.ones(state_dim)
+        ).sample((batch_size * 2,))
+        b_batch = torch.cat([b_batch, b_sample], dim=0)
+        
+        loss_planner = self.agent.planner.loss(b_batch)
+        return loss_planner
+
     def loss(self, agent_out, mask):
-        [logp_pi, logp_obs] = agent_out
+        [logp_pi, logp_obs, b] = agent_out
+        plan_error = self.planner_loss(b)
         
         loss_pi = -torch.sum(mask * logp_pi)
         loss_obs = -torch.sum(mask * logp_obs)
-        loss = loss_pi + self.obs_penalty * loss_obs
+        loss_plan = torch.sum(plan_error)
+        loss = loss_pi + self.obs_penalty * loss_obs + self.plan_penalty * loss_plan
         
         # compute stats
         nan_mask = mask.clone()
@@ -156,6 +179,7 @@ class MLEIRL(nn.Module):
             "loss": loss.data.numpy(),
             "loss_pi": loss_pi.data.numpy(),
             "loss_obs": loss_obs.data.numpy(),
+            "loss_plan": loss_plan.data.numpy(),
             "logp_pi_mean": np.nanmean(logp_pi_np),
             "logp_pi_std": np.nanstd(logp_pi_np),
             "logp_pi_min": np.nanmin(logp_pi_np),
@@ -164,6 +188,10 @@ class MLEIRL(nn.Module):
             "logp_obs_std": np.nanstd(logp_obs_np),
             "logp_obs_min": np.nanmin(logp_obs_np),
             "logp_obs_max": np.nanmax(logp_obs_np),
+            "loss_plan_mean": plan_error.data.mean().numpy(),
+            "loss_plan_std": plan_error.data.std().numpy(),
+            "loss_plan_min": plan_error.data.min().numpy(),
+            "loss_plan_max": plan_error.data.max().numpy(),
         }
         return loss, stats_dict
     
