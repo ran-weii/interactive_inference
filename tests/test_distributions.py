@@ -1,5 +1,7 @@
 import torch
-from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
+from src.distributions.models import (
+    ConditionalDistribution, GeneralizedLinearModel, 
+    MixtureDensityNetwork, HiddenMarkovModel)
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import poisson_pdf
 
@@ -12,7 +14,7 @@ def test_conditional_distribution():
     
     # synthetic observations and params
     batch_size = 32
-    obs = torch.randn(batch_size, 1, x_dim)
+    obs = torch.randn(batch_size, x_dim)
     mu = torch.randn(batch_size, z_dim, x_dim)
     lv = torch.randn(batch_size, z_dim, x_dim)
     tl = torch.randn(batch_size, z_dim, x_dim, x_dim)
@@ -197,7 +199,7 @@ def test_conditional_distribution_with_flow():
     empirical_distribution = torch.distributions.MultivariateNormal(empirical_mean, empirical_cov)
     log_probs = empirical_distribution.log_prob(obs)
     
-    log_probs_cond = cond_dist.log_prob(obs)
+    log_probs_cond = cond_dist.log_prob(obs.squeeze(1))
     mean_cond = cond_dist.mean()
     variance_cond = cond_dist.variance()
     entropy_cond = cond_dist.entropy()
@@ -213,9 +215,57 @@ def test_conditional_distribution_with_flow():
     assert torch.all((entropy_cond - empirical_distribution.entropy()) < 1e-4)
     print("test_conditional_distribution_with_flow passed")
 
+def test_generalized_linear_model():
+    x_dim = 10
+    z_dim = 5
+    glm = GeneralizedLinearModel(
+        x_dim, z_dim, dist="mvn", cov="diag", batch_norm=True
+    )
+
+    # create synthetic data
+    T = 12
+    batch_size = 32
+    num_samples = 15
+    x = torch.randn(T, batch_size, x_dim)
+
+    pi = torch.softmax(torch.randn(T, batch_size, z_dim), dim=-1)
+    log_probs = glm.mixture_log_prob(pi, x)
+    samples_bma = glm.bayesian_average(pi)
+    samples_ace = glm.ancestral_sample(pi, num_samples)
+    
+    assert list(log_probs.shape) == [T, batch_size]
+    assert list(samples_bma.shape) == [T, batch_size, x_dim]
+    assert list(samples_ace.shape) == [num_samples, T, batch_size, x_dim]
+    print("test_generalized_linear_model passed")
+
+def test_mixture_density_network():
+    x_dim = 10
+    z_dim = 5
+    mdn = MixtureDensityNetwork(
+        x_dim, z_dim, dist="mvn", cov="diag", batch_norm=True
+    )
+
+    # create synthetic data
+    T = 12
+    batch_size = 32
+    num_samples = 15
+    x = torch.randn(T, batch_size, x_dim)
+
+    pi = torch.softmax(torch.randn(T, batch_size, z_dim), dim=-1)
+    log_probs = mdn.mixture_log_prob(pi, x)
+    samples_bma = mdn.bayesian_average(pi)
+    samples_ace = mdn.ancestral_sample(pi, num_samples)
+
+    assert list(log_probs.shape) == [T, batch_size]
+    assert list(samples_bma.shape) == [T, batch_size, x_dim]
+    assert list(samples_ace.shape) == [num_samples, T, batch_size, x_dim]
+    print("test_mixture_density_network passed")
+
 if __name__ == "__main__":
     test_conditional_distribution()
     test_hidden_markov_model()
     test_poisson_pdf()
     test_batch_norm_flow()
     test_conditional_distribution_with_flow()
+    test_generalized_linear_model()
+    test_mixture_density_network()
