@@ -1,9 +1,78 @@
 import torch
 import torch.nn as nn
 from src.agents.active_inference import ActiveInference
+from src.agents.planners import value_iteration, MCVI
+from src.agents.models import MLP, PopArt
+from src.agents.baseline import FullyRecurrentAgent
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import get_active_inference_parameters
+
+def test_value_iteration():
+    torch.manual_seed(0)
+    state_dim = 3
+    act_dim = 2
+    H = 10
+    batch_size = 1
+
+    R = torch.randn(batch_size, act_dim, state_dim)
+    B = torch.softmax(
+        torch.randn(batch_size, act_dim, state_dim, state_dim), dim=-1
+    )
+    Q = value_iteration(R, B, H)
+    print("test_value_iteraction passed")
+
+def test_mlp_model():
+    state_dim = 10
+    act_dim = 5
+    hidden_dim = 12
+    num_hidden = 2
+    activation = "relu"
+
+    mlp = MLP(state_dim, act_dim, hidden_dim, num_hidden, activation)
+    
+    # test static data
+    batch_size = 32
+    x = torch.randn(batch_size, state_dim)
+
+    with torch.no_grad():
+        out = mlp(x)
+    assert list(out.shape) == [batch_size, act_dim]
+
+    # test dynamic data
+    T = 7
+    batch_size = 32
+    x = torch.randn(T, batch_size, state_dim)
+
+    with torch.no_grad():
+        out = mlp(x)
+    assert list(out.shape) == [T, batch_size, act_dim]
+
+    print("test_mlp_model passed")
+
+def test_popart_layer():
+    torch.manual_seed(0)
+    state_dim = 10
+    act_dim = 5
+    popart = PopArt(state_dim, act_dim)
+
+    # create synthetic data
+    T = 12
+    batch_size = 32
+    x = torch.softmax(torch.randn(T, batch_size, state_dim), dim=-1)
+    target = 10 * torch.randn(T, batch_size, act_dim)
+    
+    # test normalization
+    y, y_norm = popart(x)
+    
+    target_norm = popart.normalize(target)
+    y_new, y_norm_new = popart(x)
+    assert list(target_norm.shape) == [T, batch_size, act_dim]
+    assert list(y_new.shape) == [T, batch_size, act_dim]
+
+    y_diff = y_new - y
+    assert torch.all(y_diff.abs() < 1e-5)
+    print("test_popart_layer passed")
 
 def test_active_inference_agent():
     torch.manual_seed(0)
@@ -44,13 +113,12 @@ def test_active_inference_agent():
     assert theta["F"].grad.norm() != 0
     assert theta["tau"].grad.norm() != 0
     
-    assert agent.C.grad == None
     assert agent.obs_model.mu.grad == None
     assert agent.obs_model.lv.grad == None
     assert agent.ctl_model.mu.grad == None
     assert agent.ctl_model.lv.grad == None
-    assert agent.hmm.B.grad == None
-    assert agent.tau.grad == None
+    assert agent.rwd_model.C.grad == None
+    assert agent.planner.tau.grad == None
     
     # test with self parameters
     agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
@@ -58,13 +126,13 @@ def test_active_inference_agent():
     loss = logp_pi.sum()
     loss.backward()
     
-    assert agent.C.grad.norm() != 0
     assert agent.obs_model.mu.grad.norm() != 0
     assert agent.obs_model.lv.grad.norm() != 0
     assert agent.ctl_model.mu.grad.norm() != 0
     assert agent.ctl_model.lv.grad.norm() != 0
-    assert agent.hmm.B.grad.norm() != 0
-    assert agent.tau.grad.norm() != 0
+    assert agent.hmm.B.grad.norm() != 0 
+    assert agent.rwd_model.C.grad.norm() != 0
+    assert agent.planner.tau.grad.norm() != 0
     
     """ test inference """
     num_samples = 10
@@ -80,9 +148,9 @@ def test_active_inference_agent():
         "tau": nn.Parameter(torch.randn(batch_size, 1))
     }
     with torch.no_grad():
-        G, b = agent(obs, u, theta=theta, inference=True)
-        ctl = agent.choose_action_batch(obs, u, theta=theta)
-        ctl_samples = agent.choose_action_batch(obs, u, num_samples=num_samples)
+        out = agent(obs, u, theta=theta, inference=True)
+        ctl = agent.choose_action(obs, u, batch=True, theta=theta)
+        ctl_samples = agent.choose_action(obs, u, batch=True, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -101,9 +169,9 @@ def test_active_inference_agent():
     # test with self parameters
     agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
     with torch.no_grad():
-        G, b = agent(obs, u, inference=False)
-        ctl = agent.choose_action_batch(obs, u)
-        ctl_samples = agent.choose_action_batch(obs, u, num_samples=num_samples)
+        out = agent(obs, u, inference=False)
+        ctl = agent.choose_action(obs, u, batch=True)
+        ctl_samples = agent.choose_action(obs, u, batch=True, num_samples=num_samples)
         
         speed = obs[:, :, 0].unsqueeze(-1).numpy()
         mae = mean_absolute_error(
@@ -146,49 +214,189 @@ def test_get_active_inference_parameters():
     
     print("test_get_active_inference_parameters passed")
 
-def test_active_inference_agent_simulation():
+def test_agent_inference():
     torch.manual_seed(0)
+
+    state_dim = 10
+    obs_dim = 12
+    act_dim = 5
+    ctl_dim = 3
+    H = 15
+    
+    # make synthetic data
+    batch_size = 32
+    T = 7
+    obs = torch.randn(T, batch_size, obs_dim) * 0.1
+    ctl = torch.randn(T, batch_size, ctl_dim) * 0.1
+    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
+    agent.eval()
+    
+    # test batch inference
+    u_batch = agent.choose_action(obs, ctl, batch=True)
+    assert list(u_batch.shape) == [T, batch_size, ctl_dim]
+    
+    # test sequential inference
+    with torch.no_grad():
+        agent.reset()
+
+        a = [torch.empty(0)] * T
+        b = [torch.empty(0)] * T
+        u_seq = [torch.empty(0)] * T
+        u_seq[0] = agent.choose_action(obs[0], ctl[0])
+        
+        b[0] = agent._b.squeeze(0)
+        a[0] = agent._a.squeeze(0)
+        for t in range(T-1):
+            u_seq[t+1] = agent.choose_action(obs[t], ctl[t])
+            b[t+1] = agent._b.squeeze(0)
+            a[t+1] = agent._a.squeeze(0)
+        u_seq = torch.stack(u_seq)
+        b = torch.stack(b)
+        a = torch.stack(a)
+    assert list(u_seq.shape) == [T, batch_size, ctl_dim]
+    
+    u_diff = u_seq - u_batch
+    assert torch.all(u_diff < 1e-5)
+
+    print("test_agent_inference passed")
+
+def test_recurrent_agent():
+    torch.manual_seed(0)
+    torch.autograd.set_detect_anomaly(True)
     
     state_dim = 10
     obs_dim = 12
     act_dim = 5
     ctl_dim = 3
     H = 15
-    agent = ActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
+    agent = FullyRecurrentAgent(state_dim, act_dim, obs_dim, ctl_dim, H)
     agent.eval()
 
-    # test bayesian average action selection
-    agent.reset()
+    # create synthetic dataset
     batch_size = 32
-    T = 10
-    obs = torch.randn(T, batch_size, obs_dim)
-    ctl = None
-    for t in range(T):
-        ctl = agent.choose_action(obs[t], ctl)
-        assert list(ctl.shape) == [batch_size, ctl_dim]
+    T = 15
+    o = torch.randn(T, batch_size, obs_dim) * 3
+    u = torch.randn(T, batch_size, ctl_dim)
     
-    agent.reset()
-    batch_size = 1
-    T = 10
-    obs = torch.randn(T, batch_size, obs_dim)
-    ctl = None
-    for t in range(T):
-        ctl = agent.choose_action(obs[t], ctl)
-        assert list(ctl.shape) == [batch_size, ctl_dim]
+    # test training
+    with torch.no_grad():
+        logp_pi, logp_obs = agent(o, u)
+    assert list(logp_pi.shape) == [T, batch_size]
+    assert list(logp_obs.shape) == [T, batch_size]
 
-    # test ancestral sampling action selection
-    agent.reset()
+    # test batch inference
     num_samples = 10
-    obs = torch.randn(T, batch_size, obs_dim)
-    ctl = None
-    for t in range(T):
-        ctl_sample = agent.choose_action(obs[t], ctl, num_samples=num_samples)
-        ctl = ctl_sample.mean(0)
-        assert list(ctl_sample.shape) == [num_samples, batch_size, ctl_dim]
+    with torch.no_grad():
+        ctl_avg = agent.choose_action(o, u, batch=True)
+        ctl_ace = agent.choose_action(o, u, batch=True, num_samples=num_samples)
+    assert list(ctl_avg.shape) == [T, batch_size, ctl_dim]
+    assert list(ctl_ace.shape) == [num_samples, T, batch_size, ctl_dim]
     
-    print("test_active_inference_agent_simulation passed")
+    # test sequential inference
+    with torch.no_grad():
+        agent.reset()
+
+        a = [torch.empty(0)] * T
+        b = [torch.empty(0)] * T
+        ctl_seq = [torch.empty(0)] * T
+        ctl_seq[0] = agent.choose_action(o[0], u[0])
+        
+        b[0] = agent._b.squeeze(0)
+        a[0] = agent._a.squeeze(0)
+        for t in range(T-1):
+            ctl_seq[t+1] = agent.choose_action(o[t], u[t])
+            b[t+1] = agent._b.squeeze(0)
+            a[t+1] = agent._a.squeeze(0)
+        ctl_seq = torch.stack(ctl_seq)
+        b = torch.stack(b)
+        a = torch.stack(a)
+
+    ctl_diff = ctl_seq - ctl_avg
+    assert list(ctl_seq.shape) == [T, batch_size, ctl_dim]
+    assert torch.all(ctl_diff.abs() < 1e-5)
+
+    print("test_recurrent_agent passed")
+
+def test_nn_planner():
+    torch.manual_seed(0)
+    torch.autograd.set_detect_anomaly(True)
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 11
+    ctl_dim = 3
+    H = 7
+    beta = 0.9
+    hidden_dim = 64
+    num_hidden = 2
+    activation = "relu"
+
+    # create synthetic data
+    T = 12
+    batch_size = 24
+    b = torch.softmax(torch.randn(T, batch_size, state_dim), dim=-1)
+    
+    # test planner separately
+    agent = ActiveInference(
+        state_dim, act_dim, obs_dim, ctl_dim, H
+    )
+    planner = MCVI(
+        agent.hmm, agent.obs_model, agent.rwd_model, beta,
+        hidden_dim, num_hidden, activation,
+        
+    )
+    print(planner)
+
+    a = planner(b)
+    loss = planner.loss(b.view(-1, state_dim))
+    total_loss = torch.sum(loss)
+    total_loss.backward()
+    
+    assert list(a.shape) == [T, batch_size, act_dim]
+    assert list(loss.shape) == [T * batch_size, act_dim]
+    
+    # print(agent.obs_model.mu.grad.norm())
+    # print(agent.obs_model.lv.grad.norm())
+    # print(agent.rwd_model.C.grad.norm())
+    # print(agent.hmm.B.grad.norm())
+
+    assert agent.obs_model.mu.grad.norm() != 0
+    assert agent.obs_model.lv.grad.norm() != 0
+    assert agent.hmm.B.grad.norm() != 0 
+    assert agent.rwd_model.C.grad.norm() != 0
+
+    # test planner with agent
+    H = 0.9
+    agent = ActiveInference(
+        state_dim, act_dim, obs_dim, ctl_dim, H,
+        planner="mcvi"
+    )
+    print(agent)
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.randn(T, batch_size, ctl_dim)
+    logp_pi, logp_obs, _ = agent(o, u)
+    planner_loss = agent.planner.loss(b.view(-1, state_dim))
+    loss = logp_pi.sum() + planner_loss.sum()
+    loss.backward()
+    print(loss)
+
+    print(logp_pi.shape, logp_obs.shape)
+    print(agent.obs_model.mu.grad.norm())
+    print(agent.obs_model.lv.grad.norm())
+    print(agent.rwd_model.C.grad.norm())
+    print(agent.hmm.B.grad.norm())
+    print(agent.ctl_model.mu.grad.norm())
+    print(agent.ctl_model.lv.grad.norm())
+
+    print("test_nn_planner passed")
 
 if __name__ == "__main__":
-    test_active_inference_agent()
-    test_get_active_inference_parameters()
-    test_active_inference_agent_simulation()
+    """ TODO: organize simple tests and complex tests """
+    # test_value_iteration()
+    # test_mlp_model()
+    # test_popart_layer()
+    # test_get_active_inference_parameters()
+
+    # test_active_inference_agent()
+    # test_agent_inference()
+    # test_recurrent_agent()
+    test_nn_planner()
