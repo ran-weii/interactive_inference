@@ -248,6 +248,87 @@ class HMMRecurrentAgent(AbstractAgent):
         return u_pred.squeeze(-3)
 
 
+""" TODO: unify all baseline agents """
+class StructuredHMMRecurrentAgent(AbstractAgent):
+    """ Recurrent agent with HMM recurrent units, fully connected planner, 
+        and gaussian mixture control model
+    """
+    def __init__(
+        self, state_dim, act_dim, obs_dim, ctl_dim, H, 
+        ctl_dist="mvn", ctl_cov="full", hidden_dim=32, num_hidden=2
+        ):
+        super().__init__(state_dim, act_dim, obs_dim, ctl_dim, H)
+        self.D = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
+        self.hmm = HiddenMarkovModel(state_dim, act_dim)
+        self.obs_model = ConditionalDistribution(obs_dim, state_dim, "mvn", "full", batch_norm=True)
+        self.ctl_model = ConditionalDistribution(ctl_dim, act_dim, ctl_dist, ctl_cov, batch_norm=True)
+        self.planner = MLP(state_dim, act_dim, hidden_dim, num_hidden, "relu")
+        self.bn = BatchNormTransform(obs_dim, affine=False)
+
+        nn.init.xavier_normal_(self.D, gain=1.)
+
+    def reset(self):
+        self._b = None
+        self._a = None
+    
+    def forward(self, o, u, h=None, theta=None, inference=False):
+        T = len(u)
+        b = [torch.empty(0)] * (T + 1)
+        a = [torch.empty(0)] * (T + 1)
+        if h is None:
+            b[0], a[0], _ = self.init_hidden(o)
+        else:
+            b[0], a[0] = h
+        
+        logp_o = self.obs_model.log_prob(o)
+        logp_u = self.ctl_model.log_prob(u)
+        for t in range(T):
+            p_a = self.infer_action(a[t], logp_u[t])
+            b[t+1] = self.hmm(logp_o[t], p_a, b[t])
+            a[t+1] = torch.softmax(self.planner(b[t+1]), dim=-1)
+        a = torch.stack(a)
+        b = torch.stack(b)
+        
+        if not inference:
+            logp_pi = self.ctl_model.mixture_log_prob(a[:-1], u)
+            logp_b = torch.log(b[1:] + 1e-6)
+            logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
+            return logp_pi, logp_obs
+        else:
+            return b, a
+
+    def init_hidden(self, o):
+        b0 = torch.softmax(self.D, dim=-1) 
+        b0 = b0 * torch.ones(o.shape[-2], self.state_dim)        
+        a0 = torch.softmax(self.planner(b0), dim=-1)
+        pi0 = self.planner(b0).unsqueeze(0)
+        return b0, a0, pi0
+    
+    def infer_action(self, a, logp_u):
+        p_a = torch.softmax(torch.log(a + 1e-6) + logp_u, dim=-1)
+        return p_a
+
+    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+        if batch:
+            b, a = self.forward(o, u, inference=True)
+            b, a = b[:-1], a[:-1]
+        else:
+            o, u = o.unsqueeze(0), u.unsqueeze(0)
+            if self._b is None: # initial step
+                b, a = self.init_hidden(o)
+            else:
+                h = [self._b, self._a]
+                b, a = self.forward(o, u, h=h, inference=True)
+                b, a = b[1:], a[1:]
+            self._b, self._a = b.view(-1, self.state_dim), a.view(-1, self.act_dim)
+        
+        if num_samples is None:
+            u_pred = self.ctl_model.bayesian_average(a)
+        else:
+            u_pred = self.ctl_model.ancestral_sample(a, num_samples)
+        return u_pred.squeeze(-3)
+
+
 class ExpertNetwork(nn.Module):
     def __init__(self, act_dim, obs_dim, ctl_dim, nb=False, prod=False):
         """ Naive Bayes classifier + gaussian mixture output
