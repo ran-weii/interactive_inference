@@ -68,6 +68,8 @@ class MLP(nn.Module):
         
         if activation == "relu":
             act = nn.ReLU()
+        elif activation == "silu":
+            act = nn.SiLU()
         else:
             raise NotImplementedError
 
