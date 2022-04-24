@@ -148,7 +148,7 @@ class ConditionalDistribution(nn.Module):
             [mu, lv, tl, sk] = self.transform_parameters(params)
         else:
             [mu, lv, tl, sk] = self.mu, self.lv, self.tl, self.sk
-        L = make_covariance_matrix(lv, tl, cholesky=True)
+        L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
         if self.dist == "mvn":
             distribution = MultivariateNormal(mu, scale_tril=L)
