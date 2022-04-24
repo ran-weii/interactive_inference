@@ -101,6 +101,19 @@ def test_hidden_markov_model():
     b_t = hmm(logp_o, a, b)
     assert b_t.shape == b.shape
     
+    # numerical accuracy test
+    state_dim = 2
+    act_dim = 2
+    hmm = HiddenMarkovModel(state_dim, act_dim)
+
+    logp_o = torch.tensor([[0.4, 0.6]]).log()
+    a = torch.tensor([[1, 0]])
+    b = torch.tensor([[0.7, 0.3]])
+    B = torch.tensor([[[0.3, 0.7], [0.7, 0.3]], [[0.6, 0.4], [0.4, 0.6]]]).log()
+    b_t_true = torch.tensor([[0.3256, 0.6744]])
+    b_t = hmm(logp_o, a, b, B=B)
+    
+    assert torch.all(torch.abs(b_t - b_t_true) < 1e-4)
     print("test_hidden_markov_model passed")
 
 def test_poisson_pdf():
@@ -262,10 +275,10 @@ def test_mixture_density_network():
     print("test_mixture_density_network passed")
 
 if __name__ == "__main__":
-    test_conditional_distribution()
+    # test_conditional_distribution()
     test_hidden_markov_model()
-    test_poisson_pdf()
-    test_batch_norm_flow()
-    test_conditional_distribution_with_flow()
-    test_generalized_linear_model()
-    test_mixture_density_network()
+    # test_poisson_pdf()
+    # test_batch_norm_flow()
+    # test_conditional_distribution_with_flow()
+    # test_generalized_linear_model()
+    # test_mixture_density_network()
