@@ -97,21 +97,24 @@ class QMDP(AbstractPlanner):
 class MCVI(AbstractPlanner):
     """ Monte Carlo POMDP solvers with neural network value function """
     def __init__(
-        self, hmm, obs_model, rwd_model, tau, hidden_dim, num_hidden, activation
+        self, hmm, obs_model, rwd_model, tau, 
+        hidden_dim, num_hidden, activation, popart=False
         ):
         super().__init__(hmm, obs_model, rwd_model)
-        assert tau < 1
+        assert tau <= 1
         self.tau  = tau
         self.state_dim = hmm.state_dim
         self.act_dim = hmm.act_dim
         self.hidden_dim = hidden_dim
         self.num_hidden = num_hidden
         self.activation = activation
+        self.popart = popart
 
         self.mlp = MLP(
             self.state_dim, self.act_dim, hidden_dim, num_hidden, activation
         )
-        self.head = PopArt(self.act_dim, self.act_dim)
+        if self.popart:
+            self.head = PopArt(self.act_dim, self.act_dim)
     
     def __repr__(self):
         s = "{}(tau={}, hidden_dim={}, num_hidden={}, activation={})".format(
@@ -126,7 +129,10 @@ class MCVI(AbstractPlanner):
     
     def q_function(self, b):
         q = self.mlp(b)
-        q, q_norm = self.head(q)
+        if self.popart:
+            q, q_norm = self.head(q)
+        else:
+            q_norm = q
         return q, q_norm
 
     def loss(self, b):
@@ -144,9 +150,12 @@ class MCVI(AbstractPlanner):
         q_next, _ = self.q_function(b_next)
         v_next = torch.logsumexp(q_next, dim=-1)
         q_target = r + self.tau * v_next
-        q_target_norm = self.head.normalize(q_target)
+        if self.popart:
+            q_target_norm = self.head.normalize(q_target)
+        else:
+            q_target_norm = q_target
 
-        _, q_norm = self.q_function(b)
+        q, q_norm = self.q_function(b)
         td_error = 0.5 * (q_norm - q_target_norm).pow(2)
         return td_error
 
