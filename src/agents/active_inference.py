@@ -85,7 +85,7 @@ class ActiveInference(nn.Module):
         logp_o = self.obs_model.log_prob(o, theta["A"])
         logp_u = self.ctl_model.log_prob(u, theta["F"])
         for t in range(T):
-            p_a = self.infer_action(a[t], logp_u[t])
+            p_a = self.ctl_model.infer(a[t], u[t], logp_x=logp_u[t], params=theta["F"])
             b[t+1] = self.hmm(logp_o[t], p_a, b[t], B=theta["B"])
             a[t+1] = self.planner(b[t+1])
         a = torch.stack(a)
@@ -109,13 +109,6 @@ class ActiveInference(nn.Module):
         b = b * torch.ones(o.shape[-2], self.state_dim)
         a = self.planner(b)
         return b, a
-    
-    def infer_action(self, a, logp_u):
-        if self.ctl_model == "gmm":
-            p_a = torch.softmax(torch.log(a + 1e-6) + logp_u, dim=-1)
-        else:
-            p_a = a
-        return p_a
 
     def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
         """ 
