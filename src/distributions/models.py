@@ -190,6 +190,12 @@ class ConditionalDistribution(nn.Module):
         distribution = self.get_distribution_class(params)
         return distribution.rsample(sample_shape)
     
+    def infer(self, prior, x, logp_x=None, params=None):
+        if logp_x is None:
+            logp_x = self.log_prob(x, params)
+        post = torch.softmax(torch.log(prior + 1e-6) + logp_x, dim=-1)
+        return post
+
     def bayesian_average(self, pi, params=None):
         mu = self.mean(params)
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
@@ -256,6 +262,9 @@ class GeneralizedLinearModel(ConditionalDistribution):
     def mixture_log_prob(self, pi, x, params=None):
         distribution = self.get_mixture_distribution_class(pi, params)
         return distribution.log_prob(x)
+    
+    def infer(self, prior, x, logp_x=None, params=None):
+        return prior
 
     def ancestral_sample(self, pi, num_samples, params=None):
         distribution = self.get_mixture_distribution_class(pi, params)
