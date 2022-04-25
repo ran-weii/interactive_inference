@@ -3,19 +3,16 @@ import pandas as pd
 import torch 
 import torch.nn as nn
 from src.agents.active_inference import StructuredActiveInference
-from src.agents.baseline import ExpertNetwork
 
 class ImitationLearning(nn.Module):
-    def __init__(self, act_dim, obs_dim, ctl_dim, 
-            obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(self, agent, obs_penalty=0, 
+        lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.obs_penalty = obs_penalty
         self.lr = lr
         self.decay = decay
         self.grad_clip = grad_clip
-        self.agent = ExpertNetwork(
-            act_dim, obs_dim, ctl_dim, nb=True, prod=False
-        )
+        self.agent = agent
         self.optimizers = [torch.optim.Adam(
             self.agent.parameters(), lr=lr, weight_decay=decay
         )]
@@ -102,10 +99,14 @@ class MLEIRL(nn.Module):
         self.optimizers = [torch.optim.Adam(
             self.agent.parameters(), lr=lr, weight_decay=decay
         )]
+
+        self.grad_history = []
         
     def train_epoch(self, loader):
         self.train()
         
+        """ debug gradients """
+        epoch_grads = []
         epoch_stats = []
         num_samples = 0
         for i, batch in enumerate(loader):
@@ -115,6 +116,9 @@ class MLEIRL(nn.Module):
             
             loss.backward()
             
+            """ debug gradients """
+            epoch_grads.append(self.get_grad_stats())
+
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 
@@ -125,6 +129,7 @@ class MLEIRL(nn.Module):
             epoch_stats.append(stats)
             num_samples += u.shape[1]
         
+        self.grad_history.append(epoch_grads[-1])
         df_stats = pd.DataFrame(epoch_stats).mean()
         return df_stats
     
@@ -165,9 +170,10 @@ class MLEIRL(nn.Module):
         [logp_pi, logp_obs, b] = agent_out
         plan_error = self.planner_loss(b)
         
-        loss_pi = -torch.sum(mask * logp_pi)
-        loss_obs = -torch.sum(mask * logp_obs)
-        loss_plan = torch.sum(plan_error)
+        loss_pi = -torch.mean(torch.sum(mask * logp_pi, dim=0))
+        loss_obs = -torch.mean(torch.sum(mask * logp_obs, dim=0))
+        loss_plan = torch.mean(plan_error)
+        
         loss = loss_pi + self.obs_penalty * loss_obs + self.plan_penalty * loss_plan
         
         # compute stats
@@ -194,6 +200,21 @@ class MLEIRL(nn.Module):
             "loss_plan_max": plan_error.data.max().numpy(),
         }
         return loss, stats_dict
+
+    def get_grad_stats(self):
+        grad_dict = []
+        for name, p in self.agent.named_parameters():
+            if p.grad is not None:
+                grad = p.grad.data
+                grad_dict.append({
+                    "p": name,
+                    "mean": grad.mean().numpy(),
+                    "std": grad.std().numpy(),
+                    "min": grad.min().numpy(),
+                    "max": grad.max().numpy(),
+                    "norm": grad.norm().numpy()
+                })
+        return grad_dict
     
 
 class MLEIRL_new(MLEIRL):
