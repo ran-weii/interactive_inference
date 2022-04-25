@@ -276,7 +276,7 @@ class StructuredHMMRecurrentAgent(AbstractAgent):
         b = [torch.empty(0)] * (T + 1)
         a = [torch.empty(0)] * (T + 1)
         if h is None:
-            b[0], a[0], _ = self.init_hidden(o)
+            b[0], a[0] = self.init_hidden(o)
         else:
             b[0], a[0] = h
         
@@ -301,8 +301,7 @@ class StructuredHMMRecurrentAgent(AbstractAgent):
         b0 = torch.softmax(self.D, dim=-1) 
         b0 = b0 * torch.ones(o.shape[-2], self.state_dim)        
         a0 = torch.softmax(self.planner(b0), dim=-1)
-        pi0 = self.planner(b0).unsqueeze(0)
-        return b0, a0, pi0
+        return b0, a0
     
     def infer_action(self, a, logp_u):
         p_a = torch.softmax(torch.log(a + 1e-6) + logp_u, dim=-1)
