@@ -16,6 +16,12 @@ def dist_two_points(x1, y1, x2, y2):
     """ Two point distance formula """
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
 
+def mid_point(x1, y1, x2, y2):
+    """ Mid point formula """
+    x = (x1 + x2) / 2
+    y = (y1 + y2) / 2
+    return x, y
+
 def get_heading(x1, y1, x2, y2):
     """ Heading of vector (x1, y1) -> (x2, y2) """
     delta_y = y2 - y1
