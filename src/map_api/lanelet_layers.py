@@ -2,7 +2,7 @@ import numpy as np
 import networkx as nx
 from shapely.geometry import Point, LineString, Polygon
 from shapely import ops
-from src.data.geometry import get_heading, get_cardinal_direction
+from src.data.geometry import get_heading, get_cardinal_direction, mid_point
 
 class L2Point:
     def __init__(self, id_, metric_point, geo_point, type_, point_subtype):
@@ -52,6 +52,27 @@ class Cell:
             right_bound_coords[0][0], right_bound_coords[0][1], 
             right_bound_coords[1][0], right_bound_coords[1][1]
         )
+
+        self._center_line = None
+    
+    @property
+    def center_line(self):
+        if self._center_line:
+            return self._center_line
+        
+        left_bound_coords = list(self.left_bound.coords)
+        right_bound_coords = list(self.right_bound.coords)
+
+        pt1 = mid_point(
+            left_bound_coords[0][0], left_bound_coords[0][1], 
+            right_bound_coords[0][0], right_bound_coords[0][1], 
+        )
+        pt2 = mid_point(
+            left_bound_coords[1][0], left_bound_coords[1][1], 
+            right_bound_coords[1][0], right_bound_coords[1][1], 
+        )
+        self._center_line = LineString([pt1, pt2])
+        return self._center_line
 
        
 class Lanelet:
