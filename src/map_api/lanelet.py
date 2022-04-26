@@ -56,7 +56,8 @@ class MapReader:
         return self._cells
 
     def match(self, x, y, target_lane_id=None, max_cells=5):
-        """ Match point to map
+        """ Match point to map and return lane positions. 
+            Left of target line is positive and right of target line is negative. 
 
         Args:
             x (float): target point x coordinate
@@ -69,6 +70,7 @@ class MapReader:
             cell_id (int): matched cell id.Returns None if not matched
             left_bound_dist (float): distance to cell left bound. Returns None if not matched
             right_bound_dist (float): distance to cell right bound. Returns None if not matched
+            center_line_dist (float): distance to cell center line. Returns None if not matched
             cell_headings (np.array): array of left and right lookahead cell headings [max_cells, 2]. 
                 nonpresent cells are filled with zeros.
         """
@@ -95,6 +97,7 @@ class MapReader:
         cell_id = None
         left_bound_dist = None
         right_bound_dist = None
+        center_line_dist = None
         cell_headings = np.zeros((max_cells, 2)) 
         for lane_id, lane in search_lanes.items():
             is_contain = lane.polygon.contains(p)
@@ -106,6 +109,7 @@ class MapReader:
                 cell = lane.cells[cell_id]
                 left_bound_coords = cell.left_bound.coords
                 right_bound_coords = cell.right_bound.coords
+                center_line_coords = cell.center_line.coords
 
                 # compute directed lane distance
                 left_bound_card = get_cardinal_direction(
@@ -114,19 +118,23 @@ class MapReader:
                 right_bound_card = get_cardinal_direction(
                     right_bound_coords[0][0], right_bound_coords[0][1], cell.heading, x, y
                 )
+                center_line_card = get_cardinal_direction(
+                    center_line_coords[0][0], center_line_coords[0][1], cell.heading, x, y
+                )
                 left_bound_dist = -np.sign(left_bound_card) * p.distance(cell.left_bound)
                 right_bound_dist = np.sign(right_bound_card) * p.distance(cell.right_bound)
-
+                center_line_dist = np.sign(center_line_card) * p.distance(cell.center_line)
+                
                 # compute lookahead cell headings
                 last_cell_id = min(num_cells, cell_id + max_cells)
                 cell_headings[:last_cell_id - cell_id] += np.array(
                     [[l.left_bound_heading, l.right_bound_heading] 
                     for l in lane.cells[cell_id:last_cell_id]]
                 )
-                return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
+                return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
         if not matched:
             lane_id = None
-        return lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings
+        return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
     
     def plot(self, option="ways", annot=True, figsize=(15, 6)):
         """

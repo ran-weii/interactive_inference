@@ -82,7 +82,8 @@ def smooth_one_track(df_one_track, kf):
 
 def match_lane(map_data, x, y, max_cells):
     """ Match point (x, y) to lane """
-    lane_id, cell_id, left_bound_dist, right_bound_dist, cell_headings = map_data.match(x, y, max_cells)
+    (lane_id, cell_id, left_bound_dist, right_bound_dist, 
+    center_line_dist, cell_headings) = map_data.match(x, y, max_cells)
     df_lane_pos = pd.Series({
         "lane_id": lane_id, 
         "cell_id": cell_id, 
