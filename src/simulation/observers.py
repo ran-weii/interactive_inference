@@ -22,7 +22,8 @@ class RelativeObserver:
         [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = obs_ego[:5].tolist()
 
         target_lane_id = None if self.t == 0 else self.target_lane_id
-        lane_id, cell_id, left_bound_dist, right_bound_dist, _ = self.map_data.match(
+        (lane_id, cell_id, left_bound_dist, right_bound_dist, 
+        center_line_dist, _) = self.map_data.match(
             x_ego, y_ego, target_lane_id=target_lane_id
         )
 
