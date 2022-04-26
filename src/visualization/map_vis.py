@@ -123,7 +123,9 @@ def plot_lanes(map_data, ax, plot_cells=False, annot=True, alpha=0.4):
         else:
             for cell in lane.cells:
                 cell_polygon = cell.polygon
+                cell_centerline = cell.center_line
                 ax.fill(*cell_polygon.exterior.xy, alpha=alpha)
+                ax.plot(*cell_centerline.xy, color="g", linewidth=1, zorder=10, dashes=[5, 10])
         if annot:
             for cell in lane.cells[:1]:
                 centroid_coords = list(cell.polygon.centroid.coords)[0]
