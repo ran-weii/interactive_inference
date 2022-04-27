@@ -114,7 +114,7 @@ def vector_projection(x1, y1, x2, y2, return_vec=False):
         x1 (np.array): vector 1 x coor
         y1 (np.array): vector 1 y coor
         x2 (np.array): vector 2 x coor
-        y2 (np.array): vector 3 y coor
+        y2 (np.array): vector 2 y coor
         return_vec (bool, optional): return projection vector 
             in world coordinate, default=False
     
@@ -134,3 +134,33 @@ def vector_projection(x1, y1, x2, y2, return_vec=False):
         x3 = (x1*x2 + y1*y2).reshape(-1, 1) * b_unit
         y3 = a - x3
     return x3, y3
+
+def coord_transformation(x, y, e1, e2, theta=None, inverse=False):
+    """ 2D vector coordinate transformation 
+    (e1, e2) is the x axis of the new coordinate system in the origional coordinate.
+    
+    Args:
+        x (np.array): vector x coord
+        y (np.array): vector y coord
+        e1 (np.array): target coordinate x axis' x coord
+        e2 (np.array): target coordinate x axis' y coord
+        theta (np.array, optional): target coord rotation angle, if used overwrite e1 and e2
+        inverse (bool ,optional): whether to perform inverse transformation. Defaults to False.
+    
+    Returns:
+        x1 (np.array): x in new coord
+        y1 (np.array): y in new coord
+    """
+    if theta is None:
+        theta = np.arctan2(e2, e1)
+    
+    sin = np.sin(theta)
+    cos = np.cos(theta)
+    
+    if not inverse:
+        x1 = cos * x + sin * y
+        y1 = -sin * x + cos * y
+    else:
+        x1 = cos * x - sin * y
+        y1 = sin * x + cos * y
+    return x1, y1

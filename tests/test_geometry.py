@@ -1,6 +1,7 @@
 import numpy as np
 from src.data.geometry import (
-    closest_point_on_line, get_cardinal_direction, is_above_line)
+    closest_point_on_line, get_cardinal_direction, 
+    is_above_line, coord_transformation)
 
 def test_closest_point_on_line():
     x, y = 0, 0 
@@ -101,7 +102,64 @@ def test_is_above_line():
     
     print("test_is_above_line passed")
 
+def test_coord_transformation():
+    # test quadrant 1
+    x, y = 1, 0
+    e1, e2 = np.sqrt(3), 1
+    theta = np.arctan2(e2, e1)
+    
+    # test transformation with coord basis
+    x1, y1 = coord_transformation(x, y, e1, e2, theta=None, inverse=False)
+    x2, y2 = coord_transformation(x1, y1, e1, e2, theta=None, inverse=True)
+
+    # test transformation with rotation angle
+    x3, y3 = coord_transformation(x, y, 0, 0, theta=theta, inverse=False)
+    x4, y4 = coord_transformation(x1, y1, 0, 0, theta=theta, inverse=True)
+    
+    assert np.isclose(np.array([x1, y1]), np.array([0.5 * np.sqrt(3), -0.5])).all()
+    assert np.isclose(np.array([x2, y2]), np.array([x, y])).all()
+
+    assert np.isclose(np.array([x3, y3]), np.array([0.5 * np.sqrt(3), -0.5])).all()
+    assert np.isclose(np.array([x4, y4]), np.array([x, y])).all()
+
+    # test quadrant 2
+    x, y = 1, 0
+    e1, e2 = -np.sqrt(3), 1
+    theta = np.arctan2(e2, e1)
+    x1, y1 = coord_transformation(x, y, e1, e2, theta=None, inverse=False)
+    x2, y2 = coord_transformation(x1, y1, e1, e2, theta=None, inverse=True)
+    assert np.isclose(np.array([x1, y1]), np.array([-0.5 * np.sqrt(3), -0.5])).all()
+    assert np.isclose(np.array([x2, y2]), np.array([x, y])).all()
+    
+    # test quadrant 3
+    x, y = 1, 0
+    e1, e2 = -np.sqrt(3), -1
+    theta = np.arctan2(e2, e1)
+    x1, y1 = coord_transformation(x, y, e1, e2, theta=None, inverse=False)
+    x2, y2 = coord_transformation(x1, y1, e1, e2, theta=None, inverse=True)
+    assert np.isclose(np.array([x1, y1]), np.array([-0.5 * np.sqrt(3), 0.5])).all()
+    assert np.isclose(np.array([x2, y2]), np.array([x, y])).all()
+
+    # test quadrant 4
+    x, y = 1, 0
+    e1, e2 = -np.sqrt(3), -1
+    theta = np.arctan2(e2, e1)
+    x1, y1 = coord_transformation(x, y, e1, e2, theta=None, inverse=False)
+    x2, y2 = coord_transformation(x1, y1, e1, e2, theta=None, inverse=True)
+    assert np.isclose(np.array([x1, y1]), np.array([-0.5 * np.sqrt(3), 0.5])).all()
+    assert np.isclose(np.array([x2, y2]), np.array([x, y])).all()
+
+    # test self projection
+    x, y = -2.269, -0.149
+    e1, e2 = -2.269, -0.149
+    x1, y1 = coord_transformation(x, y, e1, e2, theta=None, inverse=False)
+    x2, y2 = coord_transformation(x1, y1, e1, e2, theta=None, inverse=True)
+    assert np.isclose(np.array([x1, y1]), np.array([np.linalg.norm([x, y]), 0])).all()
+    assert np.isclose(np.array([x2, y2]), np.array([x, y])).all()
+    print("test_coor_transformation passed")
+
 if __name__ == "__main__":
     test_closest_point_on_line()
     test_get_cardinal_direction()
     test_is_above_line()
+    test_coord_transformation()
