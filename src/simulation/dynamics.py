@@ -1,7 +1,7 @@
 import numpy as np
 
 class ConstantAcceleration:
-    def __init__(self, dt):
+    def __init__(self, dt=0.1):
         """
         Constant acceleration dynamics model with state variables
             [x, y, xv, xy, ax, ay]
