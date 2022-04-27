@@ -98,7 +98,7 @@ class MapReader:
         left_bound_dist = None
         right_bound_dist = None
         center_line_dist = None
-        cell_headings = np.zeros((max_cells, 2)) 
+        cell_headings = np.zeros((max_cells, 3)) 
         for lane_id, lane in search_lanes.items():
             is_contain = lane.polygon.contains(p)
             is_continue = True if target_lane_id is not None or is_contain else False
@@ -128,7 +128,7 @@ class MapReader:
                 # compute lookahead cell headings
                 last_cell_id = min(num_cells, cell_id + max_cells)
                 cell_headings[:last_cell_id - cell_id] += np.array(
-                    [[l.left_bound_heading, l.right_bound_heading] 
+                    [[l.left_bound_heading, l.right_bound_heading, l.center_line_heading] 
                     for l in lane.cells[cell_id:last_cell_id]]
                 )
                 return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings

@@ -54,6 +54,11 @@ class Cell:
         )
 
         self._center_line = None
+        center_line_coords = list(self.center_line.coords)
+        self.center_line_heading = get_heading(
+            center_line_coords[0][0], center_line_coords[0][1],
+            center_line_coords[1][0], center_line_coords[1][1]
+        )
     
     @property
     def center_line(self):
