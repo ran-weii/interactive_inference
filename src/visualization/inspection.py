@@ -18,11 +18,11 @@ def get_active_inference_parameters(agent):
     A_mu = agent.obs_model.mean().data.squeeze(0)
     A_sd = torch.sqrt(agent.obs_model.variance()).data.squeeze(0)
     B = torch.softmax(agent.hmm.B, dim=-1).data.squeeze(0)
-    C = torch.softmax(agent.C, dim=-1).data.squeeze(0)
+    C = torch.softmax(agent.rwd_model.C, dim=-1).data.squeeze(0)
     D = torch.softmax(agent.hmm.D, dim=-1).data.squeeze(0)
     F_mu = agent.ctl_model.mean().data.squeeze(0)
     F_sd = torch.sqrt(agent.ctl_model.variance()).data.squeeze(0)
-    tau_dist = poisson_pdf(agent.tau.exp(), agent.H).data.squeeze(0)
+    tau_dist = poisson_pdf(agent.planner.tau.exp(), agent.H).data.squeeze(0)
     tau = tau_dist.dot(torch.arange(len(tau_dist)) + 1.)
     
     theta = {
@@ -78,7 +78,7 @@ class ModelExplainer:
 
     def get_policy(self):
         theta = self.agent.get_default_parameters()
-        Q = self.agent.plan(theta)
+        Q = self.agent.planner.plan(theta)
         pi = torch.softmax(Q, dim=-2).squeeze(0)
         return pi.data.numpy()
 
