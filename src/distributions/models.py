@@ -53,7 +53,7 @@ class HiddenMarkovModel(nn.Module):
     
     
 class ConditionalDistribution(nn.Module):
-    def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=False):
+    def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=True):
         """
         Args:
             x_dim (int): observed output dimension
