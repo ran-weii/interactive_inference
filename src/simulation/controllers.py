@@ -140,9 +140,12 @@ class AuxiliaryController:
             self.controller = CEM(LaneMonitor(map_data), 1)
 
     def choose_action(self, obs, ctl_agent, ctl_data):
-        ctl_agent = ctl_agent.numpy().reshape(-1)
+        ctl_agent = ctl_agent.data.numpy().reshape(-1)
         if self.ctl_direction == "lon":
-            ctl = ctl_data[:, 0]
+            ctl_lon, _ = coord_transformation(
+                ctl_data[0], 0, obs["ego"][2], obs["ego"][3]
+            )
+            ctl = torch.tensor([ctl_lon]).to(torch.float32)
         elif self.ctl_direction == "lat":
             state = np.concatenate([obs["ego"][:4], ctl_agent[:1]], axis=-1)
             ctl = self.controller(state)
