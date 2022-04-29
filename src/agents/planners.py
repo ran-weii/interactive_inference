@@ -1,8 +1,7 @@
-import math
 import torch
 import torch.nn as nn
 from src.agents.models import MLP, PopArt
-from src.distributions.utils import poisson_pdf
+from src.distributions.utils import poisson_pdf, rectify
 
 def value_iteration(R, B, H):
     """
@@ -51,6 +50,8 @@ class QMDP(AbstractPlanner):
     def __init__(self, hmm, obs_model, rwd_model, H):
         super().__init__(hmm, obs_model, rwd_model)
         assert isinstance(H, int)
+        self.state_dim = hmm.state_dim
+        self.act_dim = hmm.act_dim
         self.H = H
         self.tau = nn.Parameter(torch.randn(1, 1), requires_grad=True)
         nn.init.uniform_(self.tau, a=-1, b=1)
@@ -84,8 +85,7 @@ class QMDP(AbstractPlanner):
             theta = self.get_default_params()
         
         B = torch.softmax(self.hmm.transform_parameters(theta["B"]), dim=-1)
-        h = theta["tau"].clip(math.log(1e-6), math.log(1e6)).exp()
-        h = poisson_pdf(h, self.H)[..., None, None]
+        h = poisson_pdf(rectify(theta["tau"]), self.H)[..., None, None]
         
         R = self.rwd_model(B, B, A=theta["A"], C=theta["C"])
         Q = value_iteration(R, B, self.H)
@@ -169,7 +169,7 @@ class MCVI(AbstractPlanner):
             b_next (torch.tensor): next belief distribution [batch_size, act_dim, state_dim]
         """
         B = torch.softmax(self.hmm.B, dim=-1)
-        s_next = torch.sum(B * b.unsqueeze(1).unsqueeze(-1), dim=-1)
+        s_next = torch.sum(B * b.unsqueeze(1).unsqueeze(-1), dim=-2)
 
         # sample next observation and compute belief update
         o_next = self.obs_model.ancestral_sample(s_next, 1).squeeze(0)
