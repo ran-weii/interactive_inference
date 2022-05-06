@@ -52,7 +52,7 @@ class ActiveInference(nn.Module):
 
     def get_default_parameters(self):
         theta = {
-            "A": None, "B": self.hmm.B, "C": self.rwd_model.C, 
+            "A": None, "B": self.hmm.B, "C": None, 
             "D": self.hmm.D, "F": None, "tau": self.planner.tau
         }
         return theta
