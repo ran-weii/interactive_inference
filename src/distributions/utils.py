@@ -19,20 +19,21 @@ def rectify(x, method="exp", low=1e-6, high=1e6):
         out = F.elu(x.clip(low, high)) + 1
     return out
 
-def make_covariance_matrix(logvar, tril, cholesky=True, lv_rectify="exp"):
+def make_covariance_matrix(logvar, tril=None, cholesky=True, lv_rectify="exp"):
     """ Make full covarance matrix
     
     Args:
         logvar (torch.tensor): log variance vector [batch_size, dim]
-        tril (torch.tensor): unmaksed lower triangular matrix [batch_size, dim, dim]
+        tril (torch.tensor, optional): unmaksed lower triangular matrix [batch_size, dim, dim]. Defaults to None.
         cholesky (bool, optional): return cholesky decomposition. Defaults to False.
         lv_rectify (str, optional): variance rectification method ["exp", "elu], Defaults to "exp".
     Returns:
         L (torch.tensor): scale_tril or cov [batch_size, dim, dim]
     """
     var = rectify(logvar, method=lv_rectify)
-    L = torch.tril(tril, diagonal=-1)
-    L = L + torch.diag_embed(var)
+    L = torch.diag_embed(var)
+    if tril is not None:
+        L = L + torch.tril(tril, diagonal=-1)
     
     if not cholesky:
         L = torch.bmm(L, L.transpose(-1, -2))
@@ -69,3 +70,8 @@ def straight_through_sample(y_soft, dim=-1):
     ).scatter_(dim, index, 1.0)
     out = y_hard - y_soft.detach() + y_soft
     return out
+
+def softmax(x, dims=-1):
+    x_ = x - x.amax(dims, keepdim=True)
+    ex = rectify(x_)
+    return ex / ex.sum(dims, keepdim=True)

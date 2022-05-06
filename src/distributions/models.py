@@ -143,7 +143,7 @@ class ConditionalDistribution(nn.Module):
         
         return mu, lv, tl, sk
     
-    def get_distribution_class(self, params=None):
+    def get_distribution_class(self, params=None, transform=True):
         if params is not None:
             [mu, lv, tl, sk] = self.transform_parameters(params)
         else:
@@ -155,7 +155,7 @@ class ConditionalDistribution(nn.Module):
         elif self.dist == "mvsn":
             distribution = MultivariateSkewNormal(mu, sk, scale_tril=L)
         
-        if self.batch_norm:
+        if self.batch_norm and transform:
             distribution = SimpleTransformedModule(distribution, [self.bn])
         return distribution
     
@@ -202,12 +202,12 @@ class ConditionalDistribution(nn.Module):
         return x
     
     def ancestral_sample(self, pi, num_samples, params=None):
-        a_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
-        a_ = straight_through_sample(a_, dim=-1).unsqueeze(-1)
+        z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
+        z_ = straight_through_sample(z_, dim=-1).unsqueeze(-1)
         
         # sample component
-        x_ = self.sample((num_samples,), params)
-        x = torch.sum(a_ * x_.unsqueeze(1), dim=-2)
+        x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
+        x = torch.sum(z_ * x_, dim=-2)
         return x
 
 
