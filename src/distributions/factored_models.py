@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
+from src.distributions.distributions import SkewNormal
 from src.distributions.utils import straight_through_sample, rectify
 
 class FactoredHiddenMarkovModel(nn.Module):
@@ -126,6 +127,8 @@ class FactoredConditionalDistribution(nn.Module):
             distribution = torch.distributions.Normal(mu, rectify(lv))
         elif self.dist == "laplace":
             distribution = torch.distributions.Laplace(mu, rectify(lv))
+        elif self.dist == "mvsn":
+            distribution = SkewNormal(sk, mu, rectify(lv))
         
         if self.batch_norm and transform:
             distribution = SimpleTransformedModule(distribution, [self.bn])
