@@ -14,9 +14,11 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.agents.active_inference import ActiveInference
+from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
-    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
-from src.irl.algorithms import MLEIRL
+    StructuredRecurrentAgent, FullyRecurrentAgent, 
+    HMMRecurrentAgent, StructuredHMMRecurrentAgent)
+from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import RelativeObserver
 from src.visualization.animation import animate, save_animation
@@ -51,7 +53,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--explain_agent", type=bool_, default=True)
@@ -89,7 +91,11 @@ def eval_offline(track_data, agent):
     a = torch.stack(a, dim=0).squeeze(1)
     return u.data.squeeze(-2), u_batch.data.squeeze(-2), u_seq
 
-def eval_episode(env, observer, agent, eps_id, data, control_direction, max_steps=1000):
+def eval_episode(
+    env, observer, agent, eps_id, data, control_direction, 
+    control_method="ace", num_samples=1, max_steps=1000, seed=0
+    ):
+    torch.manual_seed(seed)
     agent.eval()
     agent.reset()
     observer.reset()
@@ -100,8 +106,11 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
     obs_env = env.reset(eps_id)
     obs = observer.observe(obs_env)
     ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
-    ctl_agent = agent.choose_action(obs, ctl_agent)
-    
+    if control_method == "bma":
+        ctl_agent = agent.choose_action(obs, ctl_agent)
+    elif control_method == "ace":
+        ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
+
     ego_dict["b"].append(agent._b.view(-1))
     ego_dict["a"].append(agent._a.view(-1))
     ego_dict["obs"].append(obs.view(-1))
@@ -120,7 +129,10 @@ def eval_episode(env, observer, agent, eps_id, data, control_direction, max_step
             break
 
         obs = observer.observe(obs_env)
-        ctl_agent = agent.choose_action(obs, ctl_agent)
+        if control_method == "bma":
+            ctl_agent = agent.choose_action(obs, ctl_agent)
+        elif control_method == "ace":
+            ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
 
         # collect agent states
         ego_dict["b"].append(agent._b.view(-1))
@@ -227,7 +239,18 @@ def main(arglist):
         agent = ActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
             obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
-            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = MLEIRL(agent)
+    elif arglist.method == "eai":
+        agent = EmbeddedActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
         )
         model = MLEIRL(agent)
     elif arglist.method == "frnn":
@@ -251,6 +274,13 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = MLEIRL(agent)
+    elif arglist.method == "shrnn":
+        agent = StructuredHMMRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = ImitationLearning(agent)
     else:
         raise NotImplementedError
     
@@ -275,7 +305,9 @@ def main(arglist):
     for i in test_eps_id:
         rel_track = rel_dataset[i]
 
-        states, ctl, track, ego_dict = eval_episode(env, observer, agent, i, rel_track, config["control_direction"])
+        states, ctl, track, ego_dict = eval_episode(
+            env, observer, agent, i, rel_track, config["control_direction"], seed=arglist.seed
+        )
         
         title = f"track_{track['meta'][2]}_id_{i} agent control: {config['control_direction']}"
         ani = animate(map_data, states, track, title=title)

@@ -14,8 +14,10 @@ from torch.nn.utils.rnn import pad_sequence
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
+from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
-    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
+    StructuredRecurrentAgent, FullyRecurrentAgent, 
+    HMMRecurrentAgent, StructuredHMMRecurrentAgent)
 from src.irl.algorithms import MLEIRL, ImitationLearning
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
@@ -49,7 +51,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--seed", type=int, default=0)
@@ -236,7 +238,18 @@ def main(arglist):
         agent = ActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
             obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
-            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"]
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = MLEIRL(agent)
+    elif arglist.method == "eai":
+        agent = EmbeddedActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
         )
         model = MLEIRL(agent)
     elif arglist.method == "il":
@@ -262,9 +275,25 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = MLEIRL(agent)
-
+    elif arglist.method == "shrnn":
+        agent = StructuredHMMRecurrentAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
+        )
+        model = ImitationLearning(agent)
+    
     model.load_state_dict(state_dict)
     agent = model.agent
+
+    # """ test trained planner value accuracy """
+    # b = torch.distributions.Dirichlet(torch.ones(agent.state_dim)).sample((64, ))
+    # loss = agent.planner.loss(b)
+
+    # small bellman loss could be a result of cancellation
+    # print(loss)
+    # print(loss.mean(), loss.min(), loss.max())
+    # exit()
     
     u_true, u_pred, u_sample, obs, masks = eval_epoch(agent, test_loader, num_samples=10)
     
