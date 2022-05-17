@@ -127,11 +127,19 @@ def plot_lanes(map_data, ax, plot_cells=False, annot=True, alpha=0.4):
                 ax.fill(*cell_polygon.exterior.xy, alpha=alpha)
                 ax.plot(*cell_centerline.xy, color="g", linewidth=1, zorder=10, dashes=[5, 10])
         if annot:
-            for cell in lane.cells[:1]:
+            for cell_id, cell in enumerate(lane.cells):
                 centroid_coords = list(cell.polygon.centroid.coords)[0]
                 ax.text(
                     centroid_coords[0], 
                     centroid_coords[1], 
+                    cell_id, size=8, 
+                    color="g"
+                )
+                if cell_id == 0:
+                    center_line_coords = cell.center_line.coords[0]
+                    ax.text(
+                    center_line_coords[0], 
+                    center_line_coords[1], 
                     lane_id, size=8, 
                 )
     return ax
