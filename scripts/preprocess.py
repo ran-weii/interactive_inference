@@ -8,7 +8,7 @@ import pandas as pd
 import swifter
 from tqdm.auto import tqdm
 
-from src.map_api.lanelet import MapData
+from src.map_api.lanelet import MapReader
 from src.data.kalman_filter import BatchKalmanFilter
 from src.data.agent_filter import (
     get_neighbor_vehicle_ids, get_car_following_episode)
@@ -31,6 +31,7 @@ def parse_args():
         "--kf_path", type=str, default="../exp/kalman_filter"
     )
     parser.add_argument("--scenario", type=str, default="Merging")
+    parser.add_argument("--track_id", type=str, default="007", help="track id. Use all if process all. default=007")
     parser.add_argument("--use_kf", type=bool_, default=True, 
                         help="use kalman filter, default=False")
     parser.add_argument("--cell_len", type=float, default=10, 
@@ -83,13 +84,17 @@ def smooth_one_track(df_one_track, kf):
 def match_lane(map_data, x, y, max_cells):
     """ Match point (x, y) to lane """
     (lane_id, cell_id, left_bound_dist, right_bound_dist, 
-    center_line_dist, cell_headings) = map_data.match(x, y, max_cells)
-    df_lane_pos = pd.Series({
+    center_line_dist, cell_headings) = map_data.match(x, y, max_cells=max_cells)
+    map_obs = {
         "lane_id": lane_id, 
         "cell_id": cell_id, 
         "left_bound_dist": left_bound_dist,
-        "right_bound_dist": right_bound_dist
-    })
+        "right_bound_dist": right_bound_dist,
+        "center_line_dist": center_line_dist
+    }
+    cell_heading_dict = {f"cell_heading_{i}": cell_headings[i][2] for i in range(max_cells)}
+    map_obs.update(cell_heading_dict)
+    df_lane_pos = pd.Series(map_obs)
     return df_lane_pos
 
 def parallel_apply(df, f, parallel, axis=1, desc=""):
@@ -166,8 +171,10 @@ def main(arglist):
             track_paths = glob.glob(
                 os.path.join(scenario_path, "*.csv")
             )
+            if arglist.track_id != "all":
+                track_paths = [p for p in track_paths if arglist.track_id in p]
             
-            map_data = MapData(cell_len=arglist.cell_len)
+            map_data = MapReader(cell_len=arglist.cell_len)
             map_data.parse(
                 os.path.join(arglist.data_path, "maps", f"{scenario}.osm"), 
                 verbose=True
@@ -197,11 +204,8 @@ def main(arglist):
                     if not os.path.exists(scenario_save_path):
                         os.mkdir(scenario_save_path)
                         
-                    # df_processed.to_csv(
-                    #     os.path.join(scenario_save_path, track_filename), index=False
-                    # )
                     df_processed.to_csv(
-                        os.path.join(scenario_save_path, "test.csv"), index=False
+                        os.path.join(scenario_save_path, track_filename), index=False
                     )
             
                 num_processed += 1
