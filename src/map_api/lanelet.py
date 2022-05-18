@@ -75,11 +75,15 @@ class MapReader:
                 nonpresent cells are filled with zeros.
         """
         def get_target_cell_id(p, cells):
+            cell_id = None
             if target_lane_id is None:
                 for cell_id, cell in enumerate(cells):
                     if cell.polygon.contains(p):
                         break
-            else:
+                    else:
+                        cell_id = None
+            
+            if cell_id is None:
                 dist_to_cells = []
                 for cell_id, cell in enumerate(cells):
                     dist_to_cells.append(cell.polygon.exterior.distance(p))
@@ -98,7 +102,7 @@ class MapReader:
         left_bound_dist = None
         right_bound_dist = None
         center_line_dist = None
-        cell_headings = np.zeros((max_cells, 3)) 
+        cell_headings = np.zeros((max_cells, 3)) * np.nan
         for lane_id, lane in search_lanes.items():
             is_contain = lane.polygon.contains(p)
             is_continue = True if target_lane_id is not None or is_contain else False
@@ -127,7 +131,7 @@ class MapReader:
                 
                 # compute lookahead cell headings
                 last_cell_id = min(num_cells, cell_id + max_cells)
-                cell_headings[:last_cell_id - cell_id] += np.array(
+                cell_headings[:last_cell_id - cell_id] = np.array(
                     [[l.left_bound_heading, l.right_bound_heading, l.center_line_heading] 
                     for l in lane.cells[cell_id:last_cell_id]]
                 )
