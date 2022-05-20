@@ -5,18 +5,50 @@ from src.distributions.distributions import MultivariateSkewNormal
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import make_covariance_matrix, straight_through_sample
 
-class HiddenMarkovModel(nn.Module):
+class EmbeddedTransitionModel(nn.Module):
     def __init__(self, state_dim, act_dim):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
+
+        self.w = nn.Parameter(torch.randn(state_dim, state_dim))
+        self.e = nn.Parameter(torch.randn(act_dim, state_dim))
+        # self.e = nn.Linear(act_dim, state_dim)
+
+        nn.init.xavier_normal_(self.w, gain=1.)
+        nn.init.xavier_normal_(self.e, gain=1.)
+    
+    @property
+    def transition(self):
+        a = torch.eye(self.act_dim)
+        return self.forward(a)
+    
+    """ TODO: find better embedding method using tensor decomposition """
+    def forward(self, a):
+        e_a = a.matmul(self.e)
+        w_a = self.w + e_a.unsqueeze(-2)
+        # e_a = torch.tanh(self.e(a))
+        # w_a = self.w * e_a.unsqueeze(-2)
+        return w_a
+
+
+class HiddenMarkovModel(nn.Module):
+    def __init__(self, state_dim, act_dim, use_embedding=False):
+        super().__init__()
+        self.state_dim = state_dim
+        self.act_dim = act_dim
         self.parameter_size = [act_dim * state_dim * state_dim, state_dim]
-        
-        self.B = nn.Parameter(
-            torch.randn(1, act_dim, state_dim, state_dim), requires_grad=True
-        )
+        self.use_embedding = use_embedding
+
+        if use_embedding:
+            self.B = EmbeddedTransitionModel(state_dim, act_dim)
+            self.parameter_size[0] = state_dim * state_dim + act_dim * state_dim
+        else:
+            self.B = nn.Parameter(
+                torch.randn(1, act_dim, state_dim, state_dim), requires_grad=True
+            )
+            nn.init.xavier_normal_(self.B, gain=1.)
         self.D = nn.Parameter(torch.randn(1, state_dim), requires_grad=True)
-        nn.init.xavier_normal_(self.B, gain=1.)
         nn.init.xavier_normal_(self.D, gain=1.)
         
     def __repr__(self):
@@ -25,6 +57,13 @@ class HiddenMarkovModel(nn.Module):
         )
         return s
     
+    """ TODO: temp solution to work with embedding """
+    def get_default_parameters(self):
+        if self.use_embedding:
+            return self.B.transition.unsqueeze(0)
+        else:
+            return self.B
+
     def transform_parameters(self, B):
         return B.view(-1, self.act_dim, self.state_dim, self.state_dim)
     
@@ -40,11 +79,12 @@ class HiddenMarkovModel(nn.Module):
         Returns:
             b_t(torch.tensor): next belief [batch_size, state_dim]
         """
-        if B is not None:
+        if B is not None and not self.use_embedding:
             B = self.transform_parameters(B)
             B = torch.softmax(B, dim=-1)
         else:
-            B = torch.softmax(self.B, dim=-1)
+            B = self.get_default_parameters()
+            B = torch.softmax(B, dim=-1)
         
         B_a = torch.sum(B * a.unsqueeze(-1).unsqueeze(-1), dim=-3)
         logp_s = torch.log(torch.sum(b.unsqueeze(-1) * (B_a), dim=-2) + 1e-6)
@@ -202,12 +242,22 @@ class ConditionalDistribution(nn.Module):
         return x
     
     def ancestral_sample(self, pi, num_samples, params=None):
-        z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
+        num_samples_ = 1 if num_samples == 0 else num_samples
+        z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples_,))
         z_ = straight_through_sample(z_, dim=-1).unsqueeze(-1)
         
         # sample component
-        x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
+        if num_samples == 0:
+            x_ = self.mean(params)
+        else:
+            x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
         x = torch.sum(z_ * x_, dim=-2)
+        # z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
+        # z_ = straight_through_sample(z_, dim=-1).unsqueeze(-1)
+        
+        # # sample component
+        # x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
+        # x = torch.sum(z_ * x_, dim=-2)
         return x
 
 
