@@ -17,10 +17,10 @@ from src.visualization.map_vis import (
 
 class MapReader:
     """ lanelet2 parser adapted from https://github.com/findaheng/lanelet2_parser """
-    def __init__(self, cell_len=5):
+    def __init__(self, cell_len=10):
         """
         Args:
-            cell_len (float, optional): length of drivable cells. Defaults to 5.
+            cell_len (float, optional): length of drivable cells. Defaults to 10.
         """
         self.cell_len = cell_len
         self.points = {}
