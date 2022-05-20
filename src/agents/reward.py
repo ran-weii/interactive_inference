@@ -77,6 +77,17 @@ class GeneralizedFreeEnergy(nn.Module):
         L = make_covariance_matrix(self.C_lv, self.C_tl, cholesky=True, lv_rectify="exp")
         distribution = MultivariateNormal(self.C_mu, scale_tril=L)
         return distribution
+    
+    @property
+    def C(self):
+        """ Log of cross entropy to compare with EFE reward """
+        target_dist = self.get_distribution_class()
+        pred_dist = self.obs_model.get_distribution_class(transform=False)
+        
+        kld = kl.kl_divergence(pred_dist, target_dist)
+        ent = pred_dist.entropy()
+        cross_ent = kld + ent
+        return -torch.log(cross_ent + 1e-6)
 
     def forward(self, s_next, b_next, A=None, C=None):
         """
