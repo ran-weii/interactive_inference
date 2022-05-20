@@ -8,7 +8,7 @@ from src.data.data_filter import (
 class EgoDataset(Dataset):
     """ Dataset for general car following """
     def __init__(
-        self, df_track, map_data, df_train_labels=None, min_eps_len=8, max_eps_len=100,
+        self, df_track, observer, df_train_labels=None, min_eps_len=8, max_eps_len=100,
         max_dist=50., max_agents=8, car_following=True
         ):
         super().__init__()
@@ -33,7 +33,7 @@ class EgoDataset(Dataset):
         unique_eps = df_track["eps_id"].unique()
         self.unique_eps = unique_eps[unique_eps != -1]
         self.df_track = df_track.copy()
-        self.map_data = map_data
+        self.observer = observer
         self.min_eps_len = min_eps_len
         self.max_eps_len = max_eps_len
         self.max_dist = max_dist
@@ -131,27 +131,17 @@ class SimpleEgoDataset(EgoDataset):
         return obs_agents
     
 class RelativeDataset(EgoDataset):
-    def __init__(self, df_track, map_data, df_train_labels=None, 
+    def __init__(self, df_track, observer, df_train_labels=None, 
                  min_eps_len=10, max_eps_len=100, max_dist=50., control_direction="both"):
         super().__init__(
-            df_track, map_data, df_train_labels=df_train_labels, 
+            df_track, observer, df_train_labels=df_train_labels, 
             min_eps_len=min_eps_len, max_eps_len=max_eps_len,
             max_dist=max_dist, max_agents=1, car_following=True
         )
-        """ TODO: temporary data filtering solution """
-        df_rel = get_relative_df(self.df_track, self.df_track["lead_track_id"])
-        df_ego = pd.concat([self.df_track, df_rel], axis=1)
-        self.df_track = get_ego_centric_df(df_ego)
-        self.df_track["loom_x"] = self.df_track["vx_rel"] / (self.df_track["x_rel"] + 1e-6)
+        self.df_track = self.observer.observe_df(self.df_track)
+        self.ego_fields = self.observer.ego_fields
+        self.act_fields = self.observer.act_fields
         
-        self.ego_fields = [
-            "vx_ego", "vy_ego", "left_bound_dist", "right_bound_dist", 
-            "x_rel_ego", "y_rel_ego", "vx_rel_ego", 
-            "vy_rel_ego", "psi_rad_rel", "loom_x"
-        ]
-        self.act_fields = ["ax_ego", "ay_ego"]
-        
-        """ TODO: temporary solution of feeding only longitudinal control """
         if control_direction == "both":
             pass
         elif control_direction == "lon":
