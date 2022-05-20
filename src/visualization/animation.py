@@ -48,6 +48,13 @@ class AnimationVisualizer:
         w_ego = ego[:, 6].reshape(-1, 1)
         id_ego = ego[:, 9].reshape(-1, 1)
 
+        x_ego_data = ego[:, 0].reshape(-1, 1)
+        y_ego_data = ego[:, 1].reshape(-1, 1)
+        psi_ego_data = ego[:, 4].reshape(-1, 1)
+        l_ego_data = ego[:, 5].reshape(-1, 1)
+        w_ego_data = ego[:, 6].reshape(-1, 1)
+        id_ego_data = ego[:, 9].reshape(-1, 1)
+
         x_agents = agents[:, :, 0]
         y_agents = agents[:, :, 1]
         psi_agents = agents[:, :, 4]
@@ -55,12 +62,12 @@ class AnimationVisualizer:
         w_agents = agents[:, :, 6]
         id_agents = agents[:, :, 9]
 
-        self.x = np.concatenate([x_ego, x_agents], axis=1)
-        self.y = np.concatenate([y_ego, y_agents], axis=1)
-        self.psi = np.concatenate([psi_ego, psi_agents], axis=1)
-        self.l = np.concatenate([l_ego, l_agents], axis=1)
-        self.w = np.concatenate([w_ego, w_agents], axis=1)
-        self.id_ = np.concatenate([id_ego, id_agents], axis=1)
+        self.x = np.concatenate([x_ego, x_ego_data, x_agents], axis=1)
+        self.y = np.concatenate([y_ego, y_ego_data, y_agents], axis=1)
+        self.psi = np.concatenate([psi_ego, psi_ego_data, psi_agents], axis=1)
+        self.l = np.concatenate([l_ego, l_ego_data, l_agents], axis=1)
+        self.w = np.concatenate([w_ego, w_ego_data, w_agents], axis=1)
+        self.id_ = np.concatenate([id_ego, id_ego_data, id_agents], axis=1)
         self.num_agents = agents.shape[1]
     
     @property
@@ -74,9 +81,19 @@ class AnimationVisualizer:
         carrects = []
         cartexts = []
         for i in range(self.num_agents + 1):
-            color = "tab:orange" if i == 0 else "tab:blue"
+            color = "tab:blue"
+            alpha = 1
+            if i == 0:
+                color = "tab:orange"
+            elif i == 1:
+                color = "tab:green"
+                alpha = 0.4
+            else:
+                pass
             rectpts = np.array([(-1.,-1.), (1.,-1), (1.,1.), (-1.,1.)])
-            rect = matplotlib.patches.Polygon(rectpts, closed=True, color=color, zorder=20, ec='k')
+            rect = matplotlib.patches.Polygon(
+                rectpts, closed=True, color=color, zorder=20, ec='k', alpha=alpha
+            )
             self.ax.add_patch(rect)
             carrects.append(rect) 
             cartexts.append(self.ax.text(0, 0, ""))
