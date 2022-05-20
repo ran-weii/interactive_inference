@@ -50,17 +50,14 @@ def markov_stationary_dist(B):
 
 
 class ModelExplainer:
-    def __init__(self, agent):
+    def __init__(self, agent, obs_fields):
         self.theta = get_active_inference_parameters(agent)
         self.agent = agent
         self.init_parameters()
 
         self.sort_a_id = None
         self.sort_s_id = None
-        self.A_fields = [
-            "vx", "vy", "left_bound_dist", "right_bound_dist", 
-            "x_rel", "y_rel", "vx_rel", 
-            "vy_rel", "psi_rad_rel", "loom_x"]
+        self.A_fields = obs_fields
     
     def init_parameters(self):
         self.A_mu = self.theta["A_mu"]
@@ -76,6 +73,16 @@ class ModelExplainer:
         self.B_pi = np.sum(self.pi[..., None] * self.B, axis=0)
         self.S = markov_stationary_dist(self.B_pi)
 
+        """ debug efe agent reward """
+        self.r, self.ekl, self.ent = self.get_reward()
+    
+    def get_reward(self):
+        B = torch.softmax(self.agent.hmm.B, dim=-1)
+        r = self.agent.rwd_model(B, B).data.squeeze(0)
+        ent = -self.agent.obs_model.entropy().data.squeeze(0)
+        ekl = (r - ent).squeeze(0)
+        return r.numpy(), ekl.numpy(), ent.numpy()
+
     def get_policy(self):
         theta = self.agent.get_default_parameters()
         Q = self.agent.planner.plan(theta)
@@ -85,7 +92,13 @@ class ModelExplainer:
     def sort(self, by=None):
         assert by in [None, "C", "D", "S"]
         # sort actions
-        sort_a_id = np.argsort(self.F_mu[:, 0])[::-1]
+        if self.F_mu.shape[1] == 1:
+            sort_a_id = np.argsort(self.F_mu[:, 0])[::-1]
+        elif self.F_mu.shape[1] == 2:
+            psi = np.arctan2(self.F_mu[:, 0], self.F_mu[:, 1])
+            sort_a_id = np.argsort(psi)
+        else:
+            sort_a_id = np.arange(self.F_mu.shape[0])
 
         # sort states
         if by == "C":
@@ -110,6 +123,13 @@ class ModelExplainer:
         self.B_pi = self.B_pi[sort_s_id]
         self.B_pi = self.B_pi[:, sort_s_id]
         self.S = self.S[sort_s_id]
+
+        """ debug efe agent reward """
+        self.r = self.r[sort_a_id]
+        self.r = self.r[:, sort_s_id]
+        self.ekl = self.ekl[sort_a_id]
+        self.ekl = self.ekl[:, sort_s_id]
+        self.ent = self.ent[sort_s_id]
 
         self.sort_a_id = sort_a_id
         self.sort_s_id = sort_s_id
@@ -200,17 +220,24 @@ class ModelExplainer:
         ax.set_ylabel("stationary pdf")
         return ax
 
-    def plot_pi(self, ax, annot=True):
+    def plot_pi(self, ax, annot=True, cbar=False):
         sns.heatmap(
-            self.pi.T.round(3), cmap="Greys", annot=annot, cbar=False, ax=ax
+            self.pi.T.round(3), cmap="Greys", annot=annot, cbar=cbar, ax=ax
         )
         ax.set_xlabel("action")
         ax.set_ylabel("state")
+        return ax
+    
+    def plot_r(self, ax):
+        ax.bar(np.arange(len(self.ent)), self.ent)
+        ax.set_xlabel("state")
+        ax.set_ylabel("obs entropy")
         return ax
 
     def plot_episode(self, sim_data, obs_keys, annot=False, cbar=False, figsize=(10, 8)):
         b = sim_data["ego"]["b"].T
         a = sim_data["ego"]["a"].T
+        v = sim_data["ego"]["v"].T
         obs = sim_data["ego"]["obs"]
         ctl = sim_data["ego"]["ctl"]
         timestamp = np.arange(a.shape[1])
@@ -219,13 +246,15 @@ class ModelExplainer:
 
         if self.sort_a_id is not None:
             a = a[self.sort_a_id]
+            v = v[self.sort_a_id]
         if self.sort_s_id is not None:
             b = b[self.sort_s_id]
 
-        fig, ax = plt.subplots(3 + len(obs_keys), 1, figsize=figsize, sharex=True)
+        fig, ax = plt.subplots(4 + len(obs_keys), 1, figsize=figsize, sharex=True)
         sns.heatmap(b, cmap="rocket", annot=annot, cbar=cbar, ax=ax[0])
         sns.heatmap(a, cmap="rocket", annot=annot, cbar=cbar, ax=ax[1])
-        ax[2].plot(timestamp, ctl)
+        sns.heatmap(v, cmap="rocket", annot=annot, cbar=cbar, ax=ax[2])
+        ax[3].plot(timestamp, ctl)
 
         for i in range(len(obs_keys)):
             ax[i + 3].plot(timestamp, df_obs[obs_keys[i]])
@@ -233,7 +262,8 @@ class ModelExplainer:
 
         ax[0].set_ylabel("belief")
         ax[1].set_ylabel("action")
-        ax[2].set_ylabel("control")
+        ax[2].set_ylabel("a value")
+        ax[3].set_ylabel("control")
         ax[-1].set_xlabel("time (0.1.s)")
         ax[-1].set_xticklabels(
             ax[-1].get_xticklabels(), rotation=45, horizontalalignment="right"
