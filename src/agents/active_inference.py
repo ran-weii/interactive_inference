@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from src.distributions.models import (
     HiddenMarkovModel, ConditionalDistribution, GeneralizedLinearModel)
-from src.agents.reward import ExpectedFreeEnergy
+from src.agents.reward import ExpectedFreeEnergy, GeneralizedFreeEnergy
 from src.agents.planners import QMDP, MCVI
 from src.agents.models import StructuredPerceptionModel
 
@@ -11,8 +11,8 @@ class ActiveInference(nn.Module):
         self, state_dim, act_dim, obs_dim, ctl_dim, H, 
         obs_model="gmm", obs_dist="mvn", obs_cov="full", 
         ctl_model="gmm", ctl_dist="mvn", ctl_cov="full",
-        planner="qmdp", tau=1, hidden_dim=64, num_hidden=2, 
-        activation="relu"
+        rwd_model="efe", hmm_rank=0, planner="qmdp", tau=1, hidden_dim=64, 
+        num_hidden=2, activation="relu"
         ):
         super(). __init__()
         self.state_dim = state_dim
@@ -21,7 +21,7 @@ class ActiveInference(nn.Module):
         self.ctl_dim = ctl_dim
         self.H = H
         
-        self.hmm = HiddenMarkovModel(state_dim, act_dim)
+        self.hmm = HiddenMarkovModel(state_dim, act_dim, rank=hmm_rank)
         if obs_model == "gmm":
             self.obs_model = ConditionalDistribution(obs_dim, state_dim, obs_dist, obs_cov, batch_norm=True)
         else:
@@ -33,7 +33,10 @@ class ActiveInference(nn.Module):
         else:
             raise NotImplementedError
         
-        self.rwd_model = ExpectedFreeEnergy(self.hmm, self.obs_model)
+        if rwd_model == "efe":
+            self.rwd_model = ExpectedFreeEnergy(self.hmm, self.obs_model)
+        elif rwd_model == "gfe":
+            self.rwd_model = GeneralizedFreeEnergy(self.hmm, self.obs_model)
 
         if planner == "qmdp":
             self.planner = QMDP(self.hmm, self.obs_model, self.rwd_model, self.H)
@@ -49,10 +52,15 @@ class ActiveInference(nn.Module):
         """ reset internal states for online inference """
         self._b = None
         self._a = None
-
+    
+    """ TODO: find better ways to feed parameters """
     def get_default_parameters(self):
+        # theta = {
+        #     "A": None, "B": self.hmm.B, "C": None, 
+        #     "D": self.hmm.D, "F": None, "tau": self.planner.tau
+        # }
         theta = {
-            "A": None, "B": self.hmm.B, "C": None, 
+            "A": None, "B": self.hmm.get_default_parameters(), "C": None, 
             "D": self.hmm.D, "F": None, "tau": self.planner.tau
         }
         return theta
@@ -96,7 +104,8 @@ class ActiveInference(nn.Module):
             
             logp_b = torch.log(b[1:] + 1e-6)
             logp_obs = torch.logsumexp(logp_b + logp_o, dim=-1)
-            return logp_pi, logp_obs, b
+            """ TODO adding a output for reverse kl training """
+            return logp_pi, logp_obs, b, a 
         else:
             return b, a
     
