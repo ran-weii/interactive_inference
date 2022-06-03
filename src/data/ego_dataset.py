@@ -39,7 +39,7 @@ class EgoDataset(Dataset):
         self.max_dist = max_dist
         self.max_agents = max_agents
         
-        self.meta_fields = ["scenario", "record_id", "track_id", "agent_type"]
+        self.meta_fields = ["record_id", "track_id", "car_follow_eps"]
         self.ego_fields = [
             "x", "y", "vx", "vy", "psi_rad", "length", "width", 
             "left_bound_dist", "right_bound_dist", "track_id"
@@ -155,6 +155,8 @@ class RelativeDataset(EgoDataset):
         df_ego = self.df_track.loc[
             self.df_track["eps_id"] == self.unique_eps[idx]
         ].reset_index(drop=True)
+        # remove data with lane switching at the end
+        df_ego = df_ego.drop(df_ego.tail(15).index)
         
         """ TODO: add seed to max length filtering """
         if len(df_ego) > self.max_eps_len: 
@@ -165,7 +167,7 @@ class RelativeDataset(EgoDataset):
         obs_ego = df_ego[self.ego_fields].to_numpy()
         act_ego = df_ego[self.act_fields].to_numpy()
         out_dict = {
-            "meta": None,
+            "meta": torch.from_numpy(obs_meta).to(torch.float32),
             "ego": torch.from_numpy(obs_ego).to(torch.float32),
             "agents": None,
             "act": torch.from_numpy(act_ego).to(torch.float32)
