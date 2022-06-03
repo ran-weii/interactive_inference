@@ -61,11 +61,11 @@ class RelativeObserver:
         self.t = 0
         self.target_lane_id = None
     
-    def glob_to_ego(self, x, y, vx, vy):
-        return coord_transformation(x, y, vx, vy, inverse=False)
+    def glob_to_ego(self, x, y, vx, vy, theta=None):
+        return coord_transformation(x, y, vx, vy, theta=theta, inverse=False)
 
-    def ego_to_glob(self, x, y, vx, vy):
-        return coord_transformation(x, y, vx, vy, inverse=True)
+    def ego_to_glob(self, x, y, vx, vy, theta=None):
+        return coord_transformation(x, y, vx, vy, theta=theta, inverse=True)
     
     def get_lane_obs(self, x, y, psi, df=None):
         target_lane_id = None if self.target_lane_id is None else self.target_lane_id
@@ -107,10 +107,11 @@ class RelativeObserver:
             obs_dict (dict): self and relative obs in ego frame
         """
         vx, vy = obs_ego[:, 2], obs_ego[:, 3]
+        psi = obs_ego[:, 4]
         rel_obs = obs_agent - obs_ego
         
-        x_rel, y_rel = self.glob_to_ego(rel_obs[:, 0], rel_obs[:, 1], vx, vy)
-        vx_rel, vy_rel = self.glob_to_ego(rel_obs[:, 2], rel_obs[:, 3], vx, vy)
+        x_rel, y_rel = self.glob_to_ego(rel_obs[:, 0], rel_obs[:, 1], vx, vy, theta=psi)
+        vx_rel, vy_rel = self.glob_to_ego(rel_obs[:, 2], rel_obs[:, 3], vx, vy, theta=psi)
         psi_rel = wrap_angles(rel_obs[:, 4])
         
         # handle missing agent
@@ -184,7 +185,7 @@ class RelativeObserver:
         
         df_obs = pd.DataFrame(obs_dict)[self.ego_fields]
         
-        ax, ay = self.glob_to_ego(df["ax"], df["ay"], df["vx"], df["vy"])
+        ax, ay = self.glob_to_ego(df["ax"], df["ay"], df["vx"], df["vy"], theta=df["psi_rad"])
         df_obs["ax_ego"] = ax
         df_obs["ay_ego"] = ay
         
