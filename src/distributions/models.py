@@ -6,16 +6,19 @@ from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import make_covariance_matrix, straight_through_sample
 
 class EmbeddedTransitionModel(nn.Module):
-    def __init__(self, state_dim, act_dim):
+    """ CP tensor decomposition of transition matrix """
+    def __init__(self, state_dim, act_dim, rank=10):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
-
-        self.w = nn.Parameter(torch.randn(state_dim, state_dim))
-        self.e = nn.Parameter(torch.randn(act_dim, state_dim))
-        # self.e = nn.Linear(act_dim, state_dim)
-
-        nn.init.xavier_normal_(self.w, gain=1.)
+        self.rank = rank
+        
+        self.e = nn.Parameter(torch.randn(act_dim, 1, 1, rank))
+        self.w1 = nn.Parameter(torch.randn(1, state_dim, 1, rank))
+        self.w2 = nn.Parameter(torch.randn(1, 1, state_dim, rank))
+        
+        nn.init.xavier_normal_(self.w1, gain=1.)
+        nn.init.xavier_normal_(self.w2, gain=1.)
         nn.init.xavier_normal_(self.e, gain=1.)
     
     @property
@@ -25,23 +28,20 @@ class EmbeddedTransitionModel(nn.Module):
     
     """ TODO: find better embedding method using tensor decomposition """
     def forward(self, a):
-        e_a = a.matmul(self.e)
-        w_a = self.w + e_a.unsqueeze(-2)
-        # e_a = torch.tanh(self.e(a))
-        # w_a = self.w * e_a.unsqueeze(-2)
+        w_a = torch.sum(self.w1 * self.w2 * self.e, dim=-1)
         return w_a
 
 
 class HiddenMarkovModel(nn.Module):
-    def __init__(self, state_dim, act_dim, use_embedding=False):
+    def __init__(self, state_dim, act_dim, rank=10):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.parameter_size = [act_dim * state_dim * state_dim, state_dim]
-        self.use_embedding = use_embedding
+        self.rank = rank
 
-        if use_embedding:
-            self.B = EmbeddedTransitionModel(state_dim, act_dim)
+        if rank != 0:
+            self.B = EmbeddedTransitionModel(state_dim, act_dim, rank=rank)
             self.parameter_size[0] = state_dim * state_dim + act_dim * state_dim
         else:
             self.B = nn.Parameter(
@@ -52,14 +52,14 @@ class HiddenMarkovModel(nn.Module):
         nn.init.xavier_normal_(self.D, gain=1.)
         
     def __repr__(self):
-        s = "{}(s={}, a={})".format(
-            self.__class__.__name__, self.state_dim, self.act_dim
+        s = "{}(s={}, a={}, rank={})".format(
+            self.__class__.__name__, self.state_dim, self.act_dim, self.rank
         )
         return s
     
     """ TODO: temp solution to work with embedding """
     def get_default_parameters(self):
-        if self.use_embedding:
+        if self.rank != 0:
             return self.B.transition.unsqueeze(0)
         else:
             return self.B
@@ -79,7 +79,7 @@ class HiddenMarkovModel(nn.Module):
         Returns:
             b_t(torch.tensor): next belief [batch_size, state_dim]
         """
-        if B is not None and not self.use_embedding:
+        if B is not None and self.rank != 0:
             B = self.transform_parameters(B)
             B = torch.softmax(B, dim=-1)
         else:
@@ -183,13 +183,18 @@ class ConditionalDistribution(nn.Module):
         
         return mu, lv, tl, sk
     
-    def get_distribution_class(self, params=None, transform=True):
+    def get_distribution_class(self, params=None, transform=True, requires_grad=True):
         if params is not None:
             [mu, lv, tl, sk] = self.transform_parameters(params)
         else:
             [mu, lv, tl, sk] = self.mu, self.lv, self.tl, self.sk
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
+        if requires_grad is False:
+            mu = mu.data
+            L = L.data
+            sk = sk.data
+
         if self.dist == "mvn":
             distribution = MultivariateNormal(mu, scale_tril=L)
         elif self.dist == "mvsn":
