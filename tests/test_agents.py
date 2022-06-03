@@ -389,6 +389,122 @@ def test_nn_planner():
 
     print("test_nn_planner passed")
 
+def test_generalized_free_energy():
+    from src.agents.reward import GeneralizedFreeEnergy
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    H = 15
+    agent = ActiveInference(
+        state_dim, act_dim, obs_dim, ctl_dim, H
+    )
+    rwd_model = GeneralizedFreeEnergy(
+        agent.hmm, agent.obs_model
+    )
+    B = torch.softmax(agent.hmm.B, dim=-1)
+    rwd_model(B, B)
+    print(rwd_model)
+    print("test_generalized_free_energy passed")
+
+def test_factored_value_iteration():
+    torch.manual_seed(0)
+    from src.distributions.models import HiddenMarkovModel, ConditionalDistribution
+    from src.distributions.factored_models import FactoredHiddenMarkovModel, FactoredConditionalDistribution
+    from src.agents.reward import ExpectedFreeEnergy
+    from src.agents.factored_agent import factored_value_iteration, FactoredQMDP
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    batch_size = 24
+    
+    R = torch.randn([batch_size] + [act_dim]*ctl_dim + [state_dim])
+    B = torch.randn([batch_size] + [act_dim]*ctl_dim + [state_dim, state_dim])
+    H = 15
+    
+    # factored_value_iteration(R, B, H)
+    # hmm = HiddenMarkovModel(state_dim, act_dim)
+    hmm = FactoredHiddenMarkovModel(state_dim, act_dim, ctl_dim)
+    obs_model = ConditionalDistribution(obs_dim, state_dim)
+    rwd_model = ExpectedFreeEnergy(hmm, obs_model)
+    planner = FactoredQMDP(hmm, obs_model, rwd_model, H)
+    # planner.plan()
+
+    # b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+    # pi = planner(b)
+    # print(pi.shape)
+    print("test_factored_value_iteration passed")
+
+def test_factored_agent():
+    torch.manual_seed(0)
+    from src.agents.factored_agent import FactoredActiveInference
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    H = 15
+    batch_size = 24
+
+    agent = FactoredActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H, )
+    print(agent)
+
+    # create synthetic data
+    T = 32
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.randn(T, batch_size, ctl_dim)
+    logp_pi, logp_obs, b = agent(o, u)
+    u_bma = agent.choose_action(o, u, batch=True)
+    u_ace = agent.choose_action(o, u, batch=True, num_samples=10)
+
+    assert list(logp_pi.shape) == [T, batch_size]
+    assert list(logp_obs.shape) == [T, batch_size]
+    assert list(b.shape) == [T+1, batch_size, state_dim]
+    assert list(u_bma.shape) == [T, batch_size, ctl_dim]
+    assert list(u_ace.shape) == [10, T, batch_size, ctl_dim]
+    print("test_factored_agent")
+
+def test_embedded_agent():
+    torch.manual_seed(0)
+    from src.distributions.embedded_models import EmbeddedHiddenMarkovModel
+    from src.distributions.models import ConditionalDistribution
+    from src.agents.reward import ExpectedFreeEnergy
+    from src.agents.embedded_agent import MessagePassingPlanner, EmbeddedActiveInference
+    
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    H = 15
+    batch_size = 24
+
+    # create synthetic data
+    T = 32
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.randn(T, batch_size, ctl_dim)
+    b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+
+    hmm = EmbeddedHiddenMarkovModel(state_dim, act_dim, ctl_dim)
+    obs_model = ConditionalDistribution(obs_dim, state_dim)
+    rwd_model = ExpectedFreeEnergy(hmm, obs_model)
+    planner = MessagePassingPlanner(hmm, obs_model, rwd_model, H)
+    
+    Q = planner.plan()
+    pi = planner(b)
+
+    agent = EmbeddedActiveInference(state_dim, act_dim, obs_dim, ctl_dim, H)
+    print(agent)
+
+    logp_pi, logp_obs, b = agent(o, u)
+    u_bma = agent.choose_action(o, u, batch=True)
+    u_ace = agent.choose_action(o, u, batch=True, num_samples=10)
+    assert list(logp_pi.shape) == [T, batch_size]
+    assert list(logp_obs.shape) == [T, batch_size]
+    assert list(b.shape) == [T+1, batch_size, state_dim]
+    assert list(u_bma.shape) == [T, batch_size, ctl_dim]
+    assert list(u_ace.shape) == [10, T, batch_size, ctl_dim]
+    print("test_embedded_agent")
+
 if __name__ == "__main__":
     """ TODO: organize simple tests and complex tests """
     # test_value_iteration()
@@ -399,4 +515,8 @@ if __name__ == "__main__":
     # test_active_inference_agent()
     # test_agent_inference()
     # test_recurrent_agent()
-    test_nn_planner()
+    # test_nn_planner()
+    # test_generalized_free_energy()
+    # test_factored_value_iteration()
+    # test_factored_agent()
+    test_embedded_agent()
