@@ -12,15 +12,18 @@ from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
 from src.map_api.lanelet import MapReader
+from src.simulation.observers import RelativeObserver
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
 from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
     StructuredRecurrentAgent, FullyRecurrentAgent, 
     HMMRecurrentAgent, StructuredHMMRecurrentAgent)
-from src.irl.algorithms import MLEIRL, ImitationLearning
+from src.irl.algorithms import (
+    MLEIRL, ImitationLearning, ReverseKL)
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
+from src.visualization.inspection import ModelExplainer
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -51,9 +54,10 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
+    parser.add_argument("--explain_agent", type=bool_, default=False)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -62,7 +66,7 @@ def parse_args():
 def collate_fn(batch):
     pad_obs = pad_sequence([b["ego"] for b in batch])
     pad_act = pad_sequence([b["act"] for b in batch])
-    mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
+    mask = torch.any(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
 
 def eval_epoch(agent, loader, num_samples=10):
@@ -162,15 +166,19 @@ def plot_action_trajectory(u_true, u_pred, u_sample, mask, title="", figsize=(6,
     return fig, ax
 
 def plot_action_units(agent, figsize=(6, 4)):
-    grid = torch.linspace(-2, 2, 100).view(-1, 1)
+    grid = torch.linspace(-2, 2, 300).view(-1, 1)
     grid_ = torch.stack([grid, grid]).permute(1, 2, 0)
 
     mean = agent.ctl_model.mean().data
     std = torch.sqrt(agent.ctl_model.variance()).data
-
-    pdf = torch.distributions.Normal(
-        mean, std
-    ).log_prob(grid_).exp().data 
+    
+    if agent.ctl_model.__class__.__name__ == "FactoredConditionalDistribution":
+        dist = agent.ctl_model.get_distribution_class()
+        pdf = dist.log_prob(grid_).exp().data
+    else:
+        pdf = torch.distributions.Normal(
+            mean, std
+        ).log_prob(grid_).exp().data
     
     font_size = 12
     n_rows = agent.ctl_dim
@@ -185,6 +193,36 @@ def plot_action_units(agent, figsize=(6, 4)):
         ax[i].set_ylabel("pdf", fontsize=font_size)
     plt.tight_layout()
     return fig, ax
+
+def plot_action_units_2d(agent, num_samples=100, figsize=(6, 6)):
+    x = agent.ctl_model.sample((num_samples,)).squeeze(1).data.numpy()
+    
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.plot(x[:, :, 0], x[:, :, 1], "o", ms=4)
+    ax.set_xlabel("u_0")
+    ax.set_ylabel("u_1")
+    return fig, ax
+
+def plot_agent_model(explainer):
+    fig_cd, ax = plt.subplots(1, 5, figsize=(14, 3))
+    explainer.plot_C(ax[0])
+    explainer.plot_r(ax[1])
+    explainer.plot_D(ax[2])
+    explainer.plot_S(ax[3])
+    explainer.plot_tau(ax[4])
+    plt.tight_layout()
+    
+    fig_ab, ax = plt.subplots(1, 3, figsize=(15, 8))
+    explainer.plot_B_pi(ax[0], annot=False)
+    explainer.plot_A(ax[1], ax[2], annot=True)
+    plt.tight_layout()
+
+    fig_f, ax = plt.subplots(1, 2, figsize=(8, 8))
+    explainer.plot_F(ax[0], ax[1], annot=True)
+
+    fig_pi, ax = plt.subplots(1, 1, figsize=(10, 8))
+    explainer.plot_pi(ax, annot=False, cbar=True)
+    return fig_cd, fig_ab, fig_f, fig_pi
 
 def main(arglist):
     exp_path = os.path.join(arglist.exp_path, arglist.method, arglist.exp_name)
@@ -218,8 +256,10 @@ def main(arglist):
     map_data = MapReader()
     map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
     
+    obs_fields = "rel" if "obs_fields" not in config.keys() else config["obs_fields"]
+    observer = RelativeObserver(map_data, fields=obs_fields)
     dataset = RelativeDataset(
-        df_track, map_data, df_train_labels=df_train_labels, 
+        df_track, observer, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
         control_direction=config["control_direction"]
     )
@@ -234,15 +274,27 @@ def main(arglist):
     ctl_dim = 2 if config["control_direction"] == "both" else 1
     
     # load model
+    rwd_model = "efe" if "rwd_model" not in config.keys() else config["rwd_model"]
+    hmm_rank = 0 if "hmm_rank" not in config.keys() else config["hmm_rank"]
+    
     if arglist.method == "mleirl":
         agent = ActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
             obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
             ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
-            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
             num_hidden=config["num_hidden"], activation=config["activation"]
         )
         model = MLEIRL(agent)
+    elif arglist.method == "rkl":
+        agent = ActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = ReverseKL(agent)
     elif arglist.method == "eai":
         agent = EmbeddedActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
@@ -283,19 +335,13 @@ def main(arglist):
         )
         model = ImitationLearning(agent)
     
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     agent = model.agent
 
-    # """ test trained planner value accuracy """
-    # b = torch.distributions.Dirichlet(torch.ones(agent.state_dim)).sample((64, ))
-    # loss = agent.planner.loss(b)
-
-    # small bellman loss could be a result of cancellation
-    # print(loss)
-    # print(loss.mean(), loss.min(), loss.max())
-    # exit()
+    print(dataset.ego_fields)
+    print(agent)
     
-    u_true, u_pred, u_sample, obs, masks = eval_epoch(agent, test_loader, num_samples=10)
+    u_true, u_pred, u_sample, obs, masks = eval_epoch(agent, test_loader, num_samples=30)
     
     """ TODO: temporary solution for lateral control"""
     # add padding for metrics calculation
@@ -347,6 +393,12 @@ def main(arglist):
     
     # plot action units
     fig_action, ax = plot_action_units(agent)
+    
+    # explain active inference agent
+    if arglist.method == "mleirl" and arglist.explain_agent:
+        explainer = ModelExplainer(agent, dataset.ego_fields)
+        explainer.sort(by="C")
+        fig_agent = plot_agent_model(explainer)
 
     # save results
     if arglist.save:
@@ -362,6 +414,10 @@ def main(arglist):
         fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
         for i, fig in enumerate(acc_figs):
             fig.savefig(os.path.join(save_path, f"test_scene_{i}_offline_ctl.png"), dpi=100)
+        
+        if arglist.method == "mleirl" and arglist.explain_agent:
+            for i, fig in enumerate(fig_agent):
+                fig.savefig(os.path.join(save_path, f"agent_model_{i}.png"), dpi=100)
             
         print("\noffline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(

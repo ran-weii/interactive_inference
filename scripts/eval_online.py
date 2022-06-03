@@ -18,9 +18,11 @@ from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
     StructuredRecurrentAgent, FullyRecurrentAgent, 
     HMMRecurrentAgent, StructuredHMMRecurrentAgent)
-from src.irl.algorithms import MLEIRL, ImitationLearning
+from src.irl.algorithms import (
+    MLEIRL, ImitationLearning, ReverseKL)
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import RelativeObserver
+from src.evaluation.online_evaluator import Evaluator
 from src.visualization.animation import animate, save_animation
 from src.visualization.inspection import ModelExplainer
 
@@ -53,10 +55,11 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
-    parser.add_argument("--explain_agent", type=bool_, default=True)
+    parser.add_argument("--explain_trajectory", type=bool_, default=True)
+    parser.add_argument("--control_method", type=str, choices=["bma", "ace", "acm", "data"], default="ace", help="agent control sampling method, default=ace")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -96,23 +99,29 @@ def eval_episode(
     control_method="ace", num_samples=1, max_steps=1000, seed=0
     ):
     torch.manual_seed(seed)
+    if control_method in ["acm", "data"]:
+        num_samples = 0
+    diagnostic = True if control_method == "data" else False
+
     agent.eval()
     agent.reset()
     observer.reset()
+    evaluator = Evaluator()
     
     ctl_data = data["act"]
-    ego_dict = {"b": [], "a": [], "obs": [], "ctl": []}
+    ego_dict = {"b": [], "a": [], "v": [], "obs": [], "ctl": []}
 
     obs_env = env.reset(eps_id)
     obs = observer.observe(obs_env)
     ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
     if control_method == "bma":
         ctl_agent = agent.choose_action(obs, ctl_agent)
-    elif control_method == "ace":
+    else:
         ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
 
     ego_dict["b"].append(agent._b.view(-1))
     ego_dict["a"].append(agent._a.view(-1))
+    ego_dict["v"].append(agent.planner.value(agent._b).view(-1))
     ego_dict["obs"].append(obs.view(-1))
     ego_dict["ctl"].append(ctl_agent.view(-1))
     for t in range(max_steps):
@@ -123,32 +132,45 @@ def eval_episode(
         elif control_direction == "lat":
             ctl = torch.tensor([ctl_data[t][0], ctl_agent[0]])
         
+        if diagnostic:
+            ctl_env = env.get_action()
+            ctl = observer.glob_to_ego(ctl_env[0], ctl_env[1], obs_env["ego"][2], obs_env["ego"][3])
+            ctl = torch.tensor(ctl)
+            ctl_agent = ctl.view(1, -1).to(torch.float32)
+            if control_direction == "lon":
+                ctl_agent = ctl_agent[:, :1]
+            elif control_direction == "lat":
+                ctl_agent = ctl_agent[:, -1:]
+
         ctl_env = observer.control(ctl, obs_env)
         obs_env, r, done, info = env.step(ctl_env)
         if done:
             break
-
+        
+        evaluator.observe(obs, ctl)
         obs = observer.observe(obs_env)
         if control_method == "bma":
             ctl_agent = agent.choose_action(obs, ctl_agent)
-        elif control_method == "ace":
+        else:
             ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
 
         # collect agent states
         ego_dict["b"].append(agent._b.view(-1))
         ego_dict["a"].append(agent._a.view(-1))
+        ego_dict["v"].append(agent.planner.value(agent._b).view(-1))
         ego_dict["obs"].append(obs.view(-1))
         ego_dict["ctl"].append(ctl_agent.view(-1))
     
     ego_dict["b"] = torch.stack(ego_dict["b"]).data.numpy()
     ego_dict["a"] = torch.stack(ego_dict["a"]).data.numpy()
+    ego_dict["v"] = torch.stack(ego_dict["v"]).data.numpy()
     ego_dict["obs"] = torch.stack(ego_dict["obs"]).data.numpy()
     ego_dict["ctl"] = torch.stack(ego_dict["ctl"]).data.numpy()
 
     states = env._states[:t+1]
     acts = env._acts[:t+1]
     track = {k:v[:t+1] for (k, v) in env._track.items()}
-    return states, acts, track, ego_dict
+    return states, acts, track, ego_dict, evaluator._track
 
 def plot_map_trajectories(map_data, states, track, title):
     fig, ax = map_data.plot(option="ways", annot=False, figsize=(8, 4))
@@ -190,7 +212,7 @@ def plot_agent_model(explainer):
 
 def plot_belief_trajectory(explainer, sim_data):
     obs_keys = []
-    fig, _ = explainer.plot_episode(sim_data, obs_keys, figsize=(10, 8))
+    fig, _ = explainer.plot_episode(sim_data, obs_keys, figsize=(10, 10))
     return fig
 
 def main(arglist):
@@ -224,26 +246,40 @@ def main(arglist):
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"))
     torch.manual_seed(config["seed"])
-
+    
+    obs_fields = "rel" if "obs_fields" not in config.keys() else config["obs_fields"]
+    observer = RelativeObserver(map_data, fields=obs_fields)
     dataset = EgoDataset(
-        df_track, map_data, df_train_labels, 
+        df_track, observer, df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
     )
     env = InteractionSimulator(dataset, map_data)
-    observer = RelativeObserver(map_data)
     
-    obs_dim = 10
+    obs_dim = len(observer.ego_fields)
     ctl_dim = 2 if config["control_direction"] == "both" else 1
+
     # load model
+    rwd_model = "efe" if "rwd_model" not in config.keys() else config["rwd_model"]
+    hmm_rank = 0 if "hmm_rank" not in config.keys() else config["hmm_rank"]
+
     if arglist.method == "mleirl":
         agent = ActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
             obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
             ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
-            planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
             num_hidden=config["num_hidden"], activation=config["activation"]
         )
         model = MLEIRL(agent)
+    elif arglist.method == "rkl":
+        agent = ActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = ReverseKL(agent)
     elif arglist.method == "eai":
         agent = EmbeddedActiveInference(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
@@ -285,14 +321,20 @@ def main(arglist):
         raise NotImplementedError
     
     try:
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, strict=False)
     except:
         raise RuntimeError("Error loading state dict")
 
     agent = model.agent
+    print(agent)
+    num_params = 0
+    for n, p in model.named_parameters():
+        if p.requires_grad and "tl" not in n:
+            num_params += torch.prod(torch.tensor(list(p.shape)))
+    print("num params", num_params)
     
     rel_dataset = RelativeDataset(
-        df_track, map_data, df_train_labels, 
+        df_track, observer, df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
     )
 
@@ -305,8 +347,9 @@ def main(arglist):
     for i in test_eps_id:
         rel_track = rel_dataset[i]
 
-        states, ctl, track, ego_dict = eval_episode(
-            env, observer, agent, i, rel_track, config["control_direction"], seed=arglist.seed
+        states, ctl, track, ego_dict, eval_dict = eval_episode(
+            env, observer, agent, i, rel_track, 
+            config["control_direction"], control_method=arglist.control_method, seed=arglist.seed
         )
         
         title = f"track_{track['meta'][2]}_id_{i} agent control: {config['control_direction']}"
@@ -314,24 +357,29 @@ def main(arglist):
         fig_map, _ = plot_map_trajectories(map_data, states, track, title)
         fig_act, _ = plot_action_trajectory(ctl, track, title)
         
-        sim_data.append({"states": states, "ctl": ctl, "track": track, "ego": ego_dict})
+        sim_data.append({"states": states, "ctl": ctl, "track": track, "ego": ego_dict, "eval": eval_dict})
         map_figs.append(fig_map)
         ctl_figs.append(fig_act)
         animations.append(ani)
         # break
     
     # explain active inference agent
-    if arglist.method == "mleirl" and arglist.explain_agent:
-        explainer = ModelExplainer(agent)
+    if arglist.method == "mleirl" and arglist.explain_trajectory:
+        explainer = ModelExplainer(agent, observer.ego_fields)
         explainer.sort(by="C")
-        fig_agent_cd, fig_agent_ab = plot_agent_model(explainer)
         belief_figs = []
         for data in sim_data:
             belief_figs.append(plot_belief_trajectory(explainer, data))
 
     # save results
     if arglist.save:
-        save_path = os.path.join(exp_path, "eval_offline")
+        eval_path = os.path.join(exp_path, "eval_online")
+        save_path = os.path.join(eval_path, f"{arglist.seed}_{arglist.control_method}")
+        # if arglist.diagnostic:
+        #     save_path += "_diagnostic"
+
+        if not os.path.exists(eval_path):
+            os.mkdir(eval_path)
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         
@@ -343,14 +391,11 @@ def main(arglist):
             fig_a.savefig(os.path.join(save_path, f"test_scene_{i}_online_ctl.png"), dpi=100)
             save_animation(ani, os.path.join(save_path, f"test_scene_{i}_online_ani.mp4"))
         
-        if arglist.method == "mleirl" and arglist.explain_agent:
-            fig_agent_cd.savefig(os.path.join(save_path, f"agent_model_0.png"), dpi=100)
-            fig_agent_ab.savefig(os.path.join(save_path, f"agent_model_1.png"), dpi=100)
+        if arglist.method == "mleirl" and arglist.explain_trajectory:
             for i, f in enumerate(belief_figs):
                 f.savefig(os.path.join(save_path, f"test_scene_{i}_online_belief.png"), dpi=100)
-            
 
-        print("\noffline evaluation results saved at "
+        print("\nonline evaluation results saved at "
               "./exp/mleirl/{}/eval_offline".format(
             arglist.exp_name
         ))
