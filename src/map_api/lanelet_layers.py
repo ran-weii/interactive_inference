@@ -27,6 +27,7 @@ class L2Linestring:
         self.interpolator = None
         self.cubic_spline = None
         self.spline_heading = None
+        self.spline_cumdist = None
     
     def add_reference(self, lanelet_id):
         self.lanelet_references.append(lanelet_id)
@@ -44,6 +45,11 @@ class L2Linestring:
         self.cubic_spline = np.stack([x_grid, y_grid]).T
         self.spline_heading = get_heading(x_grid[:-1], y_grid[:-1], x_grid[1:], y_grid[1:])
         self.spline_heading = np.insert(self.spline_heading, -1, self.spline_heading[-1])
+        self.spline_cumdist = np.cumsum(dist_two_points(
+            self.cubic_spline[:-1, 0], self.cubic_spline[:-1, 1],
+            self.cubic_spline[1:, 0], self.cubic_spline[1:, 1]
+        ))
+        self.spline_cumdist = np.insert(self.spline_cumdist, -1, self.spline_cumdist[-1])
 
      
 class L2Polygon:
@@ -408,3 +414,34 @@ class Lane:
         left_bound_dist *= 2 * np.heaviside(left_bound_card, 1) - 1
         right_bound_dist *= 2 * np.heaviside(right_bound_card, 1) - 1
         return x_tan, y_tan, psi_tan, centerline_dist, left_bound_dist, right_bound_dist
+
+    def get_waypoints(self, x, y, wp_dist):
+        """ Get waypoints at fixed look ahead distances
+
+        Args:
+            x (float): x coord of target position
+            y (float): y coord of target position
+            wy_dist (np.array): array of waypoint look ahead distances
+
+        Returns:
+            wp_coords (np.array): coords of waypoints
+            wp_headings (np.array): headings of waypoints
+        """
+        centerline_spline = self.centerline.cubic_spline
+        centerline_heading = self.centerline.spline_heading
+        centerline_cumdist = self.centerline.spline_cumdist
+        d = dist_two_points(x, y, centerline_spline[:, 0], centerline_spline[:, 1])
+        centerline_spline = centerline_spline[np.argsort(d)[0]:]
+        centerline_heading = centerline_heading[np.argsort(d)[0]:]
+        centerline_cumdist = centerline_cumdist[np.argsort(d)[0]:]
+        centerline_cumdist -= centerline_cumdist[0]
+
+        # get waypoint ids
+        wp_id = [np.where(centerline_cumdist >= d)[0][:1] for d in wp_dist]
+        wp_id = np.array([i[0] for i in wp_id if len(i) > 0]).astype(int)
+        if len(wp_id) < len(wp_dist):
+            wp_id = np.hstack([wp_id, (len(centerline_cumdist) - 1) * np.ones(len(wp_dist) - len(wp_id))]).astype(int)
+        
+        wp_coords = centerline_spline[wp_id]
+        wp_headings = centerline_heading[wp_id]
+        return wp_coords, wp_headings

@@ -11,7 +11,7 @@ speedups.disable()
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
-from src.data.geometry import get_cardinal_direction
+from src.data.geometry import get_cardinal_direction, dist_two_points
 from src.visualization.map_vis import (
     get_way_styling, plot_ways, plot_lanelets, plot_lanes)
 
@@ -140,6 +140,61 @@ class MapReader:
             lane_id = None
         return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
     
+    def match_frenet(self, x, y, target_lane_id=None, max_cells=5):
+        """ Match point to map in the frenet frame
+
+        Args:
+            x (float): target point x coordinate
+            y (float): target point y coordinate
+            target_lane_id (int, optional): lane id to be matched. default=None
+            max_cells (int, optional): maximum number of cells adhead to return. default=5
+        
+        Returns:
+            lane_id (int): matched lane id, Returns None if not matched
+            psi_tan (int): heading of the center line tangent line. Returns None if not matched
+            center_line_dist (float): distance to center line. Returns None if not matched
+            left_bound_dist (float): distance to left bound. Returns None if not matched
+            right_bound_dist (float): distance to right bound. Returns None if not matched
+            wp_coords (np.array): coords of lookahead waypoints. Returns none if not matched
+            wp_headings (np.array): headings of lookahead waypoints. Returns none if not matched
+        """
+        p = Point(x, y)
+        
+        search_lanes = self.lanes 
+        if target_lane_id is not None:
+            search_lanes = {target_lane_id: self.lanes[target_lane_id]}
+        
+        matched = False
+        lane_id = None
+        psi_tan = None
+        centerline_dist = None
+        left_bound_dist = None
+        right_bound_dist = None
+        wp_coords = None
+        wp_headings = None
+        for lane_id, lane in search_lanes.items():
+            is_contain = lane.polygon.contains(p)
+            is_continue = True if target_lane_id is not None or is_contain else False
+            
+            if is_continue:
+                out = lane.get_frenet_coords(x, y)
+                x_tan = out[0]
+                y_tan = out[1]
+                psi_tan = out[2]
+                centerline_dist = out[3]
+                left_bound_dist = out[4]
+                right_bound_dist = out[5]
+                
+                # get far points
+                farpoint_dists = self.cell_len * np.arange(1, max_cells)
+                
+                wp_coords, wp_headings = lane.get_waypoints(x_tan, y_tan, farpoint_dists)
+                return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
+        
+        if not matched:
+            lane_id = None
+        return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
+        
     def plot(self, option="ways", annot=True, figsize=(15, 6)):
         """
         Args:
