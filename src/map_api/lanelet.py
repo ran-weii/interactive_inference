@@ -264,6 +264,8 @@ class MapReader:
         
         assert lanelet.left_bound and lanelet.right_bound, f"Lanelet with id={id_} missing bound(s)"
         lanelet._align_bounds()
+        lanelet._find_centerline()
+        # print(lanelet.centerline)
         
         if subtype == "crosswalk":
             self.crosswalks[id_] = lanelet

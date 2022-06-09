@@ -142,7 +142,12 @@ class Lanelet:
             right_bound_coords.reverse()
             self.left_bound.linestring = LineString(left_bound_coords)
             self.right_bound.linestring = LineString(right_bound_coords)
-        
+    
+    def _find_centerline(self):
+        if self.centerline is None:
+            centerline = ops.linemerge([c.center_line for c in self.cells])
+            self.centerline = L2Linestring(self.id_, centerline, None, None)
+
     @property
     def polygon(self):
         if self._polygon:
@@ -216,6 +221,7 @@ class Lane:
         
         self.left_bound = None
         self.right_bound = None
+        self.centerline = None
         
         self._polygon = None
         self._cells = []
@@ -313,6 +319,8 @@ class Lane:
         
         left_bound_linestr = ops.linemerge([l.left_bound.linestring for l in self.lanelets])
         right_bound_linestr = ops.linemerge([l.right_bound.linestring for l in self.lanelets])
+        centerline_linestr = ops.linemerge([l.centerline.linestring for l in self.lanelets])
+        
         self.left_bound = L2Linestring(self.id_, left_bound_linestr, None, None)
         self.right_bound = L2Linestring(self.id_, right_bound_linestr, None, None)
-        
+        self.centerline = L2Linestring(self.id_, centerline_linestr, None, None)

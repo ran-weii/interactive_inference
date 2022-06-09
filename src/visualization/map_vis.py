@@ -115,17 +115,17 @@ def plot_lanes(map_data, ax, plot_cells=False, annot=True, alpha=0.4):
         polygon = lane.polygon
         left_bound_linestr = lane.left_bound.linestring
         right_bound_linestr = lane.right_bound.linestring
+        centerline_linestr = lane.centerline.linestring
         ax.plot(*left_bound_linestr.xy, "k-")
         ax.plot(*right_bound_linestr.xy, "k-")
+        ax.plot(*centerline_linestr.xy, "g--")
         
         if not plot_cells:
             ax.fill(*polygon.exterior.xy, alpha=alpha)
         else:
             for cell in lane.cells:
                 cell_polygon = cell.polygon
-                cell_centerline = cell.center_line
                 ax.fill(*cell_polygon.exterior.xy, alpha=alpha)
-                ax.plot(*cell_centerline.xy, color="g", linewidth=1, zorder=10, dashes=[5, 10])
         if annot:
             for cell_id, cell in enumerate(lane.cells):
                 centroid_coords = list(cell.polygon.centroid.coords)[0]
