@@ -424,8 +424,8 @@ class Lane:
             wy_dist (np.array): array of waypoint look ahead distances
 
         Returns:
-            wp_coords (np.array): coords of waypoints
-            wp_headings (np.array): headings of waypoints
+            wp_coords (np.array): coords of waypoints [num_wp, 2]
+            wp_headings (np.array): headings of waypoints [num_wp]
         """
         centerline_spline = self.centerline.cubic_spline
         centerline_heading = self.centerline.spline_heading

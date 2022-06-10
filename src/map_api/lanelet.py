@@ -186,7 +186,7 @@ class MapReader:
                 right_bound_dist = out[5]
                 
                 # get far points
-                farpoint_dists = self.cell_len * np.arange(1, max_cells)
+                farpoint_dists = self.cell_len * np.arange(1, max_cells + 1)
                 
                 wp_coords, wp_headings = lane.get_waypoints(x_tan, y_tan, farpoint_dists)
                 return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
