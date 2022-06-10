@@ -3,9 +3,16 @@ import os
 import numpy as np
 import pandas as pd
 
+from src.data.data_filter import (
+    filter_car_follow_eps, filter_tail_merging, filter_lane)
+
 # set pandas display option
 pd.set_option('display.max_columns', None)
 pd.options.mode.chained_assignment = None
+
+data_path = "../interaction-dataset-master"
+scenario = "DR_CHN_Merging_ZS"
+filename = "vehicle_tracks_007.csv"
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -15,6 +22,17 @@ def parse_args():
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     arglist = parser.parse_args()
     return arglist
+
+def load_data():
+    df_processed = pd.read_csv(
+        os.path.join(data_path, "processed_trackfiles", scenario, filename)
+    )
+    df_track = pd.read_csv(
+        os.path.join(data_path, "recorded_trackfiles", scenario, filename)
+    )
+    df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
+    df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
+    return df_track
 
 def test_data(arglist):
     """ data sanity and quality test """
@@ -78,6 +96,42 @@ def test_data(arglist):
     assert max_y_error_percent < 0.01
     print("test data: pos grad error test passed")
 
+def test_filter_lane():
+    df_track = load_data()
+    
+    filter_lane_id = [1, 6]
+    df_track = filter_lane(df_track, lane_ids=filter_lane_id)
+    unique_lanes = df_track.loc[df_track["car_follow_eps"] != -1]["lane_id"].unique()
+    assert not set(filter_lane_id).issubset(set(unique_lanes))
+    
+    min_eps_len = 50
+    df_track = filter_car_follow_eps(df_track, min_eps_len)
+    unique_lanes = df_track.loc[df_track["eps_id"] != -1]["lane_id"].unique()
+    assert not set(filter_lane_id).issubset(set(unique_lanes))
+    print("test_filter_lane passed")
+
+def test_filter_tail_merging():
+    from src.data.geometry import wrap_angles
+    
+    df_track = load_data()
+    
+    max_psi_error = 0.05
+    df_track = filter_tail_merging(df_track, max_psi_error=max_psi_error, min_bound_dist=1)
+    df_valid = df_track.loc[df_track["car_follow_eps"] != -1]
+    df_valid = df_valid.assign(psi_error=wrap_angles(df_valid["psi_rad"] - df_valid["psi_tan"]))
+    psi_error = df_valid.groupby(["track_id", "car_follow_eps"]).tail(1)["psi_error"]
+    assert np.isclose(psi_error.abs().max(), max_psi_error, atol=0.02)
+    
+    min_eps_len = 50
+    df_track = filter_car_follow_eps(df_track, min_eps_len)
+    df_valid = df_track.loc[df_track["eps_id"] != -1]
+    df_valid = df_valid.assign(psi_error=wrap_angles(df_valid["psi_rad"] - df_valid["psi_tan"]))
+    psi_error = df_valid.groupby(["eps_id"]).tail(1)["psi_error"]
+    assert np.isclose(psi_error.abs().max(), max_psi_error, atol=0.02)
+    print("test_filter_tail_merging passed")
+
 if __name__ == "__main__":
     arglist = parse_args()
-    test_data(arglist)
+    # test_data(arglist)
+    # test_filter_lane()
+    test_filter_tail_merging()
