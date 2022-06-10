@@ -390,8 +390,9 @@ class Lane:
         # get tanget line heading
         slope = self.centerline.interpolator(p_proj.x, 1)
         psi_tan = np.arctan2(slope, 1)
-        if np.abs(wrap_angles(psi_tan - psi_adj)) > np.deg2rad(30):
-            psi_tan = np.arctan2(slope, -1)
+        card = get_cardinal_direction(0, 0, psi_adj, 1, slope)
+        if card > 0.5 * np.pi or card < -0.5 * np.pi:
+            psi_tan = wrap_angles(psi_tan + np.pi)
 
         # get the normal line
         slope_norm = -1 / slope

@@ -170,8 +170,8 @@ class MapReader:
         centerline_dist = None
         left_bound_dist = None
         right_bound_dist = None
-        wp_coords = None
-        wp_headings = None
+        wp_coords = np.zeros((max_cells, 2))
+        wp_headings = np.zeros((max_cells))
         for lane_id, lane in search_lanes.items():
             is_contain = lane.polygon.contains(p)
             is_continue = True if target_lane_id is not None or is_contain else False
@@ -187,7 +187,6 @@ class MapReader:
                 
                 # get far points
                 farpoint_dists = self.cell_len * np.arange(1, max_cells + 1)
-                
                 wp_coords, wp_headings = lane.get_waypoints(x_tan, y_tan, farpoint_dists)
                 return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
         
