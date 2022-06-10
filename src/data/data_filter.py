@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from src.data.geometry import vector_projection, wrap_angles
 
-""" debug episode tail merging """
 def filter_car_follow_eps(df_track, min_eps_len):
     """ Set car_follow_eps column to -1 if episode length is less than min_eps_len
     
