@@ -34,6 +34,8 @@ def parse_args():
     parser.add_argument("--track_id", type=str, default="007", help="track id. Use all if process all. default=007")
     parser.add_argument("--use_kf", type=bool_, default=True, 
                         help="use kalman filter, default=False")
+    parser.add_argument("--frame", type=str, choices=["frenet", "carte"], default="frenet", 
+                        help="lane matching frrame, one of [frenet, carte], default=frenet")
     parser.add_argument("--cell_len", type=float, default=10, 
                         help="length of drivable cells, default=10")
     parser.add_argument("--max_cells", type=int, default=5, 
@@ -81,18 +83,30 @@ def smooth_one_track(df_one_track, kf):
     )
     return df_s_mean
 
-def match_lane(map_data, x, y, max_cells):
+def match_lane(map_data, x, y, max_cells, frame="frenet"):
     """ Match point (x, y) to lane """
-    (lane_id, cell_id, left_bound_dist, right_bound_dist, 
-    center_line_dist, cell_headings) = map_data.match(x, y, max_cells=max_cells)
-    map_obs = {
-        "lane_id": lane_id, 
-        "cell_id": cell_id, 
-        "left_bound_dist": left_bound_dist,
-        "right_bound_dist": right_bound_dist,
-        "center_line_dist": center_line_dist
-    }
-    cell_heading_dict = {f"cell_heading_{i}": cell_headings[i][2] for i in range(max_cells)}
+    if frame == "carte":
+        (lane_id, cell_id, left_bound_dist, right_bound_dist, 
+        center_line_dist, cell_headings) = map_data.match(x, y, max_cells=max_cells)
+        map_obs = {
+            "lane_id": lane_id, 
+            "cell_id": cell_id, 
+            "left_bound_dist": left_bound_dist,
+            "right_bound_dist": right_bound_dist,
+            "center_line_dist": center_line_dist
+        }
+        cell_heading_dict = {f"cell_heading_{i}": cell_headings[i][2] for i in range(max_cells)}
+    elif frame == "frenet":
+        (lane_id, psi_tan, center_line_dist, left_bound_dist, right_bound_dist,
+        cell_coords, cell_headings) = map_data.match_frenet(x, y, max_cells=max_cells)
+        map_obs = {
+            "lane_id": lane_id, 
+            "psi_tan": psi_tan, 
+            "left_bound_dist": left_bound_dist,
+            "right_bound_dist": right_bound_dist,
+            "center_line_dist": center_line_dist
+        }
+        cell_heading_dict = {f"cell_heading_{i}": cell_headings[i] for i in range(max_cells)}
     map_obs.update(cell_heading_dict)
     df_lane_pos = pd.Series(map_obs)
     return df_lane_pos
@@ -115,7 +129,7 @@ def preprocess_pipeline(df_track, map_data, max_cells, max_dist, dt, kf_filter, 
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
     # identify ego lane
-    f_ego_lane = lambda x: match_lane(map_data, x["x"], x["y"], max_cells)
+    f_ego_lane = lambda x: match_lane(map_data, x["x"], x["y"], max_cells, frame=arglist.frame)
     df_ego_lane = parallel_apply(
         df_track, f_ego_lane, parallel, axis=1, desc="identify ego lane"
     )
