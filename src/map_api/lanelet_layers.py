@@ -357,7 +357,7 @@ class Lane:
     
     def get_frenet_coords(self, x, y):
         """ Get the lane centric frenet coordinates of point (x, y)
-
+        
         Args:
             x (float): x coord of the target point
             y (float): y coord of the target point
@@ -382,8 +382,8 @@ class Lane:
         x_tan, y_tan = p_proj.x, p_proj.y
         
         # get the heading of the closet point on centerline
-        centerline_spline = self.centerline.cubic_spline
-        centerline_heading = self.centerline.spline_heading
+        centerline_spline = self.centerline.cubic_spline.copy()
+        centerline_heading = self.centerline.spline_heading.copy()
         d = dist_two_points(x_tan, y_tan, centerline_spline[:, 0], centerline_spline[:, 1])
         psi_adj = centerline_heading[np.argmin(d)]
         
@@ -393,7 +393,7 @@ class Lane:
         card = get_cardinal_direction(0, 0, psi_adj, 1, slope)
         if card > 0.5 * np.pi or card < -0.5 * np.pi:
             psi_tan = wrap_angles(psi_tan + np.pi)
-
+        
         # get the normal line
         slope_norm = -1 / slope
         normal_linestring = LineString([
@@ -404,39 +404,45 @@ class Lane:
         
         # get signed lane distances
         centerline_dist = dist_two_points(x, y, x_tan, y_tan)
-        left_bound_dist = dist_two_points(x, y, left_bound_pt.x, left_bound_pt.y)
-        right_bound_dist = dist_two_points(x, y, right_bound_pt.x, right_bound_pt.y)
-
-        centerline_card = get_cardinal_direction(x_tan, y_tan, psi_tan, x, y)
-        left_bound_card = get_cardinal_direction(left_bound_pt.x, left_bound_pt.y, psi_tan, x, y)
-        right_bound_card = get_cardinal_direction(right_bound_pt.x, right_bound_pt.y, psi_tan, x, y)
         
-        centerline_dist *= 2 * np.heaviside(centerline_card, 1) - 1
-        left_bound_dist *= 2 * np.heaviside(left_bound_card, 1) - 1
-        right_bound_dist *= 2 * np.heaviside(right_bound_card, 1) - 1
+        # out of bound handle
+        if left_bound_pt.is_empty or right_bound_pt.is_empty:
+            left_bound_dist = 1.8 - centerline_dist 
+            right_bound_dist = 1.8 + centerline_dist
+        else:
+            left_bound_dist = dist_two_points(x, y, left_bound_pt.x, left_bound_pt.y)
+            right_bound_dist = dist_two_points(x, y, right_bound_pt.x, right_bound_pt.y)
+            
+            centerline_card = get_cardinal_direction(x_tan, y_tan, psi_tan, x, y)
+            left_bound_card = get_cardinal_direction(left_bound_pt.x, left_bound_pt.y, psi_tan, x, y)
+            right_bound_card = get_cardinal_direction(right_bound_pt.x, right_bound_pt.y, psi_tan, x, y)
+            
+            centerline_dist *= 2 * np.heaviside(centerline_card, 1) - 1
+            left_bound_dist *= 2 * np.heaviside(left_bound_card, 1) - 1
+            right_bound_dist *= 2 * np.heaviside(right_bound_card, 1) - 1
         return x_tan, y_tan, psi_tan, centerline_dist, left_bound_dist, right_bound_dist
-
+    
     def get_waypoints(self, x, y, wp_dist):
         """ Get waypoints at fixed look ahead distances
-
+        
         Args:
             x (float): x coord of target position
             y (float): y coord of target position
             wy_dist (np.array): array of waypoint look ahead distances
-
+        
         Returns:
             wp_coords (np.array): coords of waypoints [num_wp, 2]
             wp_headings (np.array): headings of waypoints [num_wp]
         """
-        centerline_spline = self.centerline.cubic_spline
-        centerline_heading = self.centerline.spline_heading
-        centerline_cumdist = self.centerline.spline_cumdist
+        centerline_spline = self.centerline.cubic_spline.copy()
+        centerline_heading = self.centerline.spline_heading.copy()
+        centerline_cumdist = self.centerline.spline_cumdist.copy()
         d = dist_two_points(x, y, centerline_spline[:, 0], centerline_spline[:, 1])
         centerline_spline = centerline_spline[np.argsort(d)[0]:]
         centerline_heading = centerline_heading[np.argsort(d)[0]:]
         centerline_cumdist = centerline_cumdist[np.argsort(d)[0]:]
         centerline_cumdist -= centerline_cumdist[0]
-
+        
         # get waypoint ids
         wp_id = [np.where(centerline_cumdist >= d)[0][:1] for d in wp_dist]
         wp_id = np.array([i[0] for i in wp_id if len(i) > 0]).astype(int)
