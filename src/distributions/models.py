@@ -5,6 +5,7 @@ from src.distributions.distributions import MultivariateSkewNormal
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import make_covariance_matrix, straight_through_sample
 
+""" TODO: deprecate this, create a series of modules for markov transitions """
 class EmbeddedTransitionModel(nn.Module):
     """ CP tensor decomposition of transition matrix """
     def __init__(self, state_dim, act_dim, rank=10):
@@ -32,6 +33,7 @@ class EmbeddedTransitionModel(nn.Module):
         return w_a
 
 
+""" TODO: deprecate this, move to a hmm only script """
 class HiddenMarkovModel(nn.Module):
     def __init__(self, state_dim, act_dim, rank=10):
         super().__init__()
@@ -91,7 +93,8 @@ class HiddenMarkovModel(nn.Module):
         b_t = torch.softmax(logp_o + logp_s, dim=-1)
         return b_t
     
-    
+
+""" TODO: remove mvsn option """
 class ConditionalDistribution(nn.Module):
     def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=True):
         """
@@ -103,7 +106,7 @@ class ConditionalDistribution(nn.Module):
             batch_norm (bool, optional): use input batch normalization. default=True
         """
         super().__init__()
-        assert dist in ["mvn", "mvsn"]
+        assert dist in ["mvn"]
         assert cov in ["diag", "full"]
         self.x_dim = x_dim
         self.z_dim = z_dim
@@ -112,32 +115,21 @@ class ConditionalDistribution(nn.Module):
         self.parameter_size = [
             z_dim * x_dim,
             z_dim * x_dim,
-            z_dim * x_dim * x_dim,
-            z_dim * x_dim
+            z_dim * x_dim * x_dim
         ]
         self.batch_norm = batch_norm
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
-        self.sk = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         
         nn.init.normal_(self.mu, mean=0, std=1)
         nn.init.normal_(self.lv, mean=0, std=0.01)
         nn.init.normal_(self.tl, mean=0, std=0.01)
-        nn.init.normal_(self.sk, mean=0, std=0.01)
-        
-        if dist == "mvn":
-            nn.init.constant_(self.sk, 0)
-            self.sk.requires_grad = False
-            self.parameter_size = self.parameter_size[:-1]
-            self.sk.data = torch.zeros_like(self.sk.data)
         
         if cov == "diag":
-            nn.init.constant_(self.tl, 0)
-            self.tl.requires_grad = False
             self.parameter_size = self.parameter_size[:-1]
-            self.tl.data = torch.zeros_like(self.tl.data)
+            self.tl = torch.zeros_like(self.tl.data)
         
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
@@ -149,45 +141,25 @@ class ConditionalDistribution(nn.Module):
         return s
     
     def transform_parameters(self, params):
-        if self.dist == "mvn":
-            if self.cov == "full":
-                mu, lv, tl = torch.split(params, self.parameter_size, dim=-1)
-                mu = mu.view(-1, self.z_dim, self.x_dim)
-                lv = lv.view(-1, self.z_dim, self.x_dim)
-                tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
-                sk = torch.zeros(len(params), self.z_dim, self.x_dim)
-            elif self.cov == "diag":
-                mu, lv = torch.split(params, self.parameter_size, dim=-1)
-                mu = mu.view(-1, self.z_dim, self.x_dim)
-                lv = lv.view(-1, self.z_dim, self.x_dim)
-                tl = torch.zeros(len(params), self.z_dim, self.x_dim, self.x_dim)
-                sk = torch.zeros(len(params), self.z_dim, self.x_dim)
-            else:
-                raise NotImplementedError
-        elif self.dist == "mvsn":
-            if self.cov == "full":
-                mu, lv, tl, sk = torch.split(params, self.parameter_size, dim=-1)
-                mu = mu.view(-1, self.z_dim, self.x_dim)
-                lv = lv.view(-1, self.z_dim, self.x_dim)
-                tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
-                sk = sk.view(-1, self.z_dim, self.x_dim)
-            elif self.cov == "diag":
-                mu, lv, sk = torch.split(params, self.parameter_size, dim=-1)
-                mu = mu.view(-1, self.z_dim, self.x_dim)
-                lv = lv.view(-1, self.z_dim, self.x_dim)
-                tl = torch.zeros(len(params), self.z_dim, self.x_dim, self.x_dim)
-            else:
-                raise NotImplementedError
+        if self.cov == "full":
+            mu, lv, tl = torch.split(params, self.parameter_size, dim=-1)
+            mu = mu.view(-1, self.z_dim, self.x_dim)
+            lv = lv.view(-1, self.z_dim, self.x_dim)
+            tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
+        elif self.cov == "diag":
+            mu, lv = torch.split(params, self.parameter_size, dim=-1)
+            mu = mu.view(-1, self.z_dim, self.x_dim)
+            lv = lv.view(-1, self.z_dim, self.x_dim)
+            tl = torch.zeros(len(params), self.z_dim, self.x_dim, self.x_dim)
         else:
             raise NotImplementedError
-        
-        return mu, lv, tl, sk
+        return mu, lv, tl
     
     def get_distribution_class(self, params=None, transform=True, requires_grad=True):
         if params is not None:
-            [mu, lv, tl, sk] = self.transform_parameters(params)
+            [mu, lv, tl] = self.transform_parameters(params)
         else:
-            [mu, lv, tl, sk] = self.mu, self.lv, self.tl, self.sk
+            [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
         if requires_grad is False:
@@ -195,10 +167,7 @@ class ConditionalDistribution(nn.Module):
             L = L.data
             sk = sk.data
 
-        if self.dist == "mvn":
-            distribution = MultivariateNormal(mu, scale_tril=L)
-        elif self.dist == "mvsn":
-            distribution = MultivariateSkewNormal(mu, sk, scale_tril=L)
+        distribution = MultivariateNormal(mu, scale_tril=L)
         
         if self.batch_norm and transform:
             distribution = SimpleTransformedModule(distribution, [self.bn])
@@ -257,15 +226,10 @@ class ConditionalDistribution(nn.Module):
         else:
             x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
         x = torch.sum(z_ * x_, dim=-2)
-        # z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
-        # z_ = straight_through_sample(z_, dim=-1).unsqueeze(-1)
-        
-        # # sample component
-        # x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)
-        # x = torch.sum(z_ * x_, dim=-2)
         return x
 
 
+""" TODO: deprecate this """
 class GeneralizedLinearModel(ConditionalDistribution):
     def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=False):
         """
@@ -326,6 +290,7 @@ class GeneralizedLinearModel(ConditionalDistribution):
         return distribution.sample((num_samples,))
         
 
+""" TODO: deprecate this """
 class MixtureDensityNetwork(ConditionalDistribution):
     def __init__(self, x_dim, z_dim, dist="mvn", cov="full", batch_norm=False):
         super().__init__(x_dim, z_dim, dist, cov, batch_norm)
