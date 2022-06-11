@@ -51,16 +51,20 @@ class BatchNormTransform(TransformModule):
     event_dim = 0
     def __init__(self, input_dim, momentum=0.1, epsilon=1e-5, affine=False):
         super().__init__()
-        
         self.input_dim = input_dim
-        self.gamma = nn.Parameter(torch.ones(input_dim), requires_grad=affine)
-        self.beta = nn.Parameter(torch.zeros(input_dim), requires_grad=affine)
         self.momentum = momentum
         self.epsilon = epsilon
         
         self.register_buffer('moving_mean', torch.zeros(input_dim))
         self.register_buffer('moving_variance', torch.ones(input_dim))
-    
+        
+        self.gamma = torch.ones(input_dim)
+        self.beta = torch.zeros(input_dim)
+
+        if affine:
+            self.gamma = nn.Parameter(self.gamma)
+            self.beta = nn.Parameter(self.beta)
+            
     @property   
     def constrained_gamma(self):
         """ Enforce positivity """
