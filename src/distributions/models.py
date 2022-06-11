@@ -200,7 +200,7 @@ class ConditionalDistribution(nn.Module):
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, sample_shape, params=None):
+    def sample(self, sample_shape=torch.Size(), params=None):
         distribution = self.get_distribution_class(params)
         return distribution.rsample(sample_shape)
     
