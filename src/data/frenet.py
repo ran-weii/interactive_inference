@@ -147,6 +147,8 @@ class Trajectory:
             ay (np.array): array of agent y acceleration in cartesian frame
             theta (np.array): array of agent heading in cartesian frame
         """
+        assert len(x) > 1, f"trajectory length={len(x)} is too short"
+        
         # cartesian trajectory
         self.x = x
         self.y = y
@@ -157,7 +159,7 @@ class Trajectory:
         
         # trajectory properties 
         self.length = len(self.x)
-        self.spline = None
+        self.interpolator = None
         self.arc_length = None
         self._interpolate()
         
@@ -167,8 +169,13 @@ class Trajectory:
     
     def _interpolate(self):
         """ Interpolate trajectory to obtain curvature """
-        self.spline = np.poly1d(np.polyfit(self.x, self.y, 5))
-        self.arc_length = get_arc_length(self.spline.deriv(), self.x[0], self.x[-1])
+        x = self.x[np.argsort(self.x)].copy()
+        y = self.y[np.argsort(self.x)].copy()
+        
+        self.interpolator = CubicSpline(x, y)
+        self.arc_length = get_arc_length(
+            self.interpolator.derivative(), self.x[0], self.x[-1]
+        )
         
         s = np.linspace(0, self.arc_length, len(self.x))
         self.fx = np.poly1d(np.polyfit(s, self.x, 5))
@@ -198,8 +205,8 @@ class Trajectory:
                 self.x[t], self.y[t], self.v[t],
                 self.a[t], self.theta[t], self.kappa[t]
             )
-        self.s_condition = s_condition
-        self.d_condition = d_condition
+        self.s_condition = np.array(s_condition)
+        self.d_condition = np.array(d_condition)
 
 
 def cartesian_to_frenet(rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa):
