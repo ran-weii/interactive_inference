@@ -149,11 +149,18 @@ class Trajectory:
         """
         assert len(x) > 1, f"trajectory length={len(x)} is too short"
         
+        # compute acceleration sign
+        acc_vec = np.arctan2(ay, ax)
+        delta_vec = wrap_angles(acc_vec - theta)
+        self.sign = np.ones_like(x)
+        self.sign[delta_vec > 0.5 * np.pi] = -1
+        self.sign[delta_vec < 0.5 * -np.pi] = -1
+        
         # cartesian trajectory
         self.x = x
         self.y = y
         self.v = np.linalg.norm(np.stack([vx, vy]), axis=0)
-        self.a = np.linalg.norm(np.stack([ax, ay]), axis=0)
+        self.a = self.sign * np.linalg.norm(np.stack([ax, ay]), axis=0)
         self.theta = theta
         self.kappa = None
         
@@ -169,15 +176,13 @@ class Trajectory:
     
     def _interpolate(self):
         """ Interpolate trajectory to obtain curvature """
-        x = self.x[np.argsort(self.x)].copy()
-        y = self.y[np.argsort(self.x)].copy()
+        dx = np.hstack([np.array([0]), np.diff(self.x)])
+        dy = np.hstack([np.array([0]), np.diff(self.y)])
+        ds = np.sqrt(dx**2 + dy**2)
+        s = np.cumsum(ds)
+        self.arc_length = s[-1]
         
-        self.interpolator = CubicSpline(x, y)
-        self.arc_length = get_arc_length(
-            self.interpolator.derivative(), self.x[0], self.x[-1]
-        )
-        
-        s = np.linspace(0, self.arc_length, len(self.x))
+        # s = np.linspace(0, self.arc_length, self.length)
         self.fx = np.poly1d(np.polyfit(s, self.x, 5))
         self.dfx = self.fx.deriv()
         self.ddfx = self.dfx.deriv()
@@ -190,7 +195,7 @@ class Trajectory:
         
         self.kappa = np.array([compute_curvature(
             self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
-        ) for i in range(len(s))])
+        ) for i in range(self.length)])
     
     def get_frenet_trajectory(self, ref_path):
         """ Convert self trajectory from cartesian to frenet frame
