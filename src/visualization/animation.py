@@ -80,7 +80,7 @@ class AnimationVisualizer:
 
         carrects = []
         cartexts = []
-        for i in range(self.num_agents + 1):
+        for i in range(self.num_agents + 2):
             color = "tab:blue"
             alpha = 1
             if i == 0:
