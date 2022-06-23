@@ -3,7 +3,8 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from src.data.geometry import wrap_angles
 from src.data.frenet_utils import (
-    get_arc_length, get_closest_point, compute_curvature, compute_curvature_derivative)
+    compute_arc_length, get_closest_point, compute_curvature, 
+    compute_curvature_derivative, compute_tangent_and_normal_vectors)
 
 class FrenetPath:
     """ Object used to store (reference) paths in the frenet frame """
@@ -28,7 +29,7 @@ class FrenetPath:
         self.cubic_spline = np.stack([x_grid, y_grid]).T
         
         # total arc length of the path
-        self.arc_length = get_arc_length(
+        self.arc_length = compute_arc_length(
             self.interpolator.derivative(),
             ref_coords_sorted[0, 0], ref_coords_sorted[-1, 0]
         )
@@ -136,7 +137,7 @@ class Trajectory:
     """ Object used to store agent trajectory in both cartesian and frenet frame 
     Requires a FrenetPath object to convert the trajectory to the frenet frame
     """
-    def __init__(self, x, y, vx, vy, ax, ay, theta):
+    def __init__(self, x, y, vx, vy, ax, ay, theta, dt=0.1):
         """
         Args:
             x (np.array): array of agent x coordinate in cartesian frame
@@ -146,9 +147,11 @@ class Trajectory:
             ax (np.array): array of agent x acceleration in cartesian frame
             ay (np.array): array of agent y acceleration in cartesian frame
             theta (np.array): array of agent heading in cartesian frame
+            dt (float, optional): time step. Default=0.1
         """
         assert len(x) > 1, f"trajectory length={len(x)} is too short"
-        
+        self.dt = dt
+
         # compute acceleration sign
         acc_vec = np.arctan2(ay, ax)
         delta_vec = wrap_angles(acc_vec - theta)
@@ -163,6 +166,13 @@ class Trajectory:
         self.a = self.sign * np.linalg.norm(np.stack([ax, ay]), axis=0)
         self.theta = theta
         self.kappa = None
+
+        self.vx = vx
+        self.vy = vy
+        self.ax = ax
+        self.ay = ay
+        self.tan_vec = None
+        self.norm_vec = None
         
         # trajectory properties 
         self.length = len(self.x)
@@ -176,13 +186,20 @@ class Trajectory:
     
     def _interpolate(self):
         """ Interpolate trajectory to obtain curvature """
-        dx = np.hstack([np.array([0]), np.diff(self.x)])
-        dy = np.hstack([np.array([0]), np.diff(self.y)])
-        ds = np.sqrt(dx**2 + dy**2)
-        s = np.cumsum(ds)
-        self.arc_length = s[-1]
+        x = self.x[np.argsort(self.x)]
+        y = self.y[np.argsort(self.x)]
+        self.interpolator = CubicSpline(x, y)
+        self.arc_length = np.abs(compute_arc_length(
+            self.interpolator.derivative(), x[0], x[-1]
+        ))
+        s = np.linspace(0, self.arc_length, self.length)
+
+        # dx = np.hstack([np.array([0]), np.diff(self.x)])
+        # dy = np.hstack([np.array([0]), np.diff(self.y)])
+        # ds = np.sqrt(dx**2 + dy**2)
+        # s = np.cumsum(ds)
+        # self.arc_length = s[-1]
         
-        # s = np.linspace(0, self.arc_length, self.length)
         self.fx = np.poly1d(np.polyfit(s, self.x, 5))
         self.dfx = self.fx.deriv()
         self.ddfx = self.dfx.deriv()
@@ -196,7 +213,11 @@ class Trajectory:
         self.kappa = np.array([compute_curvature(
             self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
         ) for i in range(self.length)])
-    
+        
+        self.tan_vec, self.norm_vec = compute_tangent_and_normal_vectors(
+            self.x, self.y, self.dt
+        )
+
     def get_frenet_trajectory(self, ref_path):
         """ Convert self trajectory from cartesian to frenet frame
         
