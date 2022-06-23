@@ -5,6 +5,7 @@ from src.data.geometry import wrap_angles
 from src.data.frenet_utils import (
     compute_arc_length, get_closest_point, compute_curvature, 
     compute_curvature_derivative, compute_tangent_and_normal_vectors)
+from src.data.frenet_utils import cartesian_to_frenet, frenet_to_cartesian
 
 class FrenetPath:
     """ Object used to store (reference) paths in the frenet frame """
@@ -63,12 +64,13 @@ class FrenetPath:
             self.dfy(s), self.ddfy(s), self.dddfy(s)
         )
     
-    def frenet_to_cartesian(self, s_condition, d_condition):
+    def frenet_to_cartesian(self, s_condition, d_condition, order=3):
         """ Convert from frenet to cartesian frame
         
         Args:
             s_condition (np.array): longitudinal component of state [s, ds, dds]
             d_condition (np.array): lateral component of state [d, dd, ddd]
+            order (int, optional): order to derivative to convert. Default=3
         
         Returns:
             x (float): x coordinate in cartesian frame
@@ -86,7 +88,7 @@ class FrenetPath:
         rkappa = self.get_curvature(rs)
         rdkappa = self.get_d_curvature(rs)
         x, y, v, a, theta, kappa = frenet_to_cartesian(
-            rs, rx, ry, rtheta, rkappa, rdkappa, s_condition, d_condition
+            rs, rx, ry, rtheta, rkappa, rdkappa, s_condition, d_condition, order
         )
         return x, y, v, a, theta, kappa
     
@@ -106,7 +108,7 @@ class FrenetPath:
         rs = self.fx_inv(rx)        
         return rx, ry, rs
     
-    def cartesian_to_frenet(self, x, y, v, a, theta, kappa):
+    def cartesian_to_frenet(self, x, y, v, a, theta, kappa, order=3):
         """ Convert from cartesian to frenet frame
         dds and ddd will be less accurate when deviating too far from the path
         
@@ -117,6 +119,7 @@ class FrenetPath:
             a (float): acceleration in cartesian frame
             theta (float): heading in cartesian frame
             kappa (float): curvature in cartesian frame
+            order (int, optional): order to derivative to convert. Default=3
         
         Returns:
             s_condition (np.array): longitudinal component of state [s, ds, dds]
@@ -128,7 +131,7 @@ class FrenetPath:
         rkappa = self.get_curvature(rs)
         rdkappa = self.get_d_curvature(rs)
         s_condition, d_condition = cartesian_to_frenet(
-            rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa
+            rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa, order
         )
         return s_condition, d_condition
 
@@ -186,19 +189,19 @@ class Trajectory:
     
     def _interpolate(self):
         """ Interpolate trajectory to obtain curvature """
-        x = self.x[np.argsort(self.x)]
-        y = self.y[np.argsort(self.x)]
-        self.interpolator = CubicSpline(x, y)
-        self.arc_length = np.abs(compute_arc_length(
-            self.interpolator.derivative(), x[0], x[-1]
-        ))
-        s = np.linspace(0, self.arc_length, self.length)
+        # x = self.x[np.argsort(self.x)]
+        # y = self.y[np.argsort(self.x)]
+        # self.interpolator = CubicSpline(x, y)
+        # self.arc_length = np.abs(compute_arc_length(
+        #     self.interpolator.derivative(), x[0], x[-1]
+        # ))
+        # s = np.linspace(0, self.arc_length, self.length)
 
-        # dx = np.hstack([np.array([0]), np.diff(self.x)])
-        # dy = np.hstack([np.array([0]), np.diff(self.y)])
-        # ds = np.sqrt(dx**2 + dy**2)
-        # s = np.cumsum(ds)
-        # self.arc_length = s[-1]
+        dx = np.hstack([np.array([0]), np.diff(self.x)])
+        dy = np.hstack([np.array([0]), np.diff(self.y)])
+        ds = np.sqrt(dx**2 + dy**2)
+        s = np.cumsum(ds)
+        self.arc_length = s[-1]
         
         self.fx = np.poly1d(np.polyfit(s, self.x, 5))
         self.dfx = self.fx.deriv()
@@ -233,114 +236,3 @@ class Trajectory:
             )
         self.s_condition = np.array(s_condition)
         self.d_condition = np.array(d_condition)
-
-
-def cartesian_to_frenet(rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa):
-    """ Convert from cartesian to frenet coordinate
-    Adapted from: https://github.com/ApolloAuto/apollo
-    
-    Args:
-        rs (float): arc length of the tangent point in frenet frame
-        rx (float): x coordinate arc of the tangent point in cartesian frame
-        ry (float): y coordinate arc of the tangent point in cartesian frame
-        rtheta (float): heading of the tangent point in cartesian frame
-        rkappa (float): curvature of the tangent point
-        rdkappa (float): curvature derivative of the tangent point
-        x (float): x coordinate of the target point in cartesian frame
-        y (float): y coordinate of the target point in cartesian frame
-        v (float): velocity norm of the target point in cartesian frame
-        a (float): acceleration norm the target point in cartesian frame
-        theta (float): heading of the target point in cartesian frame
-        kappa (float): curvature of the target point trajectory in cartesian frame
-    
-    Returns:
-        s_condition (np.array): longitudinal component of the target point in frenet frame [s, ds, dds]
-        d_condition (np.array): lateral component of the target point in frenet frame [d, dd, ddd]
-    """
-    s_condition = np.zeros(3)
-    d_condition = np.zeros(3)
-    
-    dx = x - rx
-    dy = y - ry
-    
-    cos_theta_r = math.cos(rtheta)
-    sin_theta_r = math.sin(rtheta)
-    
-    cross_rd_nd = cos_theta_r * dy - sin_theta_r * dx
-    d_condition[0] = math.copysign(math.sqrt(dx * dx + dy * dy), cross_rd_nd)
-    
-    delta_theta = theta - rtheta
-    tan_delta_theta = math.tan(delta_theta)
-    cos_delta_theta = math.cos(delta_theta)
-    
-    one_minus_kappa_r_d = 1 - rkappa * d_condition[0]
-    d_condition[1] = one_minus_kappa_r_d * tan_delta_theta
-    
-    kappa_r_d_prime = rdkappa * d_condition[0] + rkappa * d_condition[1]
-    
-    d_condition[2] = (-kappa_r_d_prime * tan_delta_theta + 
-        one_minus_kappa_r_d / cos_delta_theta / cos_delta_theta *
-        (kappa * one_minus_kappa_r_d / cos_delta_theta - rkappa))
-    
-    s_condition[0] = rs
-    s_condition[1] = v * cos_delta_theta / one_minus_kappa_r_d
-    
-    delta_theta_prime = one_minus_kappa_r_d / cos_delta_theta * kappa - rkappa
-    s_condition[2] = ((a * cos_delta_theta -
-        s_condition[1] * s_condition[1] *
-        (d_condition[1] * delta_theta_prime - kappa_r_d_prime)) /
-        one_minus_kappa_r_d)
-    return s_condition, d_condition
-
-def frenet_to_cartesian(rs, rx, ry, rtheta, rkappa, rdkappa, s_condition, d_condition):
-    """ Convert from frenet to cartesian coordinate
-    Adapted from: https://github.com/ApolloAuto/apollo
-    
-    Args:
-        rs (float): arc length of the tangent point in frenet frame
-        rx (float): x coordinate arc of the tangent point in cartesian frame
-        ry (float): y coordinate arc of the tangent point in cartesian frame
-        rtheta (float): heading of the tangent point in cartesian frame
-        rkappa (float): curvature of the tangent point
-        rdkappa (float): curvature derivative of the tangent point
-        s_condition (np.array): longitudinal component of the target point in frenet frame [s, ds, dds]
-        d_condition (np.array): lateral component of the target point in frenet frame [d, dd, ddd]
-    
-    Returns:
-        x (float): x coordinate of the target point in cartesian frame
-        y (float): y coordinate of the target point in cartesian frame
-        v (float): velocity norm of the target point in cartesian frame
-        a (float): acceleration norm the target point in cartesian frame
-        theta (float): heading of the target point in cartesian frame
-        kappa (float): curvature of the target point trajectory in cartesian frame
-    """
-    if math.fabs(rs - s_condition[0])>= 1.0e-6:
-        print("The reference point s and s_condition[0] don't match")
-    
-    cos_theta_r = math.cos(rtheta)
-    sin_theta_r = math.sin(rtheta)
-    
-    x = rx - sin_theta_r * d_condition[0]
-    y = ry + cos_theta_r * d_condition[0]
-    
-    one_minus_kappa_r_d = 1 - rkappa * d_condition[0]
-    tan_delta_theta = d_condition[1] / one_minus_kappa_r_d
-    delta_theta = math.atan2(d_condition[1], one_minus_kappa_r_d)
-    cos_delta_theta = math.cos(delta_theta)
-    
-    theta = float(wrap_angles(delta_theta + rtheta))
-    kappa_r_d_prime = rdkappa * d_condition[0] + rkappa * d_condition[1]
-    
-    kappa = ((((d_condition[2] + kappa_r_d_prime * tan_delta_theta) *
-        cos_delta_theta * cos_delta_theta) / (one_minus_kappa_r_d) 
-        + rkappa) * cos_delta_theta / (one_minus_kappa_r_d))
-    
-    d_dot = d_condition[1] * s_condition[1]
-    
-    v = math.sqrt(one_minus_kappa_r_d**2 * s_condition[1]**2 + d_dot**2)
-    
-    delta_theta_prime = one_minus_kappa_r_d / cos_delta_theta * (kappa) - rkappa     
-    a = (s_condition[2] * one_minus_kappa_r_d / cos_delta_theta +
-        s_condition[1] * s_condition[1] / cos_delta_theta *
-        (d_condition[1] * delta_theta_prime - kappa_r_d_prime))
-    return x, y, v, a, theta, kappa 
