@@ -235,6 +235,7 @@ def frenet_to_cartesian(rs, rx, ry, rtheta, rkappa, rdkappa, s_condition, d_cond
     # second order conversion
     if order >= 2:
         one_minus_kappa_r_d = 1 - rkappa * d_condition[0]
+        d_dot = d_condition[1] * s_condition[1]
         delta_theta = math.atan2(d_condition[1], one_minus_kappa_r_d)
         v = math.sqrt(one_minus_kappa_r_d**2 * s_condition[1]**2 + d_dot**2)
         theta = float(wrap_angles(delta_theta + rtheta))
@@ -249,8 +250,6 @@ def frenet_to_cartesian(rs, rx, ry, rtheta, rkappa, rdkappa, s_condition, d_cond
         kappa = ((((d_condition[2] + kappa_r_d_prime * tan_delta_theta) *
             cos_delta_theta * cos_delta_theta) / (one_minus_kappa_r_d) 
             + rkappa) * cos_delta_theta / (one_minus_kappa_r_d))
-        
-        d_dot = d_condition[1] * s_condition[1]
         
         delta_theta_prime = one_minus_kappa_r_d / cos_delta_theta * (kappa) - rkappa     
         a = (s_condition[2] * one_minus_kappa_r_d / cos_delta_theta +

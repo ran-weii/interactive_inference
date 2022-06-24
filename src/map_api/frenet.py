@@ -2,10 +2,10 @@ import math
 import numpy as np
 from scipy.interpolate import CubicSpline
 from src.data.geometry import wrap_angles
-from src.data.frenet_utils import (
+from src.map_api.frenet_utils import (
     compute_arc_length, get_closest_point, compute_curvature, 
     compute_curvature_derivative, compute_tangent_and_normal_vectors)
-from src.data.frenet_utils import cartesian_to_frenet, frenet_to_cartesian
+from src.map_api.frenet_utils import cartesian_to_frenet, frenet_to_cartesian
 
 class FrenetPath:
     """ Object used to store (reference) paths in the frenet frame """
