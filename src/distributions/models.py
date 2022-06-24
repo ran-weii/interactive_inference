@@ -128,8 +128,9 @@ class ConditionalDistribution(nn.Module):
         nn.init.normal_(self.tl, mean=0, std=0.01)
         
         if cov == "diag":
+            del self.tl
             self.parameter_size = self.parameter_size[:-1]
-            self.tl = torch.zeros_like(self.tl.data)
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
         
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
@@ -215,13 +216,20 @@ class ConditionalDistribution(nn.Module):
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
         return x
     
-    def ancestral_sample(self, pi, num_samples, params=None):
-        num_samples_ = 1 if num_samples == 0 else num_samples
-        z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples_,))
+    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, params=None):
+        """ Ancestral sampling
+        
+        Args:
+            pi (torch.tensor): mixing weights
+            num_samples (int, optional): number of samples to draw. Default=1
+            sample_mean (bool, optional): whether to sample component mean. Default=False
+            params (None, optional): 
+        """
+        z_ = torch.distributions.RelaxedOneHotCategorical(1, pi).rsample((num_samples,))
         z_ = straight_through_sample(z_, dim=-1).unsqueeze(-1)
         
         # sample component
-        if num_samples == 0:
+        if sample_mean:
             x_ = self.mean(params)
         else:
             x_ = self.sample((num_samples, pi.shape[0]), params).squeeze(1)

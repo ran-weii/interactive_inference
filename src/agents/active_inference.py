@@ -119,13 +119,14 @@ class ActiveInference(nn.Module):
         a = self.planner(b)
         return b, a
 
-    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+    def choose_action(self, o, u, batch=False, theta=None, sample_method="ace", num_samples=None):
         """ 
         Args:
             o (torch.tensor): observation sequence [T, batch_size, obs_dim]
             u (torch.tensor): control sequence [T, batch_size, ctl_dim]
             batch (bool, optional): whether to perform batch inference, Defaults to False
             theta (dict, optional): agent parameters dict. Defaults to None.
+            sample_method (str, optional): sample method. Choices=["ace", "acm", "bma"]
             num_samples (int, optional): number of samples for ancestral sampling. 
                 Use bayesian averaging if None. Defaulst to None.
             
@@ -146,10 +147,13 @@ class ActiveInference(nn.Module):
             self._b, self._a = b, a
 
         F = None if theta is None else theta["F"]
-        if num_samples is None:
+        if sample_method == "bma":
             u_pred = self.ctl_model.bayesian_average(a, F)
         else:
-            u_pred = self.ctl_model.ancestral_sample(a, num_samples, F)
+            sample_mean = True if sample_method == "acm" else False
+            u_pred = self.ctl_model.ancestral_sample(
+                a, num_samples=num_samples, sample_mean=sample_mean, params=F
+            )
         return u_pred.squeeze(-3)
     
 
