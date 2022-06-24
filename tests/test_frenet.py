@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from src.map_api.lanelet import MapReader
-from src.data.frenet import FrenetPath, Trajectory
+from src.map_api.frenet import FrenetPath, Trajectory
 
 import warnings
 warnings.filterwarnings("ignore")
