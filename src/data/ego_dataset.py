@@ -1,9 +1,17 @@
 import numpy as np
 import pandas as pd
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
 from src.data.data_filter import (
     filter_car_follow_eps, get_relative_df, get_ego_centric_df)
+
+def collate_fn(batch):
+    """ Collate batch to have the same sequence length """
+    pad_obs = pad_sequence([b["ego"] for b in batch])
+    pad_act = pad_sequence([b["act"] for b in batch])
+    mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
+    return pad_obs, pad_act, mask
 
 class EgoDataset(Dataset):
     """ Dataset for general car following """
@@ -155,8 +163,6 @@ class RelativeDataset(EgoDataset):
         df_ego = self.df_track.loc[
             self.df_track["eps_id"] == self.unique_eps[idx]
         ].reset_index(drop=True)
-        # remove data with lane switching at the end
-        df_ego = df_ego.drop(df_ego.tail(15).index)
         
         """ TODO: add seed to max length filtering """
         if len(df_ego) > self.max_eps_len: 
