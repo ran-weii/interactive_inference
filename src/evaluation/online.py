@@ -19,3 +19,31 @@ class Evaluator:
         self._track["x_rel"].append(obs[0, 4].item())
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
+
+
+def eval_episode(env, controller, eps_id, max_steps=1000):
+    """ Evaluate episode
+    
+    Args:
+        env (Env): gym style simulator
+        controller (): controller with reset and choose_action method
+        eps_id (int): episode id
+        max_steps (int, optional): maximum number of steps
+
+    Returns:
+        sim_states (np.array): simulated states [T, num_agents, 5]
+        sim_acts (np.array): simulated actions [T, 2]
+        track_data (dict): recorded track data
+    """
+    controller.reset()
+    obs = env.reset(eps_id)
+    for t in range(max_steps):
+        act = controller.choose_action(obs)
+        obs, _, done, _ = env.step(act)
+        if done:
+            break
+    
+    sim_states = env._sim_states[:t+1]
+    sim_acts = env._sim_acts[:t+1]
+    track_data = {k:v[:t+1] for (k, v) in env._track_data.items()}
+    return sim_states, sim_acts, track_data

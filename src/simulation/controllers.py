@@ -153,3 +153,42 @@ class AuxiliaryController:
         else:
             ctl = None
         return ctl
+
+class AgentWrapper:
+    """ Wrapper for agent and observer for simulation """
+    def __init__(self, observer, agent, sample_method):
+        """
+        Args:
+            observer (Observer): observer object to compute features
+            agent (Agent): Agent object with choose_action method
+            sample_method (str): agent sample method. Choices=["ace", "acm", "bma"]
+        """
+        assert sample_method in ["ace", "acm", "bma"]
+        agent.eval()
+        self.agent = agent
+        self.observer = observer
+        self.sample_method = sample_method
+        
+        self._prev_act = None
+    
+    def reset(self):
+        self._prev_act = torch.zeros(1, 2)
+
+    def choose_action(self, obs_env):
+        """
+        Args:
+            obs_env (dict): enviroinment observation {"ego", "agents"}
+        
+        Returns:
+            act_env (np.array): actions in the global coordinate [2]
+        """
+        obs = self.observer.observe(obs_env) # torch.tensor
+        with torch.no_grad():
+            act = self.agent.choose_action(
+                obs, self._prev_act, sample_method=self.sample_method, num_samples=1
+            ).view(1, 2)
+            self._prev_act = act.clone()
+        
+        """ TODO: remove obs_env from observer.control method """
+        act_env = self.observer.control(act.view(-1), obs_env)
+        return act_env
