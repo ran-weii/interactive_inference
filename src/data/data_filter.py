@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import LabelEncoder
 from src.data.geometry import vector_projection, wrap_angles
 
 def filter_car_follow_eps(df_track, min_eps_len):
@@ -153,3 +154,51 @@ def get_ego_centric_df(df):
             df_ego[v[0]], df_ego[v[1]], psi_x, psi_y
         )
     return df_ego
+
+def get_trajectory_segment_id(df, min_seg_len):
+    """ Divide trajectory into segments based on change in lane_id and lead_track_id
+    
+    Args:
+        df (pd.dataframe): track dataframe
+        min_seg_len (int): minimum segment length
+        
+    Returns:
+        seg_id (np.array): segment episode id, -1 for invalid segments. dim=[len(df)]
+        seg_len (np.array): segment length. dim=[len(df)]
+    """
+    assert all(v in df.columns for v in ["track_id", "lead_track_id"])
+    
+    df = df.assign(seg_change=np.any(np.stack([
+        df.groupby("track_id")["lead_track_id"].fillna(-1).diff() != 0,
+        df.groupby("track_id")["lane_id"].fillna(-1).diff() != 0,
+    ]), axis=0))
+    
+    # get segment id per track
+    track_seg_id = np.hstack([
+        np.cumsum(1 * x[-1].values) for x in df.groupby("track_id")["seg_change"]
+    ])
+    track_seg_id[df["lead_track_id"].isna()] = -1
+    track_seg_id[df["lane_id"].isna()] = -1
+    
+    # get total segment id
+    track_id = df["track_id"].values
+    df_labels = pd.DataFrame(
+        np.stack([track_id, track_seg_id]).T, 
+        columns=["track_id", "track_seg_id"]
+    )
+    df_seg_len = df_labels.groupby(["track_id", "track_seg_id"]).size().reset_index()
+    df_seg_len.columns = ["track_id", "track_seg_id", "seg_len"]
+    df_labels = df_labels.merge(df_seg_len, on=["track_id", "track_seg_id"], how="left")
+    
+    is_valid_seg = (track_seg_id != -1) & (df_labels["seg_len"] >= min_seg_len)
+    seg_labels = df_labels["track_id"].apply(str) + "_" + df_labels["track_seg_id"].apply(str)
+    seg_labels = seg_labels[is_valid_seg]
+    df_labels = df_labels.assign(seg_labels=seg_labels)
+    
+    unique_eps_labels = np.sort(seg_labels.unique())
+    labler = LabelEncoder().fit(unique_eps_labels)
+    seg_id = -1 * np.ones((len(df_labels,)))
+    seg_id[is_valid_seg] = labler.transform(seg_labels)
+    seg_len = df_labels["seg_len"].values
+    seg_len[is_valid_seg == False] = -1
+    return seg_id, seg_len
