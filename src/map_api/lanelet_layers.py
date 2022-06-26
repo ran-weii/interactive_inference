@@ -5,6 +5,7 @@ from shapely import ops
 from scipy.interpolate import CubicSpline
 from src.data.geometry import (
     get_heading, get_cardinal_direction, mid_point, dist_two_points, wrap_angles)
+from src.map_api.frenet import FrenetPath
 
 class L2Point:
     def __init__(self, id_, metric_point, geo_point, type_, point_subtype):
@@ -28,6 +29,7 @@ class L2Linestring:
         self.cubic_spline = None
         self.spline_heading = None
         self.spline_cumdist = None
+        self.frenet_path = None
     
     def add_reference(self, lanelet_id):
         self.lanelet_references.append(lanelet_id)
@@ -50,7 +52,10 @@ class L2Linestring:
             self.cubic_spline[1:, 0], self.cubic_spline[1:, 1]
         ))
         self.spline_cumdist = np.insert(self.spline_cumdist, -1, self.spline_cumdist[-1])
-
+    
+    def _create_frenet_path(self):
+        coords = np.array(self.linestring.coords)
+        self.frenet_path = FrenetPath(coords)
      
 class L2Polygon:
     def __init__(self, id_, polygon, type_, subtype):
@@ -354,101 +359,102 @@ class Lane:
         self.left_bound._interpolate(step=1)
         self.right_bound._interpolate(step=1)
         self.centerline._interpolate(step=1)
-    
-    def get_frenet_coords(self, x, y):
-        """ Get the lane centric frenet coordinates of point (x, y)
+        self.centerline._create_frenet_path()
+
+    # def get_frenet_coords(self, x, y):
+    #     """ Get the lane centric frenet coordinates of point (x, y)
         
-        Args:
-            x (float): x coord of the target point
-            y (float): y coord of the target point
+    #     Args:
+    #         x (float): x coord of the target point
+    #         y (float): y coord of the target point
         
-        Returns:
-            x_tan (float): x coord of the tangent point 
-            y_tan (float): y coord of the tangent point
-            psi_tan (float): heading of the trangent line
-            centerline_dist (float): signed distance to the center line. 
-                Left to the center line is positive
-            left_bound_dist (float): signed distance to the left bound. 
-                Left to the left bound is positive
-            right_bound_dist (float): signed distance to the right bound. 
-                Left to the right bound is positive
-        """
-        # find the tangent point
-        p = Point([x, y])
-        x_grid = np.linspace(x - 10, x + 10, 50) 
-        y_grid = self.centerline.interpolator(x_grid)
-        grid_linestr = LineString(np.stack([x_grid, y_grid]).T)
-        p_proj = grid_linestr.interpolate(grid_linestr.project(p))
-        x_tan, y_tan = p_proj.x, p_proj.y
+    #     Returns:
+    #         x_tan (float): x coord of the tangent point 
+    #         y_tan (float): y coord of the tangent point
+    #         psi_tan (float): heading of the trangent line
+    #         centerline_dist (float): signed distance to the center line. 
+    #             Left to the center line is positive
+    #         left_bound_dist (float): signed distance to the left bound. 
+    #             Left to the left bound is positive
+    #         right_bound_dist (float): signed distance to the right bound. 
+    #             Left to the right bound is positive
+    #     """
+    #     # find the tangent point
+    #     p = Point([x, y])
+    #     x_grid = np.linspace(x - 10, x + 10, 50) 
+    #     y_grid = self.centerline.interpolator(x_grid)
+    #     grid_linestr = LineString(np.stack([x_grid, y_grid]).T)
+    #     p_proj = grid_linestr.interpolate(grid_linestr.project(p))
+    #     x_tan, y_tan = p_proj.x, p_proj.y
         
-        # get the heading of the closet point on centerline
-        centerline_spline = self.centerline.cubic_spline.copy()
-        centerline_heading = self.centerline.spline_heading.copy()
-        d = dist_two_points(x_tan, y_tan, centerline_spline[:, 0], centerline_spline[:, 1])
-        psi_adj = centerline_heading[np.argmin(d)]
+    #     # get the heading of the closet point on centerline
+    #     centerline_spline = self.centerline.cubic_spline.copy()
+    #     centerline_heading = self.centerline.spline_heading.copy()
+    #     d = dist_two_points(x_tan, y_tan, centerline_spline[:, 0], centerline_spline[:, 1])
+    #     psi_adj = centerline_heading[np.argmin(d)]
         
-        # get tanget line heading
-        slope = self.centerline.interpolator(p_proj.x, 1)
-        psi_tan = np.arctan2(slope, 1)
-        card = get_cardinal_direction(0, 0, psi_adj, 1, slope)
-        if card > 0.5 * np.pi or card < -0.5 * np.pi:
-            psi_tan = wrap_angles(psi_tan + np.pi)
+    #     # get tanget line heading
+    #     slope = self.centerline.interpolator(p_proj.x, 1)
+    #     psi_tan = np.arctan2(slope, 1)
+    #     card = get_cardinal_direction(0, 0, psi_adj, 1, slope)
+    #     if card > 0.5 * np.pi or card < -0.5 * np.pi:
+    #         psi_tan = wrap_angles(psi_tan + np.pi)
         
-        # get the normal line
-        slope_norm = -1 / slope
-        normal_linestring = LineString([
-            (x_tan - 10, y_tan - 10 * slope_norm), (x_tan + 10, y_tan + 10 * slope_norm)
-        ])
-        left_bound_pt = normal_linestring.intersection(self.left_bound.linestring)
-        right_bound_pt = normal_linestring.intersection(self.right_bound.linestring)
+    #     # get the normal line
+    #     slope_norm = -1 / slope
+    #     normal_linestring = LineString([
+    #         (x_tan - 10, y_tan - 10 * slope_norm), (x_tan + 10, y_tan + 10 * slope_norm)
+    #     ])
+    #     left_bound_pt = normal_linestring.intersection(self.left_bound.linestring)
+    #     right_bound_pt = normal_linestring.intersection(self.right_bound.linestring)
         
-        # get signed lane distances
-        centerline_dist = dist_two_points(x, y, x_tan, y_tan)
+    #     # get signed lane distances
+    #     centerline_dist = dist_two_points(x, y, x_tan, y_tan)
         
-        # out of bound handle
-        if left_bound_pt.is_empty or right_bound_pt.is_empty:
-            left_bound_dist = 1.8 - centerline_dist 
-            right_bound_dist = 1.8 + centerline_dist
-        else:
-            left_bound_dist = dist_two_points(x, y, left_bound_pt.x, left_bound_pt.y)
-            right_bound_dist = dist_two_points(x, y, right_bound_pt.x, right_bound_pt.y)
+    #     # out of bound handle
+    #     if left_bound_pt.is_empty or right_bound_pt.is_empty:
+    #         left_bound_dist = 1.8 - centerline_dist 
+    #         right_bound_dist = 1.8 + centerline_dist
+    #     else:
+    #         left_bound_dist = dist_two_points(x, y, left_bound_pt.x, left_bound_pt.y)
+    #         right_bound_dist = dist_two_points(x, y, right_bound_pt.x, right_bound_pt.y)
             
-            centerline_card = get_cardinal_direction(x_tan, y_tan, psi_tan, x, y)
-            left_bound_card = get_cardinal_direction(left_bound_pt.x, left_bound_pt.y, psi_tan, x, y)
-            right_bound_card = get_cardinal_direction(right_bound_pt.x, right_bound_pt.y, psi_tan, x, y)
+    #         centerline_card = get_cardinal_direction(x_tan, y_tan, psi_tan, x, y)
+    #         left_bound_card = get_cardinal_direction(left_bound_pt.x, left_bound_pt.y, psi_tan, x, y)
+    #         right_bound_card = get_cardinal_direction(right_bound_pt.x, right_bound_pt.y, psi_tan, x, y)
             
-            centerline_dist *= 2 * np.heaviside(centerline_card, 1) - 1
-            left_bound_dist *= 2 * np.heaviside(left_bound_card, 1) - 1
-            right_bound_dist *= 2 * np.heaviside(right_bound_card, 1) - 1
-        return x_tan, y_tan, psi_tan, centerline_dist, left_bound_dist, right_bound_dist
+    #         centerline_dist *= 2 * np.heaviside(centerline_card, 1) - 1
+    #         left_bound_dist *= 2 * np.heaviside(left_bound_card, 1) - 1
+    #         right_bound_dist *= 2 * np.heaviside(right_bound_card, 1) - 1
+    #     return x_tan, y_tan, psi_tan, centerline_dist, left_bound_dist, right_bound_dist
     
-    def get_waypoints(self, x, y, wp_dist):
-        """ Get waypoints at fixed look ahead distances
+    # def get_waypoints(self, x, y, wp_dist):
+    #     """ Get waypoints at fixed look ahead distances
         
-        Args:
-            x (float): x coord of target position
-            y (float): y coord of target position
-            wy_dist (np.array): array of waypoint look ahead distances
+    #     Args:
+    #         x (float): x coord of target position
+    #         y (float): y coord of target position
+    #         wy_dist (np.array): array of waypoint look ahead distances
         
-        Returns:
-            wp_coords (np.array): coords of waypoints [num_wp, 2]
-            wp_headings (np.array): headings of waypoints [num_wp]
-        """
-        centerline_spline = self.centerline.cubic_spline.copy()
-        centerline_heading = self.centerline.spline_heading.copy()
-        centerline_cumdist = self.centerline.spline_cumdist.copy()
-        d = dist_two_points(x, y, centerline_spline[:, 0], centerline_spline[:, 1])
-        centerline_spline = centerline_spline[np.argsort(d)[0]:]
-        centerline_heading = centerline_heading[np.argsort(d)[0]:]
-        centerline_cumdist = centerline_cumdist[np.argsort(d)[0]:]
-        centerline_cumdist -= centerline_cumdist[0]
+    #     Returns:
+    #         wp_coords (np.array): coords of waypoints [num_wp, 2]
+    #         wp_headings (np.array): headings of waypoints [num_wp]
+    #     """
+    #     centerline_spline = self.centerline.cubic_spline.copy()
+    #     centerline_heading = self.centerline.spline_heading.copy()
+    #     centerline_cumdist = self.centerline.spline_cumdist.copy()
+    #     d = dist_two_points(x, y, centerline_spline[:, 0], centerline_spline[:, 1])
+    #     centerline_spline = centerline_spline[np.argsort(d)[0]:]
+    #     centerline_heading = centerline_heading[np.argsort(d)[0]:]
+    #     centerline_cumdist = centerline_cumdist[np.argsort(d)[0]:]
+    #     centerline_cumdist -= centerline_cumdist[0]
         
-        # get waypoint ids
-        wp_id = [np.where(centerline_cumdist >= d)[0][:1] for d in wp_dist]
-        wp_id = np.array([i[0] for i in wp_id if len(i) > 0]).astype(int)
-        if len(wp_id) < len(wp_dist):
-            wp_id = np.hstack([wp_id, (len(centerline_cumdist) - 1) * np.ones(len(wp_dist) - len(wp_id))]).astype(int)
+    #     # get waypoint ids
+    #     wp_id = [np.where(centerline_cumdist >= d)[0][:1] for d in wp_dist]
+    #     wp_id = np.array([i[0] for i in wp_id if len(i) > 0]).astype(int)
+    #     if len(wp_id) < len(wp_dist):
+    #         wp_id = np.hstack([wp_id, (len(centerline_cumdist) - 1) * np.ones(len(wp_dist) - len(wp_id))]).astype(int)
         
-        wp_coords = centerline_spline[wp_id]
-        wp_headings = centerline_heading[wp_id]
-        return wp_coords, wp_headings
+    #     wp_coords = centerline_spline[wp_id]
+    #     wp_headings = centerline_heading[wp_id]
+    #     return wp_coords, wp_headings

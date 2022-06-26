@@ -54,145 +54,160 @@ class MapReader:
             for cell in lanelet.cells:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
-
-    def match(self, x, y, target_lane_id=None, max_cells=5):
-        """ Match point to map and return lane positions. 
-            Left of target line is positive and right of target line is negative. 
-
-        Args:
-            x (float): target point x coordinate
-            y (float): target point y coordinate
-            target_lane_id (int, optional): lane id to be matched. default=None
-            max_cells (int, optional): maximum number of cells adhead to return. default=5
-
-        Returns:
-            lane_id (int): matched lane id, Returns None if not matched
-            cell_id (int): matched cell id.Returns None if not matched
-            left_bound_dist (float): distance to cell left bound. Returns None if not matched
-            right_bound_dist (float): distance to cell right bound. Returns None if not matched
-            center_line_dist (float): distance to cell center line. Returns None if not matched
-            cell_headings (np.array): array of left and right lookahead cell headings [max_cells, 2]. 
-                nonpresent cells are filled with zeros.
-        """
-        def get_target_cell_id(p, cells):
-            cell_id = None
-            if target_lane_id is None:
-                for cell_id, cell in enumerate(cells):
-                    if cell.polygon.contains(p):
-                        break
-                    else:
-                        cell_id = None
-            
-            if cell_id is None:
-                dist_to_cells = []
-                for cell_id, cell in enumerate(cells):
-                    dist_to_cells.append(cell.polygon.exterior.distance(p))
-                cell_id = np.argmin(dist_to_cells)
-            return cell_id
-
-        p = Point(x, y)
-
-        search_lanes = self.lanes 
-        if target_lane_id is not None:
-            search_lanes = {target_lane_id: self.lanes[target_lane_id]}
-
-        matched = False
-        lane_id = None
-        cell_id = None
-        left_bound_dist = None
-        right_bound_dist = None
-        center_line_dist = None
-        cell_headings = np.zeros((max_cells, 3)) * np.nan
-        for lane_id, lane in search_lanes.items():
-            is_contain = lane.polygon.contains(p)
-            is_continue = True if target_lane_id is not None or is_contain else False
-
-            if is_continue:
-                num_cells = len(lane.cells)
-                cell_id = get_target_cell_id(p, lane.cells)
-                cell = lane.cells[cell_id]
-                left_bound_coords = cell.left_bound.coords
-                right_bound_coords = cell.right_bound.coords
-                center_line_coords = cell.center_line.coords
-
-                # compute directed lane distance
-                left_bound_card = get_cardinal_direction(
-                    left_bound_coords[0][0], left_bound_coords[0][1], cell.heading, x, y
-                )
-                right_bound_card = get_cardinal_direction(
-                    right_bound_coords[0][0], right_bound_coords[0][1], cell.heading, x, y
-                )
-                center_line_card = get_cardinal_direction(
-                    center_line_coords[0][0], center_line_coords[0][1], cell.heading, x, y
-                )
-                left_bound_dist = -np.sign(left_bound_card) * p.distance(cell.left_bound)
-                right_bound_dist = np.sign(right_bound_card) * p.distance(cell.right_bound)
-                center_line_dist = np.sign(center_line_card) * p.distance(cell.center_line)
-                
-                # compute lookahead cell headings
-                last_cell_id = min(num_cells, cell_id + max_cells)
-                cell_headings[:last_cell_id - cell_id] = np.array(
-                    [[l.left_bound_heading, l.right_bound_heading, l.center_line_heading] 
-                    for l in lane.cells[cell_id:last_cell_id]]
-                )
-                return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
-        if not matched:
-            lane_id = None
-        return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
     
-    def match_frenet(self, x, y, target_lane_id=None, max_cells=5):
-        """ Match point to map in the frenet frame
-
-        Args:
-            x (float): target point x coordinate
-            y (float): target point y coordinate
-            target_lane_id (int, optional): lane id to be matched. default=None
-            max_cells (int, optional): maximum number of cells adhead to return. default=5
+    def match_lane(self, x, y):
+        """ Match a point (x, y) to a lane on the map 
         
         Returns:
-            lane_id (int): matched lane id, Returns None if not matched
-            psi_tan (int): heading of the center line tangent line. Returns None if not matched
-            center_line_dist (float): distance to center line. Returns None if not matched
-            left_bound_dist (float): distance to left bound. Returns None if not matched
-            right_bound_dist (float): distance to right bound. Returns None if not matched
-            wp_coords (np.array): coords of lookahead waypoints. Returns none if not matched
-            wp_headings (np.array): headings of lookahead waypoints. Returns none if not matched
+            lane_id (int): id of the matched lane. Return None if not matched
         """
         p = Point(x, y)
-        
-        search_lanes = self.lanes 
-        if target_lane_id is not None:
-            search_lanes = {target_lane_id: self.lanes[target_lane_id]}
-        
         matched = False
-        lane_id = None
-        psi_tan = None
-        centerline_dist = None
-        left_bound_dist = None
-        right_bound_dist = None
-        wp_coords = np.zeros((max_cells, 2))
-        wp_headings = np.zeros((max_cells))
-        for lane_id, lane in search_lanes.items():
-            is_contain = lane.polygon.contains(p)
-            is_continue = True if target_lane_id is not None or is_contain else False
+        for lane_id, lane in self.lanes.items():
+            if lane.polygon.contains(p):
+                matched = True
+                break
+        lane_id = None if not matched else lane_id
+        return lane_id
+    
+    # def match(self, x, y, target_lane_id=None, max_cells=5):
+    #     """ Match point to map and return lane positions. 
+    #         Left of target line is positive and right of target line is negative. 
+
+    #     Args:
+    #         x (float): target point x coordinate
+    #         y (float): target point y coordinate
+    #         target_lane_id (int, optional): lane id to be matched. default=None
+    #         max_cells (int, optional): maximum number of cells adhead to return. default=5
+
+    #     Returns:
+    #         lane_id (int): matched lane id, Returns None if not matched
+    #         cell_id (int): matched cell id.Returns None if not matched
+    #         left_bound_dist (float): distance to cell left bound. Returns None if not matched
+    #         right_bound_dist (float): distance to cell right bound. Returns None if not matched
+    #         center_line_dist (float): distance to cell center line. Returns None if not matched
+    #         cell_headings (np.array): array of left and right lookahead cell headings [max_cells, 2]. 
+    #             nonpresent cells are filled with zeros.
+    #     """
+    #     def get_target_cell_id(p, cells):
+    #         cell_id = None
+    #         if target_lane_id is None:
+    #             for cell_id, cell in enumerate(cells):
+    #                 if cell.polygon.contains(p):
+    #                     break
+    #                 else:
+    #                     cell_id = None
             
-            if is_continue:
-                out = lane.get_frenet_coords(x, y)
-                x_tan = out[0]
-                y_tan = out[1]
-                psi_tan = out[2]
-                centerline_dist = out[3]
-                left_bound_dist = out[4]
-                right_bound_dist = out[5]
+    #         if cell_id is None:
+    #             dist_to_cells = []
+    #             for cell_id, cell in enumerate(cells):
+    #                 dist_to_cells.append(cell.polygon.exterior.distance(p))
+    #             cell_id = np.argmin(dist_to_cells)
+    #         return cell_id
+
+    #     p = Point(x, y)
+
+    #     search_lanes = self.lanes 
+    #     if target_lane_id is not None:
+    #         search_lanes = {target_lane_id: self.lanes[target_lane_id]}
+
+    #     matched = False
+    #     lane_id = None
+    #     cell_id = None
+    #     left_bound_dist = None
+    #     right_bound_dist = None
+    #     center_line_dist = None
+    #     cell_headings = np.zeros((max_cells, 3)) * np.nan
+    #     for lane_id, lane in search_lanes.items():
+    #         is_contain = lane.polygon.contains(p)
+    #         is_continue = True if target_lane_id is not None or is_contain else False
+
+    #         if is_continue:
+    #             num_cells = len(lane.cells)
+    #             cell_id = get_target_cell_id(p, lane.cells)
+    #             cell = lane.cells[cell_id]
+    #             left_bound_coords = cell.left_bound.coords
+    #             right_bound_coords = cell.right_bound.coords
+    #             center_line_coords = cell.center_line.coords
+
+    #             # compute directed lane distance
+    #             left_bound_card = get_cardinal_direction(
+    #                 left_bound_coords[0][0], left_bound_coords[0][1], cell.heading, x, y
+    #             )
+    #             right_bound_card = get_cardinal_direction(
+    #                 right_bound_coords[0][0], right_bound_coords[0][1], cell.heading, x, y
+    #             )
+    #             center_line_card = get_cardinal_direction(
+    #                 center_line_coords[0][0], center_line_coords[0][1], cell.heading, x, y
+    #             )
+    #             left_bound_dist = -np.sign(left_bound_card) * p.distance(cell.left_bound)
+    #             right_bound_dist = np.sign(right_bound_card) * p.distance(cell.right_bound)
+    #             center_line_dist = np.sign(center_line_card) * p.distance(cell.center_line)
                 
-                # get far points
-                farpoint_dists = self.cell_len * np.arange(1, max_cells + 1)
-                wp_coords, wp_headings = lane.get_waypoints(x_tan, y_tan, farpoint_dists)
-                return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
+    #             # compute lookahead cell headings
+    #             last_cell_id = min(num_cells, cell_id + max_cells)
+    #             cell_headings[:last_cell_id - cell_id] = np.array(
+    #                 [[l.left_bound_heading, l.right_bound_heading, l.center_line_heading] 
+    #                 for l in lane.cells[cell_id:last_cell_id]]
+    #             )
+    #             return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
+    #     if not matched:
+    #         lane_id = None
+    #     return lane_id, cell_id, left_bound_dist, right_bound_dist, center_line_dist, cell_headings
+    
+    # def match_frenet(self, x, y, target_lane_id=None, max_cells=5):
+    #     """ Match point to map in the frenet frame
+
+    #     Args:
+    #         x (float): target point x coordinate
+    #         y (float): target point y coordinate
+    #         target_lane_id (int, optional): lane id to be matched. default=None
+    #         max_cells (int, optional): maximum number of cells adhead to return. default=5
         
-        if not matched:
-            lane_id = None
-        return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
+    #     Returns:
+    #         lane_id (int): matched lane id, Returns None if not matched
+    #         psi_tan (int): heading of the center line tangent line. Returns None if not matched
+    #         center_line_dist (float): distance to center line. Returns None if not matched
+    #         left_bound_dist (float): distance to left bound. Returns None if not matched
+    #         right_bound_dist (float): distance to right bound. Returns None if not matched
+    #         wp_coords (np.array): coords of lookahead waypoints. Returns none if not matched
+    #         wp_headings (np.array): headings of lookahead waypoints. Returns none if not matched
+    #     """
+    #     p = Point(x, y)
+        
+    #     search_lanes = self.lanes 
+    #     if target_lane_id is not None:
+    #         search_lanes = {target_lane_id: self.lanes[target_lane_id]}
+        
+    #     matched = False
+    #     lane_id = None
+    #     psi_tan = None
+    #     centerline_dist = None
+    #     left_bound_dist = None
+    #     right_bound_dist = None
+    #     wp_coords = np.zeros((max_cells, 2))
+    #     wp_headings = np.zeros((max_cells))
+    #     for lane_id, lane in search_lanes.items():
+    #         is_contain = lane.polygon.contains(p)
+    #         is_continue = True if target_lane_id is not None or is_contain else False
+            
+    #         if is_continue:
+    #             out = lane.get_frenet_coords(x, y)
+    #             x_tan = out[0]
+    #             y_tan = out[1]
+    #             psi_tan = out[2]
+    #             centerline_dist = out[3]
+    #             left_bound_dist = out[4]
+    #             right_bound_dist = out[5]
+                
+    #             # get far points
+    #             farpoint_dists = self.cell_len * np.arange(1, max_cells + 1)
+    #             wp_coords, wp_headings = lane.get_waypoints(x_tan, y_tan, farpoint_dists)
+    #             return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
+        
+    #     if not matched:
+    #         lane_id = None
+    #     return lane_id, psi_tan, centerline_dist, left_bound_dist, right_bound_dist, wp_coords, wp_headings
         
     def plot(self, option="ways", annot=True, figsize=(15, 6)):
         """
