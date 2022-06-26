@@ -12,7 +12,7 @@ from src.map_api.lanelet import MapReader
 from src.data.kalman_filter import BatchKalmanFilter
 from src.data.agent_filter import (
     get_neighbor_vehicle_ids, get_car_following_episode)
-from src.data.data_filter import get_trajectory_segment_id
+from src.data.data_filter import get_trajectory_segment_id, filter_segment_by_length
 from src.data.geometry import coord_transformation
 from src.map_api.frenet import Trajectory
 from src.simulation.observers import FEATURE_SET, Observer
@@ -213,7 +213,8 @@ def find_neighbors(df, map_data, max_dist, parallel):
 
 def compute_features(df, map_data, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
-    seg_id, seg_len = get_trajectory_segment_id(df, min_seg_len)
+    seg_id = get_trajectory_segment_id(df)
+    seg_id, seg_len = filter_segment_by_length(seg_id, min_seg_len)
     df = df.assign(seg_id=seg_id)
     df = df.assign(seg_len=seg_len)
     
@@ -273,14 +274,14 @@ def compute_features(df, map_data, min_seg_len, parallel):
             ddd = trajectory.d_condition[:, 2]
             kappa_ego = trajectory.kappa
             features = np.stack([dds, ddd, kappa_ego]).T
-
+        
         df_out = pd.DataFrame(
             features, columns=["dds", "ddd", "kappa"], index=x.index
         )
         df_out = df_out.assign(track_id=x["track_id"].values)
         df_out = df_out.assign(frame_id=x["frame_id"].values)
         return df_out
-
+    
     df_traj_features = df_joint.groupby("seg_id").progress_apply(
         compute_trajectory_features
     ).reset_index(drop=True)
