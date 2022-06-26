@@ -242,14 +242,14 @@ def filter_segment_by_length(seg_id, min_seg_len):
     new_seg_len = df_seg_id["new_seg_len"].values
     return new_seg_id, new_seg_len
 
-def classify_tail_merging(df, p_tail=0.3, max_d=0.9, class_weight={0: 1, 1: 2}):
+def classify_tail_merging(df, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
     """ Classify tail merging using logistic regression
     
     Args:
         df (pd.dataframe): track dataframe with fields ["seg_id", "d", "dd", "ddd"]
         p_tail (float, optional): proportion of trajectory to be considered tail. Default=0.3
         max_d (float, optional): maximum distance from centerline. Tail trajectories with the last step 
-            exceeding max_d will be labeled as merging for classifier training. Default=0.9
+            exceeding max_d will be labeled as merging for classifier training. Default=1.2
         class weight (dict, optional): classification class weight. Default={0: 1, 1:2}
     
     Returns:
