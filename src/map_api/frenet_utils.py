@@ -103,6 +103,7 @@ def compute_tangent_and_normal_vectors(x, y, dt=0.1):
         tan_vec (np.array): tangent vector [length, 2]
         norm_vec (np.array): normal vector [length, 2]
     """
+    eps = 1e-8
     assert len(x) > 1, f"trajectory length={len(x)} is too short"
     dx = np.gradient(x) / dt
     dy = np.gradient(y) / dt
@@ -116,17 +117,17 @@ def compute_tangent_and_normal_vectors(x, y, dt=0.1):
     # curvature
     a = dx * ddy - dy * ddx
     norm_square = dx**2 + dy**2
-    kappa = a / norm_square ** 1.5
+    kappa = a / (norm_square + eps) ** 1.5
     
     # compute acceleration
     v_vec = np.stack([dx, dy]).T
-    tan_vec = np.array([1 / ds] * 2).T * v_vec
+    tan_vec = np.array([1 / (ds + eps)] * 2).T * v_vec
 
     dtan_x = np.gradient(tan_vec[:, 0]) / dt
     dtan_y = np.gradient(tan_vec[:, 1]) / dt
     dtan = np.stack([dtan_x, dtan_y]).T
     dtan_norm = np.sqrt(dtan_x**2 + dtan_y**2)
-    norm_vec = np.array([1 / (dtan_norm + 1e-8)] * 2).T * dtan
+    norm_vec = np.array([1 / (dtan_norm + eps)] * 2).T * dtan
     
     t_component = np.array([dds] * 2).T
     n_component = np.array([np.abs(kappa) * ds**2] * 2).T
