@@ -1,7 +1,7 @@
 import math
 import numpy as np
 from scipy.integrate import quad
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, minimize
 from src.data.geometry import dist_two_points, wrap_angles
 
 def compute_arc_length(f_diff, a, b):
@@ -44,7 +44,7 @@ def get_closest_point(f, x0, y0):
         x_tan (float): x coordinate of the tangent point
         y_tan (float): y coordinate of the tangent point
     """
-    x_tan = fsolve(lambda x: dist_two_points(x0, y0, x, f(x)), x0)[0]
+    x_tan = minimize(lambda x: dist_two_points(x0, y0, x, f(x)), x0)["x"][0]
     y_tan = float(f(x_tan))
     return x_tan, y_tan
 
