@@ -3,6 +3,154 @@ import pandas as pd
 import torch
 from src.data.geometry import wrap_angles, coord_transformation
 
+""" TODO: 
+make lane feature calculation a part of the observer 
+make observer a wrapper for simulation
+"""
+
+FEATURE_SET = {
+    "ego": [
+        "s", # frenet s distance
+        "d", # frenet lateral distance/centerline distance
+        "ds", # frenet s velocty
+        "dd", # frenet d velocity
+        "lbd", # left bound distance
+        "rbd", # right bound distance
+        "kappa_r", # current lane curvature
+        "psi_error_r", # current heading error
+        "psi_error_fp_0", # far point 0 error
+        "psi_error_fp_1", # far point 0 error
+        "psi_error_fp_2", # far point 0 error
+        "psi_error_fp_3", # far point 0 error
+    ],
+    "relative": [
+        "s_rel", 
+        "d_rel", 
+        "ds_rel", 
+        "dd_rel", 
+        "psi_rel", # relativ eheading
+        "loom_s", 
+        "loom_d"
+    ],
+}
+
+class Observer:
+    """ Observer object that computes features in the frenet frame """
+    default_ego_features = ["ds", "dd", "d", "psi_error_r", "kappa_r"]
+    default_relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "psi_rel", "loom_s"]
+    
+    def __init__(
+        self, map_data, ego_features=default_ego_features, 
+        relative_features=default_relative_features, fp_dist=30.):
+        """
+        Args:
+            map_data (MapReader): map data object
+            ego_features (list, optional): list of strings for ego features
+            lane_features (list, optional): list of strings for lane features
+            relative_features (list, optional): list of strings for relative features
+            fp_dist (float): far point distance
+        """
+        assert all([f in FEATURE_SET["ego"] for f in ego_features]), "ego feature not in FEATURE_SET"
+        assert all([f in FEATURE_SET["relative"] for f in relative_features]), "relative feature not in FEATURE_SET"
+        self.map_data = map_data
+        self.feature_set = ego_features + relative_features
+        self.fp_dist = fp_dist
+        self.eps = 1e-6
+        
+        self.reset()
+    
+    def reset(self):
+        self._ref_path = None
+        self._trajectory = None
+
+    def observe(self, obs_env):
+        """ Convert environment observations into a vector 
+        
+        Args:
+            obs_env (np.array): environment state [x, y, vx, vy, psi]
+        
+        Returns:
+            obs (torch.tensor): agent observation [1, obs_dim]
+        """
+        ego_feature_dict = self.compute_ego_features(obs_env)
+        relative_feature_dict = self.compute_relative_features(obs_env)
+        
+        obs_dict = {**ego_feature_dict, **relative_feature_dict}
+        obs = [obs_dict[k] for k in self.feature_set]
+        obs = torch.tensor(obs).view(1, -1).to(torch.float32)
+        return obs
+    
+    def compute_ego_features(self, obs_env):
+        ego_state = obs_env["ego"]
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = ego_state
+        
+        # match current lane
+        if self._ref_path is None:
+            ref_lane_id = self.map_data.match_lane(x_ego, y_ego)
+            self.ref_path = self.map_data.lanes[ref_lane_id].centerline.frenet_path
+        
+        # convert to frenet coordinate
+        v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
+        s_condition_ego, d_condition_ego = self.ref_path.cartesian_to_frenet(
+            x_ego, y_ego, v_ego, None, psi_ego, None, order=2
+        )
+        
+        # compute ego features
+        [s, ds], [d, dd] = s_condition_ego, d_condition_ego 
+        
+        # compute lane features
+        lbd, rbd = 1.8 - d, 1.8 + d
+        psi_tan = self.ref_path.get_tangent(s)
+        kappa_r = self.ref_path.get_curvature(s)
+        psi_error_r = wrap_angles(psi_ego - psi_tan)
+        
+        # compute far point features
+        fp_dict = {}
+        for i in range(4):
+            s_fp = min(s + self.fp_dist * (i + 1), self.ref_path.arc_length)
+            psi_fp = self.ref_path.get_tangent(s_fp)
+            psi_error_fp = wrap_angles(psi_ego - psi_fp)
+            fp_dict[f"psi_error_fp_{i}"] = psi_error_fp
+        
+        obs_dict = {
+            "s": s, "d": d, "ds": ds, "dd": dd, "lbd": lbd, "rbd": rbd, 
+            "kappa_r": kappa_r, "psi_error_r": psi_error_r, **fp_dict
+        }
+        return obs_dict
+
+    def compute_relative_features(self, obs_env):
+        ego_state = obs_env["ego"]
+        agent_state = obs_env["agents"]
+        
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = ego_state
+        [x_agent, y_agent, vx_agent, vy_agent, psi_agent] = agent_state[0]
+        
+        # convert to frenet coordinate
+        v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
+        s_condition_ego, d_condition_ego = self.ref_path.cartesian_to_frenet(
+            x_ego, y_ego, v_ego, None, psi_ego, None, order=2
+        )
+        v_agent = np.sqrt(vx_agent**2 + vy_agent**2)
+        s_condition_agent, d_condition_agent = self.ref_path.cartesian_to_frenet(
+            x_agent, y_agent, v_agent, None, psi_agent, None, order=2
+        )
+        
+        s_condition_rel = s_condition_agent - s_condition_ego
+        d_condition_rel = d_condition_agent - d_condition_ego
+        [s_rel, ds_rel], [d_rel, dd_rel] = s_condition_rel, d_condition_rel
+        psi_rel = wrap_angles(psi_ego - psi_agent)
+        
+        # compute looming
+        loom_s = np.clip(ds_rel / (s_rel + self.eps), -10, 10)
+        loom_d = np.clip(dd_rel / (d_rel + self.eps), -10, 10)
+        obs_dict = {
+            "s_rel": s_rel, "d_rel": d_rel, "psi_rel": psi_rel, 
+            "ds_rel": ds_rel, "dd_rel": dd_rel,
+            "loom_s": loom_s, "loom_d": loom_d
+        }
+        return obs_dict
+
+
 class RelativeObserver:
     def __init__(self, map_data, frame="frenet", fields="rel"):
         """
