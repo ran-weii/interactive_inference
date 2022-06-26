@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix
 from src.data.geometry import vector_projection, wrap_angles
 
 def filter_car_follow_eps(df_track, min_eps_len):
@@ -155,16 +156,14 @@ def get_ego_centric_df(df):
         )
     return df_ego
 
-def get_trajectory_segment_id(df, min_seg_len):
+def get_trajectory_segment_id(df):
     """ Divide trajectory into segments based on change in lane_id and lead_track_id
     
     Args:
         df (pd.dataframe): track dataframe
-        min_seg_len (int): minimum segment length
-        
+    
     Returns:
-        seg_id (np.array): segment episode id, -1 for invalid segments. dim=[len(df)]
-        seg_len (np.array): segment length. dim=[len(df)]
+        seg_id (np.array): segment episode id. Invalid segment id equals nan. dim=[len(df)]
     """
     assert all(v in df.columns for v in ["track_id", "lead_track_id"])
     
@@ -176,9 +175,9 @@ def get_trajectory_segment_id(df, min_seg_len):
     # get segment id per track
     track_seg_id = np.hstack([
         np.cumsum(1 * x[-1].values) for x in df.groupby("track_id")["seg_change"]
-    ])
-    track_seg_id[df["lead_track_id"].isna()] = -1
-    track_seg_id[df["lane_id"].isna()] = -1
+    ]).astype(float)
+    track_seg_id[df["lead_track_id"].isna()] = np.nan
+    track_seg_id[df["lane_id"].isna()] = np.nan
     
     # get total segment id
     track_id = df["track_id"].values
@@ -186,19 +185,118 @@ def get_trajectory_segment_id(df, min_seg_len):
         np.stack([track_id, track_seg_id]).T, 
         columns=["track_id", "track_seg_id"]
     )
-    df_seg_len = df_labels.groupby(["track_id", "track_seg_id"]).size().reset_index()
-    df_seg_len.columns = ["track_id", "track_seg_id", "seg_len"]
-    df_labels = df_labels.merge(df_seg_len, on=["track_id", "track_seg_id"], how="left")
     
-    is_valid_seg = (track_seg_id != -1) & (df_labels["seg_len"] >= min_seg_len)
-    seg_labels = df_labels["track_id"].apply(str) + "_" + df_labels["track_seg_id"].apply(str)
-    seg_labels = seg_labels[is_valid_seg]
+    is_valid_seg = np.isnan(track_seg_id) == False
+    seg_labels = (df_labels["track_id"].apply(str) + "_" + df_labels["track_seg_id"].apply(str)).values
+    seg_labels[is_valid_seg == False] = np.nan
     df_labels = df_labels.assign(seg_labels=seg_labels)
     
-    unique_eps_labels = np.sort(seg_labels.unique())
-    labler = LabelEncoder().fit(unique_eps_labels)
-    seg_id = -1 * np.ones((len(df_labels,)))
-    seg_id[is_valid_seg] = labler.transform(seg_labels)
-    seg_len = df_labels["seg_len"].values
-    seg_len[is_valid_seg == False] = -1
-    return seg_id, seg_len
+    valid_seg_labels = seg_labels[is_valid_seg]
+    unique_valid_seg_labels = np.unique(valid_seg_labels)
+    df_labels = df_labels.assign(
+        seg_labels=df_labels["seg_labels"].map(
+            dict(zip(unique_valid_seg_labels, np.arange(len(unique_valid_seg_labels))))
+        )
+    )
+    seg_id = df_labels["seg_labels"].values
+    return seg_id
+
+def filter_segment_by_length(seg_id, min_seg_len):
+    """ Filter track segment by length 
+    
+    Args:
+        seg_id (np.array): track segment id. Invalid segment id equals nan
+        min_seg_len (int): minimum segment length
+    
+    Returns:
+        new_seg_id (np.array): new track segment id. Invalid segment id equals nan. dim=[len(seg_id)]
+        new_seg_len (np.array): new track segment length. Invalid segment len equals nan. dim=[len(seg_id)]
+    """
+    unique_seg_id, seg_len = np.unique(seg_id, return_counts=True)
+    df_seg_len = pd.DataFrame(
+        np.stack([unique_seg_id, seg_len]).T,
+        columns=["seg_id", "seg_len"]
+    )
+    df_seg_id = pd.DataFrame(seg_id, columns=["seg_id"])
+    df_seg_id = df_seg_id.merge(df_seg_len, on="seg_id", how="left")
+    
+    new_seg_id = df_seg_id["seg_id"].values
+    new_seg_id[df_seg_id["seg_len"] < min_seg_len] = np.nan
+    new_seg_len = df_seg_id["seg_len"].values
+    new_seg_len[df_seg_id["seg_len"] < min_seg_len] = np.nan
+    new_seg_len[np.isnan(df_seg_id["seg_id"])] = np.nan
+    df_seg_id = df_seg_id.assign(new_seg_id=new_seg_id)
+    df_seg_id = df_seg_id.assign(new_seg_len=new_seg_len)
+    
+    unique_new_seg_id, new_seg_count = np.unique(new_seg_id, return_counts=True)
+    idx_not_nan = np.where(np.isnan(unique_new_seg_id) == False)[0]
+    unique_new_seg_id = unique_new_seg_id[idx_not_nan]
+    new_seg_count = new_seg_count[idx_not_nan]
+    df_seg_id = df_seg_id.assign(
+        new_seg_id=df_seg_id["new_seg_id"].map(
+            dict(zip(unique_new_seg_id, np.arange(len(unique_new_seg_id))))
+        )
+    )
+    
+    new_seg_id = df_seg_id["new_seg_id"].values
+    new_seg_len = df_seg_id["new_seg_len"].values
+    return new_seg_id, new_seg_len
+
+def classify_tail_merging(df, p_tail=0.3, max_d=0.9, class_weight={0: 1, 1: 2}):
+    """ Classify tail merging using logistic regression
+    
+    Args:
+        df (pd.dataframe): track dataframe with fields ["seg_id", "d", "dd", "ddd"]
+        p_tail (float, optional): proportion of trajectory to be considered tail. Default=0.3
+        max_d (float, optional): maximum distance from centerline. Tail trajectories with the last step 
+            exceeding max_d will be labeled as merging for classifier training. Default=0.9
+        class weight (dict, optional): classification class weight. Default={0: 1, 1:2}
+    
+    Returns:
+        is_tail (np.array): indicator array for tail trajectories
+        is_tail_merging (np.array): indicator array for tail merging
+        cmat (np.array): confusion matrix
+    """
+    assert all([v in df.columns for v in ["seg_id", "d", "dd", "ddd"]])
+    if "is_tail" in df.columns:
+        df = df.drop(columns=["is_tail"])
+    if "is_tail_merging" in df.columns:
+        df = df.drop(columns=["is_tail_merging"])
+    
+    # get tail trajectories
+    df_tail = df.groupby("seg_id").apply(
+        lambda x: x.tail(np.ceil(p_tail * len(x)).astype(int))
+    ).reset_index(drop=True)
+    
+    def label_merging(x):
+        is_merging = np.zeros(len(x))
+        if np.abs(x["d"].values[-1]) > max_d:
+            is_merging = np.ones(len(x))
+        return pd.DataFrame(is_merging)
+    
+    df_merging_labels = df_tail.groupby("seg_id").apply(
+        label_merging
+    ).reset_index(drop=True)
+    df_tail["merging_labels"] = df_merging_labels[0]
+    
+    # logistic regression features
+    clf_inputs = np.abs(df_tail[["d", "dd", "ddd"]].values)
+    clf_targets = df_tail["merging_labels"].values
+    
+    clf = LogisticRegression(class_weight=class_weight)
+    clf.fit(clf_inputs, clf_targets)
+    pred = clf.predict(clf_inputs)
+    cmat = confusion_matrix(clf_targets, pred)
+    
+    # create labels
+    df_tail["is_tail_merging"] = pred
+    df_labels = df_tail[["track_id", "frame_id", "is_tail_merging"]]
+    df_labels["is_tail"] = 1
+    
+    df = df.merge(df_labels, on=["track_id", "frame_id"], how="left")
+    df["is_tail"] = df["is_tail"].fillna(0)
+    df["is_tail_merging"] = df["is_tail_merging"].fillna(0)
+    
+    is_tail = df["is_tail"].values
+    is_tail_merging = df["is_tail_merging"].values
+    return is_tail, is_tail_merging, cmat
