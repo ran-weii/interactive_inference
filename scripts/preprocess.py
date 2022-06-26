@@ -12,7 +12,9 @@ from src.map_api.lanelet import MapReader
 from src.data.kalman_filter import BatchKalmanFilter
 from src.data.agent_filter import (
     get_neighbor_vehicle_ids, get_car_following_episode)
-from src.data.data_filter import get_trajectory_segment_id, filter_segment_by_length
+from src.data.data_filter import (
+    get_trajectory_segment_id, filter_segment_by_length,
+    classify_tail_merging)
 from src.data.geometry import coord_transformation
 from src.map_api.frenet import Trajectory
 from src.simulation.observers import FEATURE_SET, Observer
@@ -47,8 +49,13 @@ def parse_args():
                         help="max dist to be considered neighbor, default=50")
     parser.add_argument("--min_seg_len", type=int, default=50, 
                         help="minimum trajectory segment length, default=50")
+    parser.add_argument("--invalid_lane_ids", type=list, default=[1, 6], 
+                        help="invalid lane ids to be filtered, default=[1, 6]")
+    parser.add_argument("--train_ratio", type=float, default=0.7, 
+                        help="train ratio, default=0.7")
     parser.add_argument("--parallel", type=bool_, default=True, 
                         help="parallel apply, default=True")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     parser.add_argument("--debug", type=bool_, default=False)
     arglist = parser.parse_args()
@@ -290,7 +297,52 @@ def compute_features(df, map_data, min_seg_len, parallel):
     )
     return df_features
 
+def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
+    """ Return dataframe with fields 
+    ["track_id", "frame_id", "is_tail", "is_tail_merging", "eps_id", "eps_len", "is_train"] 
+    """
+    df_follow = df.loc[df["seg_id"].isna() == False]
+    
+    # classify tail merging using logistic regression
+    is_tail, is_tail_merging, cmat = classify_tail_merging(
+        df_follow, p_tail=0.3, max_d=1.2, class_weight={0:1, 1:2}
+    )
+    df_follow = df_follow.assign(is_tail=is_tail)
+    df_follow = df_follow.assign(is_tail_merging=is_tail_merging)
+    
+    # remove tail merging from seg_id and seg_len
+    new_seg_id = df_follow["seg_id"].values.copy()
+    new_seg_id[df_follow["is_tail_merging"] == 1] = np.nan
+    new_seg_id[df_follow["lane_id"].isin(invalid_lane_ids)] = np.nan
+    new_seg_id, new_seg_len = filter_segment_by_length(new_seg_id, min_seg_len)
+    
+    df_follow = df_follow.assign(eps_id=new_seg_id)
+    df_follow = df_follow.assign(eps_len=new_seg_len)
+    
+    # assign train id
+    unique_eps_id = np.unique(new_seg_id)
+    unique_eps_id = unique_eps_id[np.isnan(unique_eps_id) == False]
+    unique_eps_id = np.random.permutation(unique_eps_id)
+    num_eps = len(unique_eps_id)
+    num_train = np.ceil(train_ratio * num_eps).astype(int)
+    train_eps_id = unique_eps_id[:num_train]
+    
+    is_train = np.zeros(len(df_follow)) == 1
+    is_train[df_follow["eps_id"].isin(train_eps_id)] = True
+    df_follow = df_follow.assign(is_train=is_train)
+    
+    out_fields = [
+        "track_id", "frame_id", "is_tail", "is_tail_merging", 
+        "eps_id", "eps_len", "is_train"
+    ]
+    df_train_labels = df_follow[out_fields]
+    df = df.merge(df_train_labels, on=["track_id", "frame_id"], how="left")
+    df_train_labels = df[out_fields]
+    return df_train_labels
+
 def main(arglist):
+    np.random.seed(arglist.seed)
+
     # make save path
     data_path = os.path.join(arglist.data_path, "processed_trackfiles")
     task_path = os.path.join(data_path, arglist.task)
@@ -353,11 +405,25 @@ def main(arglist):
         df = compute_features(df, map_data, arglist.min_seg_len, arglist.parallel)
     
     elif arglist.task == "train_labels":
-        pass
-
+        neighbor_path = os.path.join(
+            data_path, "neighbors", arglist.scenario, arglist.filename
+        )
+        feature_path = os.path.join(
+            data_path, "features", arglist.scenario, arglist.filename
+        )
+        df_neighbor = pd.read_csv(neighbor_path)
+        df_feature = pd.read_csv(feature_path)
+        df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
+        df = df.merge(df_feature, on=["track_id", "frame_id"], how="right")
+        if arglist.debug:
+            df = df.loc[df["track_id"] <= 30]
+        
+        df = get_train_labels(
+            df, arglist.train_ratio, arglist.min_seg_len, arglist.invalid_lane_ids
+        )
+    """ TODO: properly parse invalid_lane_ids for other maps """
     if arglist.save:
         df.to_csv(os.path.join(save_path, arglist.filename), index=False)
-        # print(df)
     
     print(f"processed file saved at: {save_path}/{arglist.filename}")
 
