@@ -189,6 +189,9 @@ class AgentWrapper:
             ).view(1, 2)
             self._prev_act = act.clone()
         
-        """ TODO: remove obs_env from observer.control method """
-        act_env = self.observer.control(act.view(-1), obs_env)
+        # convert action to global frame
+        psi = obs_env["ego"][4]
+        [ax, ay] = act.numpy().flatten()
+        ax_env, ay_env = coord_transformation(ax, ay, None, None, theta=psi)
+        act_env = np.array([ax_env, ay_env])
         return act_env
