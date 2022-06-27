@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 import torch
@@ -6,43 +5,13 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
 from src.simulation.observers import AUGMENTATION_PARAMETERS
 
-def load_data(data_path, scenario, filename):
-    """ Load processed data 
-    
-    Args:
-        data_path (str): root data path. e.g. ../interaction-dataset-master
-        scenario (str): scenario name. e.g. DR_CHN_Merging_ZS
-        filename (str): track file name. e.g. vehicle_tracks_007.csv
-    
-    Returns:
-        df_track (pd.dataframe): concatenated processed track data
-    """
-    df_track = pd.read_csv(
-        os.path.join(data_path, "recorded_trackfiles", scenario, filename)
-    )
-    df_kf = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "kalman_filter", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
-    df_neighbors = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "neighbors", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
-    df_features = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "features", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
-    df_labels = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "train_labels", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
-    df_track = pd.concat([df_track, df_kf, df_neighbors, df_features, df_labels], axis=1)
-    df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
-    return df_track
-
 def collate_fn(batch):
     """ Collate batch to have the same sequence length """
     pad_obs = pad_sequence([b["ego"] for b in batch])
     pad_act = pad_sequence([b["act"] for b in batch])
     mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
-
+    
 def aug_flip_lr(obs, feature_set):
     """ Data augmentation by a left-right flip wrt the road 
     
