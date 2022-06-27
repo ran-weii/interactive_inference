@@ -5,28 +5,55 @@ from src.agents.models import MLP
 from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
 from src.distributions.flows import BatchNormTransform
 
-""" TODO: make ActiveInference a subclass of this """
 class AbstractAgent(nn.Module):
-    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, H):
+    def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, horizon):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
-        self.H = H
+        self.horizon = horizon
 
         self.reset()
     
     def reset(self):
+        """ Reset internal states for online inference """
         raise NotImplementedError
-
-    def forward(self, o, u, h=None, theta=None, inference=False):
-        raise NotImplementedError
-
+    
     def init_hidden(self):
+        """ Initialize hidden states """
         raise NotImplementedError 
 
-    def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
+    def forward(self, o, u, h=None, inference=False):
+        """
+        Args:
+            o (torch.tensor): 
+            u (torch.tensor): 
+            h (torch.tensor):
+            inference (bool, optional): inference mode. Default=False
+        """
+        raise NotImplementedError
+    
+    def choose_action_batch(self, o, u, sample_method="", num_samples=1):
+        """ Choose action offline for a batch of sequences 
+        
+        Args:
+            o (torch.tensor): observation sequence. size[T, batch_size, obs_dim]
+            u (torch.tensor): control sequence. size[T, batch_size, ctl_dim]
+            sample_method (str, optional): sampling method. Default=""
+            num_samples (int, optional): number of samples to draw. Default=1
+        """
+        raise NotImplementedError
+
+    def choose_action(self, o, u, sample_method="", num_samples=1):
+        """ Choose action online for a single time step
+        
+        Args:
+            o (torch.tensor): observation sequence. size[batch_size, obs_dim]
+            u (torch.tensor): control sequence. size[batch_size, ctl_dim]
+            sample_method (str, optional): sampling method. Default=""
+            num_samples (int, optional): number of samples to draw. Default=1
+        """
         raise NotImplementedError
 
 
@@ -132,7 +159,7 @@ class FullyRecurrentAgent(AbstractAgent):
         a = self.planner(b)
         
         if not inference:
-            mu, lv = torch.split(a[:-1], self.ctl_dim, dim=-1)
+            mu, lv = torch.split(a[1:], self.ctl_dim, dim=-1)
             sd = lv.clip(math.log(1e-6), math.log(1e6)).exp()
             logp_pi = torch.distributions.Normal(mu, sd).log_prob(u).sum(-1)
             logp_obs = torch.zeros_like(o)[:, :, 0]
@@ -148,15 +175,20 @@ class FullyRecurrentAgent(AbstractAgent):
     def choose_action(self, o, u, batch=False, theta=None, num_samples=None):
         if batch:
             b, a = self.forward(o, u, inference=True)
-            b, a = b[:-1], a[:-1]
+            b, a = b[:-1], a[1:]
         else:
             o, u = o.unsqueeze(0), u.unsqueeze(0)
             if self._b is None: # initial step
                 b, a = self.init_hidden(o)
-            else:
-                h = self._b
-                b, a = self.forward(o, u, h=h, inference=True)
-                b, a = b[1:], a[1:]
+            # else:
+            #     print("step 1")
+            #     h = self._b
+            #     b, a = self.forward(o, u, h=h, inference=True)
+            #     b, a = b[1:], a[1:]
+            # print("step 1")
+            h = self._b
+            b, a = self.forward(o, u, h=h, inference=True)
+            b, a = b[1:], a[1:]
             self._b, self._a = b, a
         
         mu, lv = torch.split(a, self.ctl_dim, dim=-1)
