@@ -4,7 +4,6 @@ from src.distributions.models import (
     HiddenMarkovModel, ConditionalDistribution, GeneralizedLinearModel)
 from src.agents.reward import ExpectedFreeEnergy, GeneralizedFreeEnergy
 from src.agents.planners import QMDP, MCVI
-from src.agents.models import StructuredPerceptionModel
 
 class ActiveInference(nn.Module):
     def __init__(
@@ -155,11 +154,3 @@ class ActiveInference(nn.Module):
                 a, num_samples=num_samples, sample_mean=sample_mean, params=F
             )
         return u_pred.squeeze(-3)
-    
-
-class StructuredActiveInference(ActiveInference):
-    def __init__(self, state_dim, act_dim, ctl_dim, H, 
-        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full"):
-        super().__init__(state_dim, act_dim, 11, ctl_dim, H, 
-        obs_dist, obs_cov, ctl_dist, ctl_cov)
-        self.obs_model = StructuredPerceptionModel(state_dim, obs_dist, obs_cov)
