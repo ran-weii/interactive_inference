@@ -34,7 +34,7 @@ class DiscreteMC(nn.Module):
     def get_initial_state(self):
         """
         Returns:
-            s0 (torch.tensor): initial state distribution [batch_size, state_dim]
+            s0 (torch.tensor): initial state distribution. size=[batch_size, state_dim]
         """
         s0 = torch.softmax(self.s0.view(-1, self.state_dim), dim=-1)
         return s0
@@ -42,7 +42,7 @@ class DiscreteMC(nn.Module):
     def get_transition_matrix(self):
         """
         Returns:
-            w (torch.tensor): transition matrix [batch_size, act_dim, state_dim, state_dim]
+            w (torch.tensor): transition matrix. size=[batch_size, act_dim, state_dim, state_dim]
         """
         if self.rank == 0:
             w = self.w
@@ -74,7 +74,7 @@ class LogisticMC(nn.Module):
     def get_initial_state(self, params=None):
         """
         Returns:
-            s0 (torch.tensor): initial state distribution [batch_size, state_dim]
+            s0 (torch.tensor): initial state distribution. size=[batch_size, state_dim]
         """
         s0 = self.s0 if params is None else params
         s0 = torch.softmax(s0.view(-1, self.state_dim), dim=-1)
@@ -83,10 +83,10 @@ class LogisticMC(nn.Module):
     def get_transition_matrix(self, a, params=None):
         """
         Args:
-            a (torch.tensor): action vector [batch_size, act_dim]
+            a (torch.tensor): action vector. size=[batch_size, act_dim]
 
         Returns:
-            w (torch.tensor): transition matrix [batch_size, act_dim, state_dim, state_dim]
+            w (torch.tensor): transition matrix. size=[batch_size, act_dim, state_dim, state_dim]
         """
         w_a = self.w_a if params is None else params
         w_a = w_a.view(-1, self.state_dim, self.state_dim, self.act_dim)
