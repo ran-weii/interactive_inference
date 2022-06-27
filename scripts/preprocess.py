@@ -248,8 +248,8 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
     num_train = np.ceil(train_ratio * num_eps).astype(int)
     train_eps_id = unique_eps_id[:num_train]
     
-    is_train = np.zeros(len(df_follow)) == 1
-    is_train[df_follow["eps_id"].isin(train_eps_id)] = True
+    is_train = np.zeros(len(df_follow))
+    is_train[df_follow["eps_id"].isin(train_eps_id)] = 1
     df_follow = df_follow.assign(is_train=is_train)
     
     out_fields = [
