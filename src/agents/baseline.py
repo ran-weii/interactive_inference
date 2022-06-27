@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from src.agents.models import MLP
-from src.distributions.models import ConditionalDistribution, HiddenMarkovModel
+from src.distributions.legacy.models import ConditionalDistribution, HiddenMarkovModel
 from src.distributions.flows import BatchNormTransform
 
 class AbstractAgent(nn.Module):

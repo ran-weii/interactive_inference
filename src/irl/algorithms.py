@@ -3,7 +3,6 @@ import pandas as pd
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
-from src.agents.active_inference import StructuredActiveInference
 from src.agents.models import MLP
 from src.distributions.utils import kl_divergence
 
