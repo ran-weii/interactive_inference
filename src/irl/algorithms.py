@@ -19,6 +19,7 @@ class ImitationLearning(nn.Module):
         self.optimizers = [torch.optim.Adam(
             self.agent.parameters(), lr=lr, weight_decay=decay
         )]
+        self.loss_keys = ["logp_pi_mean", "logp_obs_mean"]
         
     def train_epoch(self, loader):
         self.train()
@@ -218,24 +219,7 @@ class MLEIRL(nn.Module):
                     "max": grad.max().numpy(),
                     "norm": grad.norm().numpy()
                 })
-        return grad_dict
-    
-
-class MLEIRL_new(MLEIRL):
-    def __init__(self, state_dim, act_dim, ctl_dim, H, 
-        obs_dist="mvn", obs_cov="full", ctl_dist="mvn", ctl_cov="full", 
-        obs_penalty=0, lr=0.001, decay=0, grad_clip=None):
-        super().__init__(state_dim, act_dim, 11, ctl_dim, H, 
-        obs_dist, obs_cov, ctl_dist, ctl_cov, 
-        obs_penalty, lr, decay, grad_clip)
-        
-        self.agent = StructuredActiveInference(
-            state_dim, act_dim, ctl_dim, H, 
-            obs_dist, obs_cov, ctl_dist, ctl_cov
-        )
-        self.optimizers = [torch.optim.Adam(
-            self.agent.parameters(), lr=lr, weight_decay=decay
-        )]  
+        return grad_dict 
 
 
 class BayesianIRL(MLEIRL):
