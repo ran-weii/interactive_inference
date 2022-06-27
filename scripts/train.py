@@ -6,14 +6,12 @@ import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
 import torch 
-from torch.utils.data import DataLoader, random_split
 
 from src.simulation.observers import FEATURE_SET
-from src.data.ego_dataset import load_data, collate_fn
-from src.data.ego_dataset import RelativeDataset
-from src.agents.active_inference import ActiveInference
+from src.data.train_utils import load_data, train_test_split
+from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
+from src.agents.legacy.active_inference import ActiveInference
 from src.agents.baseline import FullyRecurrentAgent
 from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
@@ -75,25 +73,6 @@ def parse_args():
     arglist = parser.parse_args()
     return arglist
 
-def train_test_split(dataset, train_ratio, batch_size, seed):
-    gen = torch.Generator()
-    gen.manual_seed(seed)
-    
-    train_size = np.ceil(train_ratio * len(dataset)).astype(int)
-    test_size = len(dataset) - train_size
-    
-    train_set, test_set = random_split(
-        dataset, [train_size, test_size], generator=gen
-    )
-    
-    train_loader = DataLoader(
-        train_set, batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True
-    )
-    test_loader = DataLoader(
-        test_set, batch_size, shuffle=False, collate_fn=collate_fn, drop_last=False
-    )
-    return train_loader, test_loader
-
 def plot_history(df_history, keys):
     df_train = df_history.loc[df_history["train"] == "train"]
     df_test = df_history.loc[df_history["train"] == "test"]
@@ -125,10 +104,12 @@ def main(arglist):
     assert set(feature_set).issubset(set(FEATURE_SET["ego"] + FEATURE_SET["relative"]))
     dataset = RelativeDataset(
         df_track, feature_set, train_labels_col="is_train",
-        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len
+        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
+        augmentation=[aug_flip_lr]
     )
     train_loader, test_loader = train_test_split(
-        dataset, arglist.train_ratio, arglist.batch_size, arglist.seed
+        dataset, arglist.train_ratio, arglist.batch_size, 
+        collate_fn=collate_fn, seed=arglist.seed
     )
     obs_dim, ctl_dim = len(feature_set), 2 
 
