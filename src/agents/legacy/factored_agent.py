@@ -1,12 +1,12 @@
 
 import torch
 import torch.nn as nn
-from src.distributions.models import ConditionalDistribution
-from src.distributions.factored_models import (
+from src.distributions.legacy.models import ConditionalDistribution
+from src.distributions.legacy.factored_models import (
     FactoredHiddenMarkovModel, FactoredConditionalDistribution)
 from src.agents.reward import ExpectedFreeEnergy
 from src.agents.planners import QMDP
-from src.agents.active_inference import ActiveInference
+from src.agents.legacy.active_inference import ActiveInference
 from src.distributions.utils import poisson_pdf, rectify, softmax
     
 def factored_value_iteration(R, B, H):
