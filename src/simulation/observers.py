@@ -28,10 +28,33 @@ FEATURE_SET = {
         "d_rel", 
         "ds_rel", 
         "dd_rel", 
-        "psi_rel", # relativ eheading
+        "psi_rel", # relative heading
         "loom_s", 
         "loom_d"
     ],
+}
+
+""" TODO: temporary solution, to be integrated with FEATURE_SET """
+AUGMENTATION_PARAMETERS = {
+    "s": {"flip_lr": 0}, 
+    "d": {"flip_lr": 1}, 
+    "ds": {"flip_lr": 0}, 
+    "dd": {"flip_lr": 1}, 
+    "lbd": {"flip_lr": None}, # to be handeled by the function
+    "rbd": {"flip_lr": None}, # to be handeled by the function
+    "kappa_r": {"flip_lr": 1}, 
+    "psi_error_r": {"flip_lr": 1}, 
+    "psi_error_fp_0": {"flip_lr": 1}, 
+    "psi_error_fp_1": {"flip_lr": 1}, 
+    "psi_error_fp_2": {"flip_lr": 1}, 
+    "psi_error_fp_3": {"flip_lr": 1}, 
+    "s_rel": {"flip_lr": 0}, 
+    "d_rel": {"flip_lr": 1}, 
+    "ds_rel": {"flip_lr": 0}, 
+    "dd_rel": {"flip_lr": 1}, 
+    "psi_rel": {"flip_lr": 1}, 
+    "loom_s": {"flip_lr": 0}, 
+    "loom_d": {"flip_lr": 0}
 }
 
 class Observer:
