@@ -9,13 +9,12 @@ import matplotlib.pyplot as plt
 
 import torch 
 from torch.utils.data import DataLoader, random_split
-from torch.nn.utils.rnn import pad_sequence
 
-from src.map_api.lanelet import MapReader
+from src.simulation.observers import FEATURE_SET
+from src.data.ego_dataset import load_data, collate_fn
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
-from src.agents.baseline import (
-    StructuredRecurrentAgent, FullyRecurrentAgent, HMMRecurrentAgent)
+from src.agents.baseline import FullyRecurrentAgent
 from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
 import warnings
@@ -46,15 +45,19 @@ def parse_args():
     parser.add_argument("--ctl_model", type=str, choices=["gmm", "glm"], default="gmm", help="agent control model class, default=gmm")
     parser.add_argument("--ctl_dist", type=str, default="mvn", help="agent control distribution, default=mvn")
     parser.add_argument("--ctl_cov", type=str, default="diag", help="agent control covariance, default=diag")
+    parser.add_argument("--rwd_model", type=str, choices=["efe", "gfe"], default="efe", help="agent reward model, default=efe")
+    parser.add_argument("--hmm_rank", type=int, default=0, help="agent hmm rank, 0 for full rank, default=0")
     parser.add_argument("--planner", type=str, choices=["qmdp", "mcvi"], default="qmdp", help="agent planner, default=qmdp")
     parser.add_argument("--tau", type=float, default=0.9, help="agent planner discount, default=0.9")
     parser.add_argument("--hidden_dim", type=int, default=32, help="neural network hidden dim, default=32")
     parser.add_argument("--num_hidden", type=int, default=2, help="neural network hidden layers, default=2")
     parser.add_argument("--activation", type=str, default="relu", help="neural network activation, default=relu")
-    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "srnn", "frnn", "hrnn"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "birl", "il", "frnn"], 
         default="active_inference", help="algorithm, default=mleirl")
-    parser.add_argument("--control_direction", type=str, choices=["lon", "lat", "both"], 
-        default="both", help="predict lateral control, default=True")
+    parser.add_argument("--frame", type=str, choices=["frenet", "carte"], 
+        default="rel", help="ego coordinate frame, one of [frenet, carte], default=frenet")
+    parser.add_argument("--obs_fields", type=str, choices=["rel", "two_point", "lv_fv", "full"], 
+        default="rel", help="ego observation fields, default=rel")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=100, help="max track length, default=200")
@@ -71,12 +74,6 @@ def parse_args():
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
-
-def collate_fn(batch):
-    pad_obs = pad_sequence([b["ego"] for b in batch])
-    pad_act = pad_sequence([b["act"] for b in batch])
-    mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
-    return pad_obs, pad_act, mask
 
 def train_test_split(dataset, train_ratio, batch_size, seed):
     gen = torch.Generator()
@@ -97,24 +94,20 @@ def train_test_split(dataset, train_ratio, batch_size, seed):
     )
     return train_loader, test_loader
 
-def plot_history(df_history):
+def plot_history(df_history, keys):
     df_train = df_history.loc[df_history["train"] == "train"]
     df_test = df_history.loc[df_history["train"] == "test"]
     
-    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
-    ax[0].plot(df_train["epoch"], df_train["logp_pi_mean"], label="train")
-    ax[0].plot(df_test["epoch"], df_test["logp_pi_mean"], label="test")
-    ax[0].legend()
-    ax[0].set_xlabel("epoch")
-    ax[0].set_ylabel("logp_u")
-    ax[0].grid()
-    
-    ax[1].plot(df_train["epoch"], df_train["logp_obs_mean"], label="train")
-    ax[1].plot(df_test["epoch"], df_test["logp_obs_mean"], label="test")
-    ax[1].legend()
-    ax[1].set_xlabel("epoch")
-    ax[1].set_ylabel("logp_o")
-    ax[1].grid()
+    num_cols = len(keys)
+    width = min(4 * num_cols, 15)
+    fig, ax = plt.subplots(1, num_cols, figsize=(width, 4))
+    for i in range(num_cols):
+        ax[i].plot(df_train["epoch"], df_train[keys[i]], label="train")
+        ax[i].plot(df_test["epoch"], df_test[keys[i]], label="test")
+        ax[i].legend()
+        ax[i].set_xlabel("epoch")
+        ax[i].set_ylabel(keys[i])
+        ax[i].grid()
     
     plt.tight_layout()
     return fig, ax
@@ -122,39 +115,25 @@ def plot_history(df_history):
 def main(arglist):
     torch.manual_seed(arglist.seed)
     
-    # load raw data
-    df_processed = pd.read_csv(
-        os.path.join(arglist.data_path, "processed_trackfiles", arglist.scenario, arglist.filename)
-    )
-    df_track = pd.read_csv(
-        os.path.join(arglist.data_path, "recorded_trackfiles", arglist.scenario, arglist.filename)
-    )
-    df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
-    df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
+    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename)
+    df_track = df_track.loc[df_track["is_train"] == 1]
     
-    # load map
-    map_data = MapReader()
-    map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
-
-    # load test labels
-    merge_keys = ["scenario", "record_id", "track_id"]
-    df_train_labels = pd.read_csv(
-        os.path.join(arglist.data_path, "test_labels", arglist.scenario, arglist.filename)
-    )
-    
+    feature_set = [
+        "d", "ds", "dd", "kappa_r", "psi_error_r", 
+        "s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"
+    ]
+    assert set(feature_set).issubset(set(FEATURE_SET["ego"] + FEATURE_SET["relative"]))
     dataset = RelativeDataset(
-        df_track, map_data, df_train_labels=df_train_labels,
-        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
-        control_direction=arglist.control_direction
+        df_track, feature_set, train_labels_col="is_train",
+        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len
     )
     train_loader, test_loader = train_test_split(
         dataset, arglist.train_ratio, arglist.batch_size, arglist.seed
     )
-    
-    # get dimensions from data 
-    [obs, ctl, mask] = next(iter(train_loader))
-    obs_dim = obs.shape[-1]
-    ctl_dim = 2 if arglist.control_direction == "both" else 1
+    obs_dim, ctl_dim = len(feature_set), 2 
+
+    print(f"feature set: {feature_set}")
+    print(f"train size: {len(train_loader.dataset)}, test size: {len(test_loader.dataset)}")
     
     # init model
     if arglist.method == "mleirl":
@@ -162,7 +141,7 @@ def main(arglist):
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
             obs_model=arglist.obs_model, obs_dist=arglist.obs_dist, obs_cov=arglist.obs_cov, 
             ctl_model=arglist.ctl_model, ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
-            planner=arglist.planner, tau=arglist.tau, hidden_dim=arglist.hidden_dim, 
+            rwd_model=arglist.rwd_model, hmm_rank=arglist.hmm_rank, planner=arglist.planner, tau=arglist.tau, hidden_dim=arglist.hidden_dim, 
             num_hidden=arglist.num_hidden, activation=arglist.activation
         )
         model = MLEIRL(
@@ -183,43 +162,19 @@ def main(arglist):
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
-    elif arglist.method == "srnn":
-        agent = StructuredRecurrentAgent(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
-            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov, 
-            hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
-        )
-        model = MLEIRL(
-            agent,
-            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
-        )
     elif arglist.method == "frnn":
         agent = FullyRecurrentAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
             ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
             hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
         )
-        model = MLEIRL(
-            agent,
-            obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
-        )
-    elif arglist.method == "hrnn":
-        agent = HMMRecurrentAgent(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon, 
-            ctl_dist=arglist.ctl_dist, ctl_cov=arglist.ctl_cov,
-            hidden_dim=arglist.hidden_dim, num_hidden=arglist.num_hidden
-        )
-        model = MLEIRL(
+        model = ImitationLearning(
             agent,
             obs_penalty=arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     else:
         raise NotImplementedError
-    
-    print(model)
     
     start_time = time.time()
     history = []
@@ -236,11 +191,22 @@ def main(arglist):
         )
         
         print("epoch: {}, train, logp_pi: {:.4f}, logp_obs: {:.4f}, plan_error: {:.4f}, t: {:.2f}".format(
-            e + 1, train_stats["logp_pi_mean"], train_stats["logp_obs_mean"], train_stats["loss_plan_mean"], tnow
+            e + 1, 
+            train_stats["logp_pi_mean"], 
+            train_stats["logp_obs_mean"], 
+            train_stats["loss_plan_mean"] if "loss_plan" in train_stats.keys() else 0, 
+            tnow
+        ))
+        print("epoch: {}, test , logp_pi: {:.4f}, logp_obs: {:.4f}, plan_error: {:.4f}, t: {:.2f} \n{}".format(
+            e + 1, 
+            test_stats["logp_pi_mean"], 
+            test_stats["logp_obs_mean"], 
+            test_stats["loss_plan_mean"] if "loss_plan" in test_stats.keys() else 0, 
+            tnow, "=="*40
         ))
     
     df_history = pd.DataFrame(history)
-    
+
     # save results
     if arglist.save:
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
@@ -262,7 +228,7 @@ def main(arglist):
         df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ = plot_history(df_history)
+        fig_history, _ = plot_history(df_history, model.loss_keys)
         fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
         print(f"\nmodel saved at: ./exp/{arglist.method}/{date_time}")
