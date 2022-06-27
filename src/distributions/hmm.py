@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.distributions.models import ConditionalDistribution
+from src.distributions.mixture_models import ConditionalGaussian
 from src.distributions.transition_models import DiscreteMC, LogisticMC
 from src.distributions.utils import softmax
 
@@ -22,7 +22,7 @@ class DiscreteGaussianHMM(nn.Module):
         self.obs_dim = obs_dim
         self.eps = 1e-6
 
-        self.obs_model = ConditionalDistribution(
+        self.obs_model = ConditionalGaussian(
             obs_dim, state_dim, cov=cov, batch_norm=True
         )
         self.transition_model = DiscreteMC(state_dim, act_dim, rank)
@@ -242,7 +242,7 @@ class LogisticGaussianHMM(nn.Module):
         self.obs_dim = obs_dim
         self.eps = 1e-6
 
-        self.obs_model = ConditionalDistribution(
+        self.obs_model = ConditionalGaussian(
             obs_dim, state_dim, cov=cov, batch_norm=True
         )
         self.transition_model = LogisticMC(state_dim, act_dim)
