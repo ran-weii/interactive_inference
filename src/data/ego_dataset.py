@@ -11,7 +11,31 @@ def collate_fn(batch):
     pad_act = pad_sequence([b["act"] for b in batch])
     mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
+
+def sample_sequence(seq_len, max_seq_len, gamma=1.):
+    """ Sample a segment of the sequence
+
+    Args:
+        seq_len (int): original sequence length
+        max_seq_len (int): maximum sequence length
+        gamma (float, optional): higher gamma bias towards 
+            sampling smaller time steps. Default=1.
     
+    Returns:
+        sample_id (np.array): sample id
+    """
+    sample_id = np.arange(seq_len)
+    if seq_len <= max_seq_len:
+        return sample_id
+    else:
+        gamma = 1.
+        candidates = np.arange(seq_len - max_seq_len)
+        p = (candidates + 1) ** -float(gamma)
+        p /= p.sum()
+        id_start = np.random.choice(candidates, p=p)
+        sample_id = sample_id[id_start:id_start+max_seq_len]
+    return sample_id
+
 def aug_flip_lr(obs, act, feature_set):
     """ Data augmentation by a left-right flip wrt the road 
     
@@ -138,10 +162,8 @@ class RelativeDataset(EgoDataset):
             self.df_track["eps_id"] == self.unique_eps[idx]
         ].reset_index(drop=True)
         
-        """ TODO: add seed to max length filtering """
-        if len(df_ego) > self.max_eps_len: 
-            sample_id = np.random.randint(0, len(df_ego) - self.max_eps_len)
-            df_ego = df_ego.iloc[sample_id:sample_id+self.max_eps_len]
+        sample_ids = sample_sequence(len(df_ego), self.max_eps_len, gamma=1.)
+        df_ego = df_ego.iloc[sample_ids].reset_index(drop=True)
         
         obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy()
         obs_ego = df_ego[self.ego_fields].to_numpy()
