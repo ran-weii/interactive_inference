@@ -12,17 +12,20 @@ def collate_fn(batch):
     mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
     return pad_obs, pad_act, mask
     
-def aug_flip_lr(obs, feature_set):
+def aug_flip_lr(obs, act, feature_set):
     """ Data augmentation by a left-right flip wrt the road 
     
     Args:
-        obs (np.array): observation matrix [T, obs_dim]
+        obs (np.array): observation matrix. size=[T, obs_dim]
+        act (np.array): action matrix. size=[T, act_dim]
         feature_set (list): list of strings feature names
 
     Returns:
-        obs_aug (np.array): augmented obs [T, obs_dim]
+        obs_aug (np.array): augmented observations. size=[T, obs_dim]
+        act_aug (np.array): augmented actions. size=[T, act_dim]
     """
     obs_aug = obs.copy()
+    act_aug = act.copy()
     if np.random.randint(2) == 1: # perform augmentation with 0.5 probability
         for i, f in enumerate(feature_set):
             flippable = AUGMENTATION_PARAMETERS[f]["flip_lr"]
@@ -34,7 +37,8 @@ def aug_flip_lr(obs, feature_set):
                 obs_aug[:, i] = 1.8 + (1.8 - obs_aug[:, i])
             elif f == "rbd":
                 obs_aug[:, i] = 1.8 - (obs_aug[:, i] - 1.8)
-    return obs_aug
+        act_aug[:, 1] *= -1
+    return obs_aug, act_aug
 
 """ NOTE: 
 simulation should not be done with fixed neighbors, 
@@ -144,7 +148,7 @@ class RelativeDataset(EgoDataset):
         act_ego = df_ego[self.act_fields].to_numpy()
         
         for aug in self.augmentation:
-            obs_ego = aug(obs_ego, self.ego_fields)
+            obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
 
         out_dict = {
             "meta": torch.from_numpy(obs_meta).to(torch.float32),
