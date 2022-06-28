@@ -274,7 +274,7 @@ class ContinuousGaussianHMM(nn.Module):
         transition_matrix = torch.sum(transition_matrix * a_, dim=-3)
         return transition_matrix
     
-    def alpha(self, b, x, u=None, a=None):
+    def alpha(self, b, x, u=None, a=None, logp_u=None):
         """ Compute forward message for a single time step
 
         Args:
@@ -284,6 +284,8 @@ class ContinuousGaussianHMM(nn.Module):
                 None for initial state. Default=None
             a (torch.tensor, None, optional): action prior, to be supplied by a planner.
                 size=[batch_size, act_dim]. Default=None
+            logp_u (torch.tensor, None, optional): control liklihood. Supplied during training. 
+                size=[batch_size, act_dim]
 
         Returns:
             b_t (torch.tensor): state posterior. size=[batch_size, state_dim]
@@ -297,9 +299,9 @@ class ContinuousGaussianHMM(nn.Module):
             a_t = None
         else:
             if a is None:
-                a_logits = torch.sum(b.unsqueeze(-1) * self.act_prior.unsqueeze(0), dim=-2)
-                a = torch.softmax(a_logits, dim=-1)
-            a_t = self.ctl_model.infer(a, u)
+                a = torch.softmax(self.act_prior + self.eps, dim=-1).unsqueeze(0)
+                a = torch.sum(b.unsqueeze(-1) * a, dim=-2)
+            a_t = self.ctl_model.infer(a, u, logp_u)
             transition = self.get_transition_matrix(a_t)
             logp_z = torch.sum(transition * b.unsqueeze(-1) + self.eps, dim=-2).log()
         
@@ -322,15 +324,17 @@ class ContinuousGaussianHMM(nn.Module):
         T = x.shape[0]
         
         z0 = torch.ones(batch_size, self.state_dim)
-
+        
+        logp_u = self.ctl_model.log_prob(u) # supplying it increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
         alpha_b[0] = z0
         alpha_a = [torch.empty(0)] * (T)
         for t in range(T):
             x_t = x[t]
             u_t = None if t == 0 else u[t-1]
-            alpha_b[t+1], alpha_a[t] = self.alpha(alpha_b[t], x_t, u_t)
-
+            logp_u_t = None if t == 0 else logp_u[t-1]
+            alpha_b[t+1], alpha_a[t] = self.alpha(alpha_b[t], x_t, u_t, logp_u=logp_u_t)
+        
         alpha_b = torch.stack(alpha_b)[1:]
         alpha_a = torch.stack(alpha_a[1:])
         return alpha_b, alpha_a
