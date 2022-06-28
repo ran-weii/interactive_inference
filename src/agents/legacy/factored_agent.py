@@ -4,7 +4,7 @@ import torch.nn as nn
 from src.distributions.legacy.models import ConditionalDistribution
 from src.distributions.legacy.factored_models import (
     FactoredHiddenMarkovModel, FactoredConditionalDistribution)
-from src.agents.reward import ExpectedFreeEnergy
+from src.agents.legacy.reward import ExpectedFreeEnergy
 from src.agents.planners import QMDP
 from src.agents.legacy.active_inference import ActiveInference
 from src.distributions.utils import poisson_pdf, rectify, softmax

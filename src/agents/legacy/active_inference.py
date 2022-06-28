@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from src.distributions.legacy.models import (
     HiddenMarkovModel, ConditionalDistribution, GeneralizedLinearModel)
-from src.agents.reward import ExpectedFreeEnergy, GeneralizedFreeEnergy
+from src.agents.legacy.reward import ExpectedFreeEnergy, GeneralizedFreeEnergy
 from src.agents.planners import QMDP, MCVI
 
 class ActiveInference(nn.Module):
