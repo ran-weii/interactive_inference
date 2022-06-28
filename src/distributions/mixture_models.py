@@ -6,7 +6,7 @@ from src.distributions.utils import make_covariance_matrix, straight_through_sam
 
 class ConditionalGaussian(nn.Module):
     """ Conditional gaussian distribution used to create mixture distributions """
-    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True):
+    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True, device=torch.device("cpu")):
         """
         Args:
             x_dim (int): observed output dimension
@@ -25,6 +25,7 @@ class ConditionalGaussian(nn.Module):
             z_dim * x_dim * x_dim
         ]
         self.batch_norm = batch_norm
+        self.device = device
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
@@ -37,10 +38,10 @@ class ConditionalGaussian(nn.Module):
         if cov == "diag":
             del self.tl
             self.parameter_size = self.parameter_size[:-1]
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(device)
         
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, device=device)
         
     def __repr__(self):
         s = "{}(x_dim={}, z_dim={}, cov={})".format(
