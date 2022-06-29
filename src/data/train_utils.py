@@ -53,3 +53,11 @@ def train_test_split(dataset, train_ratio, batch_size, collate_fn=None, seed=0):
         test_set, batch_size, shuffle=False, collate_fn=collate_fn, drop_last=False
     )
     return train_loader, test_loader
+
+def count_parameters(model):
+    """ Count active parameters in model """
+    num_params = 0
+    for n, p in model.named_parameters():
+        if p.requires_grad == True:
+            num_params += np.prod(list(p.shape))
+    return num_params
