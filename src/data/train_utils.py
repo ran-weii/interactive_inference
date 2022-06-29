@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 
@@ -33,6 +34,11 @@ def load_data(data_path, scenario, filename):
     ).drop(columns=["track_id", "frame_id"])
     df_track = pd.concat([df_track, df_kf, df_neighbors, df_features, df_labels], axis=1)
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
+
+    # add scenario and record id
+    record_id = re.compile(r"\d\d\d").search(filename).group()
+    df_track.insert(0, "scenario", scenario)
+    df_track.insert(0, "record_id", record_id)
     return df_track
 
 def train_test_split(dataset, train_ratio, batch_size, collate_fn=None, seed=0):
