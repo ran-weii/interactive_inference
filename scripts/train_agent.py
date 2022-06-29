@@ -1,7 +1,6 @@
 import argparse
 import os
 import json
-import time
 import datetime
 import numpy as np
 import pandas as pd
@@ -12,7 +11,8 @@ from src.simulation.observers import FEATURE_SET
 from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 from src.agents.vin_agents import VINAgent
-# from src.irl.algorithms import 
+from src.algo.irl import BehaviorCloning
+from src.algo.utils import train
 from src.visualization.utils import plot_history
 
 import warnings
@@ -39,12 +39,13 @@ def parse_args():
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
     # training args
-    parser.add_argument("--algo", type=str, choices=["il"], default="il", help="training algorithm, default=il")
+    parser.add_argument("--algo", type=str, choices=["bc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
     parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
+    parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
@@ -60,6 +61,7 @@ def main(arglist):
     df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename)
     df_track = df_track.loc[df_track["is_train"] == 1]
     
+    """ TODO: add code to adapt input feature set """
     feature_set = [
         "d", "ds", "dd", "kappa_r", "psi_error_r", 
         "s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"
@@ -93,9 +95,49 @@ def main(arglist):
         ))
         agent.load_dynamics_model(state_dict, requires_grad=arglist.train_dynamics)
     
-    # print(f"num parameters: {count_parameters(model)}")
-    # print(model)
+    # init trainer
+    if arglist.algo == "bc":
+        model = BehaviorCloning(
+            agent, arglist.obs_penalty, lr=arglist.lr, 
+            decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
+        
+    print(f"num parameters: {count_parameters(model)}")
+    print(model)
 
+    model, df_history = train(
+        model, train_loader, test_loader, arglist.epochs, verbose=1
+    )
+    
+    # save results
+    if arglist.save:
+        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+        exp_path = os.path.join(arglist.exp_path, "agents")
+        agent_path = os.path.join(exp_path, arglist.agent)
+        save_path = os.path.join(agent_path, date_time)
+        if not os.path.exists(exp_path):
+            os.mkdir(exp_path)
+        if not os.path.exists(agent_path):
+            os.mkdir(agent_path)
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        
+        # save args
+        with open(os.path.join(save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+        
+        # save model
+        torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
+        
+        # save history
+        df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
+        
+        # save history plot
+        fig_history, _ = plot_history(df_history, ["loss_o", "loss_u"])
+        fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
+        
+        print(f"\nmodel saved at: {save_path}")
+    
 if __name__ == "__main__":
     arglist = parse_args()
     main(arglist)
