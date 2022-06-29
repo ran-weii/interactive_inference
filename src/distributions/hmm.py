@@ -322,17 +322,15 @@ class ContinuousGaussianHMM(nn.Module):
 
         Returns:
             alpha_b (torch.tensor): state forward messages. size=[T, batch_size, state_dim]
-            alpha_a (torch.tensor): action forward messages. size=[T-1, batch_size, state_dim]
+            alpha_a (torch.tensor): action forward messages. size=[T-1, batch_size, act_dim]
         """
         batch_size = x.shape[1]
         T = x.shape[0]
         
-        z0 = torch.ones(batch_size, self.state_dim)
-        
         logp_x = self.obs_model.log_prob(x) # supplying this increase test likelihood
         logp_u = self.ctl_model.log_prob(u) # supplying this increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
-        alpha_b[0] = z0
+        alpha_b[0] = torch.ones(batch_size, self.state_dim) # filler initial belief
         alpha_a = [torch.empty(0)] * (T)
         for t in range(T):
             x_t = x[t]

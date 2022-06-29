@@ -131,7 +131,7 @@ class ConditionalGaussian(nn.Module):
         """ Ancestral sampling
         
         Args:
-            pi (torch.tensor): mixing weights
+            pi (torch.tensor): mixing weights. size=[T, batch_size, z_dim]
             num_samples (int, optional): number of samples to draw. Default=1
             sample_mean (bool, optional): whether to sample component mean. Default=False
         """
