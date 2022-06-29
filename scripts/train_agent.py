@@ -28,6 +28,8 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
+    parser.add_argument("--checkpoint_path", type=str, default=None, 
+        help="if entered train agent from check point")
     # agent args
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
     parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
@@ -105,10 +107,30 @@ def main(arglist):
     print(f"num parameters: {count_parameters(model)}")
     print(model)
 
+    # load from check point
+    if arglist.checkpoint_path is not None:
+        cp_path = os.path.join(
+            arglist.exp_path, "agents", 
+            arglist.agent, arglist.checkpoint_path
+        )
+        # load state dict
+        state_dict = torch.load(os.path.join(cp_path, "model.pt"))
+
+        # load history
+        df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
+
+        model.load_state_dict(state_dict)
+        print(f"loaded checkpoint from {cp_path}")
+
     model, df_history = train(
         model, train_loader, test_loader, arglist.epochs, verbose=1
     )
     
+    if arglist.checkpoint_path is not None:
+        df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
+        df_history["time"] += df_history_cp["time"].values[-1]
+        df_history = pd.concat([df_history_cp, df_history], axis=0)
+
     # save results
     if arglist.save:
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
@@ -133,7 +155,7 @@ def main(arglist):
         df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ = plot_history(df_history, ["loss_o", "loss_u"])
+        fig_history, _ = plot_history(df_history, model.loss_keys)
         fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
         print(f"\nmodel saved at: {save_path}")
