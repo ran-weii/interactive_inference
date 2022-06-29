@@ -24,6 +24,13 @@ class BehaviorCloning(nn.Module):
             self.decay, self.grad_clip, s_agent
         )
         return s
+    
+    def stdout(self, train_stats, test_stats):
+        s = "loss_u: {:.4f}/{:.4f}, loss_o: {:.4f}/{:.4f}".format(
+            train_stats["loss_u"], test_stats["loss_u"], 
+            train_stats["loss_o"], test_stats["loss_o"]
+        )
+        return s
 
     def run_epoch(self, loader, train=True):
         if train:
@@ -34,6 +41,7 @@ class BehaviorCloning(nn.Module):
         epoch_stats = []
         for i, batch in enumerate(loader):
             o, u, mask = batch
+            self.agent.reset() # reset agent state
             out = self.agent(o, u)
             loss_u = self.agent.act_loss(o, u, mask, out)
             loss_o = self.agent.obs_loss(o, u, mask, out)
@@ -55,5 +63,5 @@ class BehaviorCloning(nn.Module):
                 "train": 1 if train else 0
             })
         
-        df_stats = pd.DataFrame(epoch_stats).mean()
-        return df_stats
+        stats = pd.DataFrame(epoch_stats).mean().to_dict()
+        return stats
