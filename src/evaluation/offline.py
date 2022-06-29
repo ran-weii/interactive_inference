@@ -44,7 +44,6 @@ def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
         num_samples (int, optional): number of samples. Default=30
     
     Returns:
-        ctl (torch.tensor): true action sequence. size=[T, ctl_dim]
         u_sample (torch.tensor): sampled action sequence. size=[num_samples, T, ctl_dim]
     """
     agent.eval()
@@ -55,4 +54,28 @@ def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
             obs.unsqueeze(-2), ctl.unsqueeze(-2), 
             sample_method=sample_method, num_samples=num_samples
         ).squeeze(-2)
-    return ctl, u_sample
+    return u_sample
+
+def eval_dynamics_episode(model, obs, ctl, sample_method="ace", num_samples=30):
+    """ Evaluate dynamics model prediction for an episode
+    
+    Args:
+        model (nn.Module): dynamics model object with predict method.
+        obs (torch.tensor): observation sequence. size=[T, obs_dim]
+        ctl (torch.tensor): action sequence. size=[T, ctl_dim]
+        sample_method (str, optional): sample method. 
+            chioces=["bme", "ace", "acm"]. Default="ace
+        num_samples (int, optional): number of samples. Default=30
+    
+    Returns:
+        o_sample (torch.tensor): sampled action sequence. size=[num_samples, T, ctl_dim]
+    """
+    model.eval()
+
+    with torch.no_grad():
+        o_sample, _, _, _ =model.predict(
+            obs.unsqueeze(-2), ctl.unsqueeze(-2), prior=False, inference=True, 
+            sample_method=sample_method, num_samples=num_samples
+        )
+        o_sample = o_sample.squeeze(-2)
+    return o_sample
