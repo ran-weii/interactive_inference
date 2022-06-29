@@ -79,3 +79,17 @@ def eval_dynamics_episode(model, obs, ctl, sample_method="ace", num_samples=30):
         )
         o_sample = o_sample.squeeze(-2)
     return o_sample
+
+def sample_action_components(model, num_samples=50):
+    """ Sample from each component in the control modle 
+    
+    Args:
+        model (nn.Module): contorl model.
+        num_samples (int, optional): number of samples to draw from each component. Default=50
+    
+    Returns:
+        u_sample (torch.tensor): sampled actions. size=[num_samples, act_dim, ctl_dim]
+    """
+    with torch.no_grad():
+        u_samples = model.sample((num_samples,)).squeeze(-3).data
+    return u_samples
