@@ -110,11 +110,11 @@ class Observer:
         # match current lane
         if self._ref_path is None:
             ref_lane_id = self.map_data.match_lane(x_ego, y_ego)
-            self.ref_path = self.map_data.lanes[ref_lane_id].centerline.frenet_path
+            self._ref_path = self.map_data.lanes[ref_lane_id].centerline.frenet_path
         
         # convert to frenet coordinate
         v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
-        s_condition_ego, d_condition_ego = self.ref_path.cartesian_to_frenet(
+        s_condition_ego, d_condition_ego = self._ref_path.cartesian_to_frenet(
             x_ego, y_ego, v_ego, None, psi_ego, None, order=2
         )
         
@@ -123,15 +123,15 @@ class Observer:
         
         # compute lane features
         lbd, rbd = 1.8 - d, 1.8 + d
-        psi_tan = self.ref_path.get_tangent(s)
-        kappa_r = self.ref_path.get_curvature(s)
+        psi_tan = self._ref_path.get_tangent(s)
+        kappa_r = self._ref_path.get_curvature(s)
         psi_error_r = wrap_angles(psi_ego - psi_tan)
         
         # compute far point features
         fp_dict = {}
         for i in range(4):
-            s_fp = min(s + self.fp_dist * (i + 1), self.ref_path.arc_length)
-            psi_fp = self.ref_path.get_tangent(s_fp)
+            s_fp = min(s + self.fp_dist * (i + 1), self._ref_path.arc_length)
+            psi_fp = self._ref_path.get_tangent(s_fp)
             psi_error_fp = wrap_angles(psi_ego - psi_fp)
             fp_dict[f"psi_error_fp_{i}"] = psi_error_fp
         
@@ -150,11 +150,11 @@ class Observer:
         
         # convert to frenet coordinate
         v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
-        s_condition_ego, d_condition_ego = self.ref_path.cartesian_to_frenet(
+        s_condition_ego, d_condition_ego = self._ref_path.cartesian_to_frenet(
             x_ego, y_ego, v_ego, None, psi_ego, None, order=2
         )
         v_agent = np.sqrt(vx_agent**2 + vy_agent**2)
-        s_condition_agent, d_condition_agent = self.ref_path.cartesian_to_frenet(
+        s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
             x_agent, y_agent, v_agent, None, psi_agent, None, order=2
         )
         
