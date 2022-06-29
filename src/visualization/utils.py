@@ -1,5 +1,15 @@
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+
+def set_plotting_style(strip_size=12, label_size=12):
+    mpl.rcParams["axes.labelsize"] = label_size
+    mpl.rcParams["xtick.labelsize"] = strip_size
+    mpl.rcParams["ytick.labelsize"] = strip_size
+    mpl.rcParams["legend.title_fontsize"] = strip_size
+    mpl.rcParams["legend.fontsize"] = strip_size
+    mpl.rcParams["axes.titlesize"] = label_size
+    mpl.rcParams["figure.titlesize"] = label_size
 
 def plot_history(df_history, plot_keys):
     """ Plot learning history
