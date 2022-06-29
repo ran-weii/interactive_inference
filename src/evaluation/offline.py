@@ -31,3 +31,28 @@ def eval_actions_epoch(agent, loader, sample_method="ace", num_samples=30):
     u_batch = torch.cat(u_batch, dim=1).data.numpy()
     u_sample_batch = torch.cat(u_sample_batch, dim=1).data.numpy()
     return u_batch, u_sample_batch
+
+def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
+    """ Evaluate agent action selection for an episode
+    
+    Args:
+        agent (Agent): agent object
+        obs (torch.tensor): observation sequence. size=[T, obs_dim]
+        ctl (torch.tensor): action sequence. size=[T, ctl_dim]
+        sample_method (str, optional): sample method. 
+            chioces=["bme", "ace", "acm"]. Default="ace
+        num_samples (int, optional): number of samples. Default=30
+    
+    Returns:
+        ctl (torch.tensor): true action sequence. size=[T, ctl_dim]
+        u_sample (torch.tensor): sampled action sequence. size=[num_samples, T, ctl_dim]
+    """
+    agent.eval()
+    agent.reset()
+    
+    with torch.no_grad():
+        u_sample = agent.choose_action_batch(
+            obs.unsqueeze(-2), ctl.unsqueeze(-2), 
+            sample_method=sample_method, num_samples=num_samples
+        ).squeeze(-2)
+    return ctl, u_sample
