@@ -19,6 +19,10 @@ class EFEPlanner(nn.Module):
         
         self.reset()
     
+    def __repr__(self):
+        s = "{}(h={})".format(self.__class__.__name__, self.horizon)
+        return s
+
     def reset(self):
         self._q = None
     

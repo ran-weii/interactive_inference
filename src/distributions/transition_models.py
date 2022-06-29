@@ -30,7 +30,10 @@ class DiscreteMC(nn.Module):
             nn.init.xavier_normal_(self.w1, gain=1.)
             nn.init.xavier_normal_(self.w2, gain=1.)
             nn.init.xavier_normal_(self.e, gain=1.)
-    
+    def __repr__(self):
+        s = "{}(rank={})".format(self.__class__.__name__, self.rank)
+        return s
+
     def get_initial_state(self):
         """
         Returns:
