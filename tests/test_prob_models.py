@@ -1,7 +1,7 @@
 import torch
-from src.distributions.hmm import DiscreteGaussianHMM
+from src.distributions.legacy.hmm import DiscreteGaussianHMM
 from src.distributions.hmm import ContinuousGaussianHMM
-from src.distributions.hmm import LogisticGaussianHMM
+from src.distributions.legacy.hmm import LogisticGaussianHMM
 
 seed = 0
 
@@ -66,6 +66,11 @@ def test_continuous_gaussian_hmm():
     assert list(u_sample.shape) == [1, T-1, batch_size, ctl_dim]
     assert list(alpha_b.shape) == [T, batch_size, state_dim]
     assert list(alpha_a.shape) == [T-1, batch_size, act_dim]
+    
+    # case 1: low rank
+    rank = 2
+    hmm = ContinuousGaussianHMM(state_dim, act_dim, obs_dim, ctl_dim, rank=rank)
+    assert list(hmm.transition_model.get_transition_matrix().shape) == [1, act_dim, state_dim, state_dim]
     
     print("test_continuous_gaussian_hmm passed")
 
