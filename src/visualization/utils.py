@@ -78,3 +78,20 @@ def plot_time_series(x, feature_names, x_sample=None, num_cols=5, figsize=(6, 2)
         ax[i].set_title(feature_names[i])
     plt.tight_layout()
     return fig, ax
+
+def plot_scatter(x, x_label=None, y_label=None, figsize=(6, 6)):
+    """ Create a single scatter plot
+
+    Args:
+        x (torch.tensor): data tensor. 
+            size=[num_samples, f_dim] or [num_samples, num_groups, f_dim]
+        x_label (str, optional): x label. Default=None
+        y_label (str, optional): y label. Default=None
+        figsize (tuple, optional): figure size. Default=(6, 6)
+    """
+    x = x.transpose(0, -1)
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.plot(x[0].T, x[1].T, "o", ms=2)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    return fig, ax
