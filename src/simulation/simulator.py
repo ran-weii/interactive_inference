@@ -23,7 +23,7 @@ class InteractionSimulator(gym.Env):
         )
         
         self._track_data = None # recorded track data {"ego", "agents"}
-        self._sim_states = None # simulated states [x, y, vx, vy, psi]
+        self._sim_states = None # simulated states [x, y, vx, vy, psi, kappa]
         self._sim_acts = None # simulated actions [ax, ay]
         self.t = None # current time
         self.T = None # episode max time
