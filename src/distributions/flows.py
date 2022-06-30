@@ -49,22 +49,17 @@ class BatchNormTransform(TransformModule):
     codomain = constraints.real
     bijective = True
     event_dim = 0
-    def __init__(self, input_dim, momentum=0.1, epsilon=1e-5, affine=False, device=torch.device("cpu")):
+    def __init__(self, input_dim, momentum=0.1, epsilon=1e-5, affine=False):
         super().__init__()
         self.input_dim = input_dim
         self.momentum = momentum
         self.epsilon = epsilon
-        self.device = device
         
         self.register_buffer('moving_mean', torch.zeros(input_dim))
         self.register_buffer('moving_variance', torch.ones(input_dim))
         
-        self.gamma = torch.ones(input_dim).to(device)
-        self.beta = torch.zeros(input_dim).to(device)
-
-        if affine:
-            self.gamma = nn.Parameter(self.gamma)
-            self.beta = nn.Parameter(self.beta)
+        self.gamma = nn.Parameter(torch.ones(input_dim), requires_grad=affine)
+        self.beta = nn.Parameter(torch.zeros(input_dim), requires_grad=affine)
             
     @property   
     def constrained_gamma(self):
