@@ -1,7 +1,17 @@
 import torch
 import torch.nn as nn
 
-class MLP(nn.Module):
+class Model(nn.Module):
+    """ Constructor for nn models with device property """
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+
+class MLP(Model):
     def __init__(self, input_dim, output_dim, hidden_dim, num_hidden, activation):
         super().__init__()
         self.input_dim = input_dim
@@ -38,7 +48,7 @@ class MLP(nn.Module):
         return x
 
 
-class PopArt(nn.Module):
+class PopArt(Model):
     """ Linear layer with output normalization """
     def __init__(self, in_features, out_features, momentum=0.1, epsilon=1e-5):
         super().__init__()
