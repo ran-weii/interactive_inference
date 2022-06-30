@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
+from src.distributions.nn_models import Model
 from src.distributions.mixture_models import ConditionalGaussian, EmbeddedConditionalGaussian
 from src.distributions.transition_models import DiscreteMC, EmbeddedDiscreteMC
 
-class ContinuousGaussianHMM(nn.Module):
+class ContinuousGaussianHMM(Model):
     """Input-output hidden markov model with:
         discrete transitions, continuous actions, gaussian observations
     """
@@ -88,11 +89,10 @@ class ContinuousGaussianHMM(nn.Module):
             a_t (torch.tensor): action posterior, return None if u is None. 
                 size=[batch_size, act_dim]
         """
-        batch_size = x.shape[0]
         # compute state likelihood
         if u is None:
             logp_z = torch.log(self.get_initial_state() + self.eps)
-            logp_z = logp_z * torch.ones(batch_size, 1)
+            logp_z = logp_z * torch.ones_like(b)
             a_t = None
         else:
             if a is None:
@@ -138,32 +138,6 @@ class ContinuousGaussianHMM(nn.Module):
         alpha_b = torch.stack(alpha_b)[1:]
         alpha_a = torch.stack(alpha_a[1:])
         return alpha_b, alpha_a
-    
-    """ TODO: update beta with action likelihood """
-    def beta(self, logb, x_next, a):
-        """ Compute log backward message for a single time step
-
-        Args:
-            logb (torch.tensor): log backward message. size=[batch_size, state_dim]
-            x_next (torch.tensor): next observation vector. size=[batch_size, obs_dim]
-            a (torch.tensor): action vector. size=[batch_size, act_dim]
-
-        Returns:
-            logb_t (torch.tensor): log backward message. size=[batch_size, state_dim]
-        """
-        batch_size = logb.shape[0]
-        if a is None:
-            logp_z = self.transition_model.get_initial_state().unsqueeze(-2)
-            logp_z = logp_z * torch.ones(batch_size, self.state_dim, 1)
-        else:
-            transition = self.get_transition_matrix(a)
-            logp_z = torch.log(transition + self.eps)
-        
-        logp_x = self.obs_model.log_prob(x_next)
-        logb_t = torch.logsumexp(
-            logp_x.unsqueeze(-2) + logp_z + logb.unsqueeze(-2), dim=-1
-        )
-        return logb_t
 
     def predict(self, x, u, prior=True, inference=True, sample_method="ace", num_samples=1):
         """ Predict observations and controls
@@ -191,7 +165,7 @@ class ContinuousGaussianHMM(nn.Module):
         batch_size = x.shape[1]
         if prior:
             z0 = self.transition_model.get_initial_state()
-            z0 = z0 * torch.ones(batch_size, 1)
+            z0 = z0 * torch.ones(batch_size, 1).to(self.device)
             z = torch.cat([z0.unsqueeze(0), alpha_b[:-1]], dim=0)
         else:
             z = alpha_b
@@ -212,7 +186,7 @@ class ContinuousGaussianHMM(nn.Module):
             return x_sample, u_sample, alpha_b, alpha_a
 
 
-class EmbeddedContinuousGaussianHMM(nn.Module):
+class EmbeddedContinuousGaussianHMM(Model):
     """ Input-output hidden markov model with:
         discrete transitions, continuous actions, gaussian observations
         observation and transition models use embeddings
@@ -311,11 +285,10 @@ class EmbeddedContinuousGaussianHMM(nn.Module):
             a_t (torch.tensor): action posterior, return None if u is None. 
                 size=[batch_size, act_dim]
         """
-        batch_size = x.shape[0]
         # compute state likelihood
         if u is None:
             logp_z = torch.log(self.get_initial_state() + self.eps)
-            logp_z = logp_z * torch.ones(batch_size, 1)
+            logp_z = logp_z * torch.ones_like(b)
             a_t = None
         else:
             if a is None:
@@ -358,7 +331,7 @@ class EmbeddedContinuousGaussianHMM(nn.Module):
                 alpha_b[t], x_t, u_t, logp_x=logp_x_t, logp_u=logp_u_t
             )
         
-        alpha_b = torch.stack(alpha_b)[1:]
+        alpha_b = torch.stack(alpha_b[1:])
         alpha_a = torch.stack(alpha_a[1:])
         return alpha_b, alpha_a
 
@@ -388,7 +361,7 @@ class EmbeddedContinuousGaussianHMM(nn.Module):
         batch_size = x.shape[1]
         if prior:
             z0 = self.transition_model.get_initial_state()
-            z0 = z0 * torch.ones(batch_size, 1)
+            z0 = z0 * torch.ones(batch_size, 1).to(self.device)
             z = torch.cat([z0.unsqueeze(0), alpha_b[:-1]], dim=0)
         else:
             z = alpha_b
