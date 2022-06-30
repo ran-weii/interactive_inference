@@ -53,6 +53,21 @@ class ContinuousGaussianHMM(nn.Module):
         transition_matrix = torch.sum(transition_matrix * a_, dim=-3)
         return transition_matrix
     
+    def obs_entropy(self):
+        return self.obs_model.entropy()
+
+    def obs_log_prob(self, x):
+        return self.obs_model.log_prob(x)
+
+    def ctl_log_prob(self, u):
+        return self.ctl_model.log_prob(u)
+    
+    def obs_mixture_log_prob(self, pi, x):
+        return self.obs_model.mixture_log_prob(pi, x)
+
+    def ctl_mixture_log_prob(self, pi, u):
+        return self.ctl_model.mixture_log_prob(pi, u)
+
     def alpha(self, b, x, u=None, a=None, logp_x=None, logp_u=None):
         """ Compute forward message for a single time step
 
@@ -261,6 +276,21 @@ class EmbeddedContinuousGaussianHMM(nn.Module):
         transition_matrix = torch.sum(transition_matrix * a_, dim=-3)
         return transition_matrix
     
+    def obs_entropy(self):
+        return self.obs_model.entropy(self.state_embedding)
+
+    def obs_log_prob(self, x):
+        return self.obs_model.log_prob(self.state_embedding, x)
+
+    def ctl_log_prob(self, u):
+        return self.ctl_model.log_prob(self.act_embedding, u)
+    
+    def obs_mixture_log_prob(self, pi, x):
+        return self.obs_model.mixture_log_prob(pi, self.state_embedding, x)
+
+    def ctl_mixture_log_prob(self, pi, u):
+        return self.ctl_model.mixture_log_prob(pi, self.act_embedding, u)
+
     def alpha(self, b, x, u=None, a=None, logp_x=None, logp_u=None):
         """ Compute forward message for a single time step
 
