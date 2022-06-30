@@ -18,6 +18,7 @@ from src.simulation.controllers import AgentWrapper
 from src.evaluation.online import eval_episode
 
 # model imports
+from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.algo.irl import BehaviorCloning
 
@@ -96,12 +97,16 @@ def main(arglist):
     with open(os.path.join(exp_path, "args.json"), "r") as f:
         config = json.load(f)
     
+    # init dynamics model
+    if config["dynamics_model"] == "cghmm":
+        dynamics_model = ContinuousGaussianHMM(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, 
+            config["hmm_rank"], config["obs_cov"], config["ctl_cov"]
+        )
+
     # init agent
     if arglist.agent == "vin":
-        agent = VINAgent(
-            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
-            hmm_rank=config["hmm_rank"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"]
-        )
+        agent = VINAgent(dynamics_model, config["horizon"])
 
     # init model
     if config["algo"] == "bc":
