@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from src.agents.baseline import AbstractAgent
-from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.planners import value_iteration
 from src.distributions.utils import kl_divergence, poisson_pdf, rectify
 
@@ -16,6 +15,9 @@ class EFEPlanner(nn.Module):
         self.tau = nn.Parameter(torch.randn(1, 1))
         nn.init.xavier_normal(self.c, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
+
+        # self.gamma = nn.Parameter(torch.randn(1, 1))
+        # nn.init.uniform_(self.gamma, a=-1, b=1)
         
         self.reset()
     
@@ -51,7 +53,7 @@ class EFEPlanner(nn.Module):
             entropy (torch.tensor): observation entropy. size=[batch_size, state_dim]
         """
         if self._q is None:
-            s_next = transition_matrix.clone()
+            s_next = transition_matrix
             reward = self.compute_reward(s_next, entropy)
             self._q = value_iteration(reward, transition_matrix, self.horizon) # [batch_size, horizon, act_dim, state_dim]
     
@@ -70,21 +72,27 @@ class EFEPlanner(nn.Module):
         
         h = poisson_pdf(rectify(self.tau), self.horizon).unsqueeze(-1)
         policy = torch.sum(h * policy, dim=-2)
+        
+        # apply horizon first
+        # gamma = rectify(self.gamma)
+        # h = poisson_pdf(rectify(self.tau), self.horizon).unsqueeze(-1)
+        # b_ = b.unsqueeze(-2).unsqueeze(-2)
+        # q = torch.sum(self._q * b_, dim=-1) # [batch_size, horizon, act_dim]
+        # q = torch.sum(h * q, dim=-2)
+        # policy = torch.softmax(q, dim=-1) 
         return policy
 
 
 class VINAgent(AbstractAgent):
     """ Value iteraction network agent with ContinuousGaussianHMM dynamics model"""
-    def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, horizon,
-        hmm_rank=0, obs_cov="full", ctl_cov="full", rwd_model="efe"
-        ):
+    def __init__(self, dynamics_model, horizon, rwd_model="efe"):
+        state_dim = dynamics_model.state_dim
+        act_dim = dynamics_model.act_dim
+        obs_dim = dynamics_model.obs_dim
+        ctl_dim = dynamics_model.ctl_dim
         super().__init__(state_dim, act_dim, obs_dim, ctl_dim, horizon)
         
-        self.hmm = ContinuousGaussianHMM(
-            state_dim, act_dim, obs_dim, ctl_dim, rank=hmm_rank, 
-            obs_cov=obs_cov, ctl_cov=ctl_cov
-        )
+        self.hmm = dynamics_model
         self.planner = EFEPlanner(state_dim, horizon)
     
     def load_dynamics_model(self, state_dict, requires_grad):
@@ -116,7 +124,7 @@ class VINAgent(AbstractAgent):
         if self.planner._q is None:
             a = torch.eye(self.act_dim).unsqueeze(0)
             transition_matrix = self.hmm.get_transition_matrix(a)
-            entropy = self.hmm.obs_model.entropy()            
+            entropy = self.hmm.obs_entropy()         
             self.planner.plan(transition_matrix, entropy)
         
         a = self.planner.policy(b)
@@ -161,8 +169,8 @@ class VINAgent(AbstractAgent):
         batch_size = o.shape[1]
         T = o.shape[0]
         
-        logp_o = self.hmm.obs_model.log_prob(o) # supplying this increase test likelihood
-        logp_u = self.hmm.ctl_model.log_prob(u) # supplying this increase test likelihood
+        logp_o = self.hmm.obs_log_prob(o) # supplying this increase test likelihood
+        logp_u = self.hmm.ctl_log_prob(u) # supplying this increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
         alpha_b[0] = torch.ones(batch_size, self.state_dim) # filler initial belief
         alpha_a = [torch.empty(0)] * (T)
@@ -191,11 +199,18 @@ class VINAgent(AbstractAgent):
 
         Returns:
             loss (torch.tensor): action loss. size=[batch_size]
+            stats (dict): action loss stats
         """
         _, alpha_a = forward_out
-        logp_u = self.hmm.ctl_model.mixture_log_prob(alpha_a, u)
+        logp_u = self.hmm.ctl_mixture_log_prob(alpha_a, u)
         loss = -torch.sum(logp_u * mask, dim=0) / mask.sum(0)
-        return loss
+
+        # compute stats
+        nan_mask = mask.clone()
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_u_mean = -torch.nanmean((nan_mask * logp_u).data)
+        stats = {"loss_u": logp_u_mean}
+        return loss, stats
     
     def obs_loss(self, o, u, mask, forward_out):
         """ Compute observation loss 
@@ -205,11 +220,21 @@ class VINAgent(AbstractAgent):
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             mask (torch.tensor): binary mask tensor. size=[T, batch_size]
             forward_out (list): outputs of forward method
+
+        Returns:
+            loss (torch.tensor): observation loss. size=[batch_size]
+            stats (dict): observation loss stats
         """
         alpha_b, _ = forward_out
-        logp_o = self.hmm.obs_model.mixture_log_prob(alpha_b, o)
+        logp_o = self.hmm.obs_mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / mask.sum(0)
-        return loss
+
+        # compute stats
+        nan_mask = mask.clone()
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o).data)
+        stats = {"loss_o": logp_o_mean}
+        return loss, stats
 
     def choose_action(self, o, u, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
