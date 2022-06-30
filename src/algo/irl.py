@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -43,8 +42,8 @@ class BehaviorCloning(nn.Module):
             o, u, mask = batch
             self.agent.reset() # reset agent state
             out = self.agent(o, u)
-            loss_u = self.agent.act_loss(o, u, mask, out)
-            loss_o = self.agent.obs_loss(o, u, mask, out)
+            loss_u, stats_u = self.agent.act_loss(o, u, mask, out)
+            loss_o, stats_o = self.agent.obs_loss(o, u, mask, out)
 
             loss = torch.mean(loss_u + self.obs_penalty * loss_o)
 
@@ -55,12 +54,11 @@ class BehaviorCloning(nn.Module):
 
                 self.optimizer.step()
             self.optimizer.zero_grad()
-
+            
             epoch_stats.append({
+                "train": 1 if train else 0,
                 "loss": loss.data.item(),
-                "loss_u": loss_u.data.mean().item(),
-                "loss_o": loss_o.data.mean().item(),
-                "train": 1 if train else 0
+                **stats_u, **stats_o,
             })
         
         stats = pd.DataFrame(epoch_stats).mean().to_dict()
