@@ -7,11 +7,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import torch 
 
+# setup imports
 from src.simulation.observers import FEATURE_SET
 from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
+
+# model imports
+from src.distributions.hmm import ContinuousGaussianHMM, EmbeddedContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.algo.irl import BehaviorCloning
+
+# training imports
 from src.algo.utils import train
 from src.visualization.utils import plot_history
 
@@ -37,6 +43,9 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="full", help="agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="agent control covariance, default=full")
     parser.add_argument("--hmm_rank", type=int, default=0, help="agent hmm rank, 0 for full rank, default=0")
+    parser.add_argument("--state_embed_dim", type=int, default=30, help="agent hmm state embedding dimension, default=30")
+    parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
+    parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
     parser.add_argument("--agent", type=str, choices=["vin"], default="vin", help="agent type, default=vin")
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
@@ -83,10 +92,16 @@ def main(arglist):
     print(f"feature set: {feature_set}")
     print(f"train size: {len(train_loader.dataset)}, test size: {len(test_loader.dataset)}")
     
-    # init agent
-    if arglist.agent == "vin":
-        agent = VINAgent(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.horizon,
+    # init dynamics model
+    if arglist.dynamics_model == "cghmm":
+        dynamics_model = ContinuousGaussianHMM(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
+            arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
+        )
+    elif arglist.dynamics_model == "ecghmm":
+        dynamics_model = EmbeddedContinuousGaussianHMM(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
+            arglist.state_embed_dim, arglist.act_embed_dim,
             arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
         )
     
@@ -95,7 +110,13 @@ def main(arglist):
         state_dict = torch.load(os.path.join(
             arglist.exp_path, "dynamics", arglist.dynamics_path, "model.pt"
         ))
-        agent.load_dynamics_model(state_dict, requires_grad=arglist.train_dynamics)
+        dynamics_model.load_state_dict(state_dict)
+        for n, p in dynamics_model.named_parameters():
+            p.requires_grad = arglist.train_dynamics
+
+    # init agent
+    if arglist.agent == "vin":
+        agent = VINAgent(dynamics_model, arglist.horizon)
     
     # init trainer
     if arglist.algo == "bc":
