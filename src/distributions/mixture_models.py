@@ -3,10 +3,11 @@ import torch.nn as nn
 import torch.distributions as torch_dist
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.utils import make_covariance_matrix, straight_through_sample
+from src.distributions.nn_models import Model, MLP
 
-class ConditionalGaussian(nn.Module):
+class ConditionalGaussian(Model):
     """ Conditional gaussian distribution used to create mixture distributions """
-    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True, device=torch.device("cpu")):
+    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True):
         """
         Args:
             x_dim (int): observed output dimension
@@ -19,13 +20,7 @@ class ConditionalGaussian(nn.Module):
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.cov = cov
-        self.parameter_size = [
-            z_dim * x_dim,
-            z_dim * x_dim,
-            z_dim * x_dim * x_dim
-        ]
         self.batch_norm = batch_norm
-        self.device = device
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
         self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
@@ -38,10 +33,10 @@ class ConditionalGaussian(nn.Module):
         if cov == "diag":
             del self.tl
             self.parameter_size = self.parameter_size[:-1]
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(device)
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
         
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, device=device)
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
         
     def __repr__(self):
         s = "{}(x_dim={}, z_dim={}, cov={})".format(
@@ -147,9 +142,9 @@ class ConditionalGaussian(nn.Module):
         return x
 
 
-class EmbeddedConditionalGaussian(nn.Module):
+class EmbeddedConditionalGaussian(Model):
     """ Conditional gaussian distribution operate on embeddings"""
-    def __init__(self, x_dim, z_dim, embed_dim, cov="full", batch_norm=True, device=torch.device("cpu")):
+    def __init__(self, x_dim, z_dim, embed_dim, cov="full", batch_norm=True):
         """
         Args:
             x_dim (int): observed output dimension
@@ -164,22 +159,33 @@ class EmbeddedConditionalGaussian(nn.Module):
         self.embed_dim = embed_dim
         self.cov = cov
         self.batch_norm = batch_norm
-        self.device = device
+        
+        # self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+        # self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+        self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
+        
+        # nn.init.normal_(self.mu, mean=0, std=1)
+        # nn.init.normal_(self.lv, mean=0, std=0.01)
+        nn.init.normal_(self.tl, mean=0, std=0.01)
 
         self.w_mu = nn.Linear(embed_dim, x_dim)
         self.w_lv = nn.Linear(embed_dim, x_dim)
-        self.w_tl = nn.Linear(embed_dim, x_dim ** 2)
-        
-        nn.init.normal_(self.w_tl.weight, mean=0, std=0.01)
-        nn.init.normal_(self.w_tl.bias, mean=0, std=0.001)
+        # self.w_tl = nn.Linear(embed_dim, x_dim ** 2)
+
+        # nn.init.normal_(self.w_tl.weight, mean=0, std=0.01)
+        # nn.init.normal_(self.w_tl.bias, mean=0, std=0.001)
+
+        # self.w_mu = MLP(embed_dim, x_dim, 32, 2, "silu")
+        # self.w_lv = MLP(embed_dim, x_dim, 32, 2, "silu")
+        # self.w_tl = MLP(embed_dim, x_dim**2, 32, 2, "silu")
         
         if cov == "diag":
             del self.tl
             self.parameter_size = self.parameter_size[:-1]
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(device)
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
         
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, device=device)
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
         
     def __repr__(self):
         s = "{}(x_dim={}, z_dim={}, embedding_dim={}, cov={})".format(
@@ -197,8 +203,9 @@ class EmbeddedConditionalGaussian(nn.Module):
         """
         mu = self.w_mu(z)
         lv = self.w_lv(z)
-        tl = self.tl if self.cov == "diag" else self.w_tl(z)
-        tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
+        # tl = self.tl if self.cov == "diag" else self.w_tl(z)
+        # tl = tl.view(-1, self.z_dim, self.x_dim, self.x_dim)
+        tl = self.tl
 
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
