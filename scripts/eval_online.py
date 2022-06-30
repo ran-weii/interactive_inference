@@ -9,6 +9,7 @@ import torch
 # set up imports
 from src.simulation.observers import FEATURE_SET
 from src.data.train_utils import load_data
+from src.data.data_filter import filter_segment_by_length
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import EgoDataset, aug_flip_lr, collate_fn
 from src.simulation.simulator import InteractionSimulator
@@ -46,6 +47,8 @@ def parse_args():
     parser.add_argument("--agent", type=str, choices=["vin"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
+    parser.add_argument("--min_eps_len", type=int, default=100,
+        help="min episode length, default=100")
     parser.add_argument("--max_eps_len", type=int, default=200, 
         help="max episode length, default=200")
     parser.add_argument("--num_eps", type=int, default=5, 
@@ -68,6 +71,11 @@ def main(arglist):
     
     df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename)
     df_track["is_train"] = 1 - df_track["is_train"]
+
+    # filter episode length
+    df_track["eps_id"], df_track["eps_len"] = filter_segment_by_length(
+        df_track["eps_id"].values, arglist.min_eps_len
+    )
     
     """ TODO: add code to adapt input feature set """
     ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
