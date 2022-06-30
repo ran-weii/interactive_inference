@@ -1,8 +1,9 @@
 import pandas as pd
 import torch
 import torch.nn as nn
+from src.distributions.nn_models import Model
 
-class BehaviorCloning(nn.Module):
+class BehaviorCloning(Model):
     """ Supervised behavior cloning algorithm """
     def __init__(self, agent, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
@@ -40,6 +41,10 @@ class BehaviorCloning(nn.Module):
         epoch_stats = []
         for i, batch in enumerate(loader):
             o, u, mask = batch
+            o = o.to(self.device)
+            u = u.to(self.device)
+            mask = mask.to(self.device)
+
             self.agent.reset() # reset agent state
             out = self.agent(o, u)
             loss_u, stats_u = self.agent.act_loss(o, u, mask, out)
@@ -57,7 +62,7 @@ class BehaviorCloning(nn.Module):
             
             epoch_stats.append({
                 "train": 1 if train else 0,
-                "loss": loss.data.item(),
+                "loss": loss.cpu().data.item(),
                 **stats_u, **stats_o,
             })
         

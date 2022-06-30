@@ -92,7 +92,7 @@ class ContinuousGaussianHMM(Model):
         # compute state likelihood
         if u is None:
             logp_z = torch.log(self.get_initial_state() + self.eps)
-            logp_z = logp_z * torch.ones_like(b)
+            logp_z = logp_z * torch.ones_like(b).to(self.device)
             a_t = None
         else:
             if a is None:
@@ -124,7 +124,7 @@ class ContinuousGaussianHMM(Model):
         logp_x = self.obs_model.log_prob(x) # supplying this increase test likelihood
         logp_u = self.ctl_model.log_prob(u) # supplying this increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
-        alpha_b[0] = torch.ones(batch_size, self.state_dim) # filler initial belief
+        alpha_b[0] = torch.ones(batch_size, self.state_dim).to(self.device) # filler initial belief
         alpha_a = [torch.empty(0)] * (T)
         for t in range(T):
             x_t = x[t]
@@ -288,7 +288,7 @@ class EmbeddedContinuousGaussianHMM(Model):
         # compute state likelihood
         if u is None:
             logp_z = torch.log(self.get_initial_state() + self.eps)
-            logp_z = logp_z * torch.ones_like(b)
+            logp_z = logp_z * torch.ones_like(b).to(self.device)
             a_t = None
         else:
             if a is None:
@@ -320,7 +320,7 @@ class EmbeddedContinuousGaussianHMM(Model):
         logp_x = self.obs_model.log_prob(self.state_embedding, x) # supplying this increase test likelihood
         logp_u = self.ctl_model.log_prob(self.act_embedding, u) # supplying this increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
-        alpha_b[0] = torch.ones(batch_size, self.state_dim) # filler initial belief
+        alpha_b[0] = torch.ones(batch_size, self.state_dim).to(self.device) # filler initial belief
         alpha_a = [torch.empty(0)] * (T)
         for t in range(T):
             x_t = x[t]

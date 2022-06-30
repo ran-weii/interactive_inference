@@ -122,7 +122,7 @@ class VINAgent(AbstractAgent):
             a (torch.tensor): action distribution. size=[batch_size, act_dim]
         """
         if self.planner._q is None:
-            a = torch.eye(self.act_dim).unsqueeze(0)
+            a = torch.eye(self.act_dim).unsqueeze(0).to(self.device)
             transition_matrix = self.hmm.get_transition_matrix(a)
             entropy = self.hmm.obs_entropy()         
             self.planner.plan(transition_matrix, entropy)
@@ -172,7 +172,7 @@ class VINAgent(AbstractAgent):
         logp_o = self.hmm.obs_log_prob(o) # supplying this increase test likelihood
         logp_u = self.hmm.ctl_log_prob(u) # supplying this increase test likelihood
         alpha_b = [torch.empty(0)] * (T + 1)
-        alpha_b[0] = torch.ones(batch_size, self.state_dim) # filler initial belief
+        alpha_b[0] = torch.ones(batch_size, self.state_dim).to(self.device) # filler initial belief
         alpha_a = [torch.empty(0)] * (T)
         for t in range(T):
             o_t = o[t]
@@ -208,7 +208,7 @@ class VINAgent(AbstractAgent):
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask == 0] = torch.nan
-        logp_u_mean = -torch.nanmean((nan_mask * logp_u).data)
+        logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
@@ -232,7 +232,7 @@ class VINAgent(AbstractAgent):
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask == 0] = torch.nan
-        logp_o_mean = -torch.nanmean((nan_mask * logp_o).data)
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
         return loss, stats
 

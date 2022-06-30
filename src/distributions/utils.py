@@ -49,7 +49,7 @@ def poisson_pdf(gamma, K):
         pdf (torch.tensor): truncated poisson pdf [batch_size, K]
     """
     assert torch.all(gamma > 0)
-    Ks = torch.arange(K) + 1
+    Ks = 1 + torch.arange(K).to(gamma.device)
     poisson_dist = torch.distributions.Poisson(gamma)
     pdf = torch.softmax(poisson_dist.log_prob(Ks), dim=-1)
     return pdf
