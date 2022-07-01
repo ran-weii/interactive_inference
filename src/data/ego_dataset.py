@@ -66,14 +66,13 @@ def aug_flip_lr(obs, act, feature_set):
 
 """ NOTE: 
 simulation should not be done with fixed neighbors, 
-it should be similar to sisl interaction simulator,
+it should be similar to the realtime neighbor graph in sisl interaction simulator,
 ignore this fact for now 
 """
 class EgoDataset(Dataset):
     """ Dataset for raw state outputs """
     def __init__(
-        self, df_track, train_labels_col=None, min_eps_len=50, max_eps_len=1000,
-        max_dist=50., max_agents=8
+        self, df_track, train_labels_col=None, max_dist=50., max_agents=8
         ):
         super().__init__()
         eps_id = df_track["eps_id"].values.copy()
@@ -83,16 +82,13 @@ class EgoDataset(Dataset):
         unique_eps = np.unique(eps_id)
         self.unique_eps = unique_eps[np.isnan(unique_eps) == False]
         self.df_track = df_track.copy()
-        self.min_eps_len = min_eps_len
-        self.max_eps_len = max_eps_len
         self.max_dist = max_dist
         self.max_agents = max_agents
         
         """ TODO: remove lbd and rbd from ego fields and animation visualizer """
         self.meta_fields = ["track_id", "eps_id"]
         self.ego_fields = [
-            "x", "y", "vx", "vy", "psi_rad", "length", "width", 
-            "lbd", "rbd", "track_id"
+            "x", "y", "vx", "vy", "psi_rad", "kappa", "length", "width", "track_id"
         ]
         self.agent_id_fields = [
             "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",
@@ -146,15 +142,13 @@ class EgoDataset(Dataset):
 
     
 class RelativeDataset(EgoDataset):
-    def __init__(self, df_track, feature_set, train_labels_col=None, 
-                 min_eps_len=50, max_eps_len=1000, augmentation=[]):
-        super().__init__(
-            df_track, train_labels_col=train_labels_col, 
-            min_eps_len=min_eps_len, max_eps_len=max_eps_len
-        )
+    def __init__(self, df_track, feature_set, action_set, train_labels_col=None, 
+        min_eps_len=50, max_eps_len=1000, augmentation=[]):
+        super().__init__(df_track, train_labels_col)
         assert set(feature_set).issubset(set(df_track.columns))
+        self.max_eps_len = max_eps_len
         self.ego_fields = feature_set
-        self.act_fields = ["ax_ego", "ay_ego"]
+        self.act_fields = action_set
         self.augmentation = augmentation
         
     def __getitem__(self, idx):
