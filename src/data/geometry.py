@@ -28,7 +28,7 @@ def angle_to_vector(theta):
     y = x * np.tan(theta)
     
     out = np.stack([x, y]).T
-    out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
+    out /= np.linalg.norm(out, axis=-1, keepdims=True)
     return out
 
 def dist_two_points(x1, y1, x2, y2):
