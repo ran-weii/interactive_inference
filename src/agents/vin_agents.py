@@ -4,6 +4,7 @@ from src.agents.baseline import AbstractAgent
 from src.agents.planners import value_iteration
 from src.distributions.utils import kl_divergence, poisson_pdf, rectify
 
+""" add a beta similar to beta vae """
 class EFEPlanner(nn.Module):
     """ Expected free energy planner """
     def __init__(self, state_dim, horizon):
@@ -108,7 +109,7 @@ class VINAgent(AbstractAgent):
     
     def reset(self):
         """ Reset internal states for online inference """
-        self._b = None
+        self._b = torch.ones(1, self.state_dim)
         self._a = None # previous action distribution
         self.planner.reset() # reset q value function
     
