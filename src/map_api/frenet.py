@@ -1,10 +1,10 @@
 import math
 import numpy as np
 from scipy.interpolate import CubicSpline
-from src.data.geometry import wrap_angles
+from src.data.geometry import wrap_angles, angle_to_vector
 from src.map_api.frenet_utils import (
     compute_arc_length, get_closest_point, compute_curvature, 
-    compute_curvature_derivative, compute_tangent_and_normal_vectors)
+    compute_curvature_derivative, compute_acceleration_vector)
 from src.map_api.frenet_utils import cartesian_to_frenet, frenet_to_cartesian
 
 class FrenetPath:
@@ -169,6 +169,7 @@ class Trajectory:
         self.a = self.sign * np.linalg.norm(np.stack([ax, ay]), axis=0)
         self.theta = theta
         self.kappa = None
+        self.norm = None
 
         self.vx = vx
         self.vy = vy
@@ -181,45 +182,97 @@ class Trajectory:
         self.length = len(self.x)
         self.interpolator = None
         self.arc_length = None
-        self._interpolate()
+        self.s = None # below trajectory properties along agent generate curve
+        self.ds = None
+        self.dds = None
+        self.norm = None
+        self.tan_vec = None
+        self.norm_vec = None
+        self.a_t = None
+        self.a_n = None
+        self.a_vec = None # acceleration vector computed from curvature
+        self._compute_properties()
         
         # frenet trajectory
         self.s_condition = None
         self.d_condition = None
     
-    def _interpolate(self):
-        """ Interpolate trajectory to obtain curvature """
-        # x = self.x[np.argsort(self.x)]
-        # y = self.y[np.argsort(self.x)]
-        # self.interpolator = CubicSpline(x, y)
-        # self.arc_length = np.abs(compute_arc_length(
-        #     self.interpolator.derivative(), x[0], x[-1]
-        # ))
-        # s = np.linspace(0, self.arc_length, self.length)
-
-        dx = np.hstack([np.array([0]), np.diff(self.x)])
-        dy = np.hstack([np.array([0]), np.diff(self.y)])
+    def _compute_properties(self):
+        dx = np.gradient(self.x) / self.dt
+        dy = np.gradient(self.y) / self.dt
         ds = np.sqrt(dx**2 + dy**2)
         s = np.cumsum(ds)
+        
+        ddx = np.gradient(dx) / self.dt
+        ddy = np.gradient(dy) / self.dt
+        dds = np.gradient(ds) / self.dt
+
+        # curvature
+        numerator = dx * ddy - dy * ddx
+        norm_square = dx**2 + dy**2
+        kappa = numerator / norm_square ** 1.5
+        kappa = np.nan_to_num(kappa, nan=0)
+
+        # compute normal using tangent and kappa
+        theta = self.theta
+        kappa_sign = np.sign(kappa + 1e-6)
+        norm = theta + np.pi/2 * kappa_sign 
+        norm = wrap_angles(norm)
+
+        tan_vec = angle_to_vector(theta)
+        norm_vec = angle_to_vector(norm)
+        
+        t_component = dds
+        n_component = np.abs(kappa) * ds**2
+        a_vec = compute_acceleration_vector(dds, ds, kappa, tan_vec, norm_vec)
+        
         self.arc_length = s[-1]
+        self.kappa = kappa
+
+        self.s = s
+        self.ds = ds
+        self.dds = dds
+        self.norm = norm
+        self.tan_vec = tan_vec
+        self.norm_vec = norm_vec
+        self.a_t = t_component
+        self.a_n = n_component
+        self.a_vec = a_vec
+
+    # def _interpolate(self):
+    #     """ Interpolate trajectory to obtain curvature """
+    #     # x = self.x[np.argsort(self.x)]
+    #     # y = self.y[np.argsort(self.x)]
+    #     # self.interpolator = CubicSpline(x, y)
+    #     # self.arc_length = np.abs(compute_arc_length(
+    #     #     self.interpolator.derivative(), x[0], x[-1]
+    #     # ))
+    #     # s = np.linspace(0, self.arc_length, self.length)
+
+    #     dx = np.hstack([np.array([0]), np.diff(self.x)])
+    #     dy = np.hstack([np.array([0]), np.diff(self.y)])
+    #     ds = np.sqrt(dx**2 + dy**2)
+    #     s = np.cumsum(ds)
+    #     self.arc_length = s[-1]
         
-        self.fx = np.poly1d(np.polyfit(s, self.x, 5))
-        self.dfx = self.fx.deriv()
-        self.ddfx = self.dfx.deriv()
-        self.dddfx = self.ddfx.deriv()
+    #     self.fx = np.poly1d(np.polyfit(s, self.x, 5))
+    #     self.dfx = self.fx.deriv()
+    #     self.ddfx = self.dfx.deriv()
+    #     self.dddfx = self.ddfx.deriv()
         
-        self.fy = np.poly1d(np.polyfit(s, self.y, 5))
-        self.dfy = self.fy.deriv()
-        self.ddfy = self.dfy.deriv()
-        self.dddfy = self.ddfy.deriv()
+    #     self.fy = np.poly1d(np.polyfit(s, self.y, 5))
+    #     self.dfy = self.fy.deriv()
+    #     self.ddfy = self.dfy.deriv()
+    #     self.dddfy = self.ddfy.deriv()
         
-        self.kappa = np.array([compute_curvature(
-            self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
-        ) for i in range(self.length)])
+    #     self.kappa = np.array([compute_curvature(
+    #         self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
+    #     ) for i in range(self.length)])
         
-        self.tan_vec, self.norm_vec = compute_tangent_and_normal_vectors(
-            self.x, self.y, self.dt
-        )
+    #     self.tan_vec, self.norm_vec = compute_tangent_and_normal_vectors(
+    #         self.x, self.y, self.dt
+    #     )
+    #     self.norm = np.arctan2(self.norm_vec[:, 1], self.norm_vec[:, 0])
 
     def get_frenet_trajectory(self, ref_path):
         """ Convert self trajectory from cartesian to frenet frame
