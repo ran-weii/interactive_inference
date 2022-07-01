@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import torch 
 
 # setup imports
-from src.simulation.observers import FEATURE_SET
+from src.simulation.observers import ACTION_SET, FEATURE_SET
 from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--checkpoint_path", type=str, default=None, 
+    parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
     parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
     parser.add_argument("--agent", type=str, choices=["vin"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
     # training args
@@ -73,13 +74,22 @@ def main(arglist):
     df_track = df_track.loc[df_track["is_train"] == 1]
     
     """ TODO: add code to adapt input feature set """
-    feature_set = [
-        "d", "ds", "dd", "kappa_r", "psi_error_r", 
-        "s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"
-    ]
-    assert set(feature_set).issubset(set(FEATURE_SET["ego"] + FEATURE_SET["relative"]))
+    # define feature set
+    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
+    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
+    feature_set = ego_features + relative_features
+    assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
+    assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
+    
+    # define action set
+    if arglist.action_set == "frenet":
+        action_set = ["dds", "ddd"]
+    else:
+        action_set = ["ax_ego", "ay_ego"]
+    assert set(action_set).issubset(set(ACTION_SET))
+
     dataset = RelativeDataset(
-        df_track, feature_set, train_labels_col="is_train",
+        df_track, feature_set, action_set, train_labels_col="is_train",
         min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
         augmentation=[aug_flip_lr]
     )
@@ -90,6 +100,7 @@ def main(arglist):
     obs_dim, ctl_dim = len(feature_set), 2 
 
     print(f"feature set: {feature_set}")
+    print(f"action set: {action_set}")
     print(f"train size: {len(train_loader.dataset)}, test size: {len(test_loader.dataset)}")
     
     # init dynamics model
@@ -129,7 +140,7 @@ def main(arglist):
     print(model)
 
     # load from check point
-    if arglist.checkpoint_path is not None:
+    if arglist.checkpoint_path != "none":
         cp_path = os.path.join(
             arglist.exp_path, "agents", 
             arglist.agent, arglist.checkpoint_path
@@ -147,7 +158,7 @@ def main(arglist):
         model, train_loader, test_loader, arglist.epochs, verbose=1
     )
     
-    if arglist.checkpoint_path is not None:
+    if arglist.checkpoint_path != "none":
         df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
         df_history["time"] += df_history_cp["time"].values[-1]
         df_history = pd.concat([df_history_cp, df_history], axis=0)
