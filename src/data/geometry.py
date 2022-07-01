@@ -12,6 +12,25 @@ def wrap_angles(x):
     y = (x + np.pi) % (2 * np.pi) - np.pi
     return y
 
+def angle_to_vector(theta):
+    """ Map angle in radians to unit vector 
+    
+    Args:
+        theta (np.array): angle in radians
+    
+    Returns:
+        out (np.array): unit vector pointing in the direction of theta. 
+            size=[batch_size, 2]
+    """
+    # whether theta is pointing to the right
+    is_right = np.all([theta < np.pi/2, theta > -np.pi/2], axis=0)
+    x = 1 * is_right + -1 * (is_right == False)
+    y = x * np.tan(theta)
+    
+    out = np.stack([x, y]).T
+    out /= np.linalg.norm(out, axis=1).reshape(-1, 1)
+    return out
+
 def dist_two_points(x1, y1, x2, y2):
     """ Two point distance formula """
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
