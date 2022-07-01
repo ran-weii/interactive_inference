@@ -97,4 +97,5 @@ def plot_scatter(x, x_label=None, y_label=None, figsize=(6, 6), title=""):
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(title)
+    plt.tight_layout()
     return fig, ax
