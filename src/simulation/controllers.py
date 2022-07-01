@@ -3,7 +3,9 @@ import numpy as np
 from scipy.stats import norm
 from src.simulation.dynamics import ConstantAcceleration
 from src.simulation.observers import RelativeObserver
-from src.data.geometry import wrap_angles, coord_transformation
+from src.map_api.frenet_utils import compute_normal_from_kappa
+from src.map_api.frenet_utils import compute_acceleration_vector
+from src.data.geometry import wrap_angles, coord_transformation, angle_to_vector
 
 class CEM:
     """ Cross entropy method model predictive control """
@@ -156,23 +158,72 @@ class AuxiliaryController:
 
 class AgentWrapper:
     """ Wrapper for agent and observer for simulation """
-    def __init__(self, observer, agent, sample_method):
+    def __init__(self, observer, agent, action_set, sample_method):
         """
         Args:
             observer (Observer): observer object to compute features
             agent (Agent): Agent object with choose_action method
+            action_set (list): action set for whether to use ego or frenet actions
             sample_method (str): agent sample method. Choices=["ace", "acm", "bma"]
         """
         assert sample_method in ["ace", "acm", "bma"]
         agent.eval()
         self.agent = agent
         self.observer = observer
+        self.action_set = action_set
         self.sample_method = sample_method
         
         self._prev_act = None
     
     def reset(self):
-        self._prev_act = torch.zeros(1, 2)
+        self.agent.reset()
+        self._prev_act = None # torch.zeros(1, 2) for legacy code, make a copy for legacy?
+    
+    def ego_action_to_global(self, ax, ay, obs_env):
+        """ Convert actions from ego frame to global frame 
+        
+        Args:
+            ax (float): x acceleration in ego frame
+            ay (float): y acceleration in ego frame
+            obs_env (np.array): environment observation vector with 
+                ego observation [x, y, vx, vy, psi, kappa]
+
+        Returns:
+            act_env (np.array): action in global frame. size=[2]
+        """
+        psi = obs_env["ego"][4]
+        ax_env, ay_env = coord_transformation(ax, ay, None, None, theta=psi)
+        act_env = np.array([ax_env, ay_env])
+        return act_env
+    
+    def frenet_action_to_global(self, dds, ddd, obs_env):
+        """ Convert actions from frenet frame to global frame 
+        
+        Args:
+            dds (float): s acceleration in frenet frame
+            ddd (float): d acceleration in frenet frame
+            frenet_state (np.array): frenet state vector
+
+        Returns:
+            act_env (np.array): action in global frame. size=[2]
+        """
+        ref_path = self.observer._ref_path
+        s_condition = self.observer._s_condition_ego
+        d_condition = self.observer._d_condition_ego
+        s_condition = np.hstack([s_condition, np.array([dds])])
+        d_condition = np.hstack([d_condition, np.array([ddd])])
+        cartesian_state = ref_path.frenet_to_cartesian(
+            s_condition, d_condition
+        )
+        
+        [x, y, v, a, theta, kappa] = cartesian_state
+        norm = compute_normal_from_kappa(theta, kappa)
+        tan_vec = angle_to_vector(theta)
+        norm_vec = angle_to_vector(norm)
+        act_env = compute_acceleration_vector(
+            a, v, kappa, tan_vec, norm_vec
+        ).flatten()
+        return act_env
 
     def choose_action(self, obs_env):
         """
@@ -190,8 +241,9 @@ class AgentWrapper:
             self._prev_act = act.clone()
         
         # convert action to global frame
-        psi = obs_env["ego"][4]
         [ax, ay] = act.numpy().flatten()
-        ax_env, ay_env = coord_transformation(ax, ay, None, None, theta=psi)
-        act_env = np.array([ax_env, ay_env])
+        if self.action_set[0] == "ax_ego":
+            act_env = self.ego_action_to_global(ax, ay, obs_env)
+        else:
+            act_env = self.frenet_action_to_global(ax, ay, obs_env)
         return act_env
