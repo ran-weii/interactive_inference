@@ -197,14 +197,16 @@ def compute_features(df, map_data, min_seg_len, parallel):
             ref_lane_id = x["lane_id"].values[0]
             ref_path = map_data.lanes[ref_lane_id].centerline.frenet_path
             trajectory.get_frenet_trajectory(ref_path)
-
+            
             dds = trajectory.s_condition[:, 2]
             ddd = trajectory.d_condition[:, 2]
             kappa_ego = trajectory.kappa
-            features = np.stack([dds, ddd, kappa_ego]).T
+            norm_ego = trajectory.norm
+            a = trajectory.a # signed frenet acceleration
+            features = np.stack([dds, ddd, kappa_ego, norm_ego, a]).T
         
         df_out = pd.DataFrame(
-            features, columns=["dds", "ddd", "kappa"], index=x.index
+            features, columns=["dds", "ddd", "kappa", "norm", "a"], index=x.index
         )
         df_out = df_out.assign(track_id=x["track_id"].values)
         df_out = df_out.assign(frame_id=x["frame_id"].values)
