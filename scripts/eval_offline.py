@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 # setup imports
-from src.simulation.observers import FEATURE_SET
+from src.simulation.observers import FEATURE_SET, ACTION_SET
 from src.data.train_utils import load_data
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
@@ -61,14 +61,27 @@ def main(arglist):
     df_track["is_train"] = 1 - df_track["is_train"]
     df_track = df_track.loc[df_track["is_train"] == 1]
     
+    # load config 
+    with open(os.path.join(exp_path, "args.json"), "r") as f:
+        config = json.load(f)
+
     """ TODO: add code to adapt input feature set """
-    feature_set = [
-        "d", "ds", "dd", "kappa_r", "psi_error_r", 
-        "s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"
-    ]
-    assert set(feature_set).issubset(set(FEATURE_SET["ego"] + FEATURE_SET["relative"]))
+    # define feature set
+    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
+    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
+    feature_set = ego_features + relative_features
+    assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
+    assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
+    
+    # define action set
+    if config["action_set"] == "frenet":
+        action_set = ["dds", "ddd"]
+    else:
+        action_set = ["ax_ego", "ay_ego"]
+    assert set(action_set).issubset(set(ACTION_SET))
+
     dataset = RelativeDataset(
-        df_track, feature_set, train_labels_col="is_train",
+        df_track, feature_set, action_set, train_labels_col="is_train",
         max_eps_len=arglist.max_eps_len, augmentation=[aug_flip_lr]
     )
     loader = DataLoader(dataset, len(dataset), shuffle=False, collate_fn=collate_fn)
@@ -76,10 +89,6 @@ def main(arglist):
 
     print(f"feature set: {feature_set}")
     print(f"test size: {len(loader.dataset)}")
-    
-    # load config 
-    with open(os.path.join(exp_path, "args.json"), "r") as f:
-        config = json.load(f)
     
     # init dynamics model 
     if config["dynamics_model"] == "cghmm":
@@ -97,7 +106,7 @@ def main(arglist):
         model = BehaviorCloning(agent)
     
     # load state dict
-    state_dict = torch.load(os.path.join(exp_path, "model.pt"))
+    state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
     model.load_state_dict(state_dict)
     agent = model.agent
     print(agent)
