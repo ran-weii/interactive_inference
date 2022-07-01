@@ -140,7 +140,7 @@ class Trajectory:
     """ Object used to store agent trajectory in both cartesian and frenet frame 
     Requires a FrenetPath object to convert the trajectory to the frenet frame
     """
-    def __init__(self, x, y, vx, vy, ax, ay, theta, dt=0.1):
+    def __init__(self, x, y, vx, vy, ax, ay, theta, dt=0.1, deg=5):
         """
         Args:
             x (np.array): array of agent x coordinate in cartesian frame
@@ -151,9 +151,11 @@ class Trajectory:
             ay (np.array): array of agent y acceleration in cartesian frame
             theta (np.array): array of agent heading in cartesian frame
             dt (float, optional): time step. Default=0.1
+            deg (int, optional): interpolation degree. Default=5
         """
         assert len(x) > 1, f"trajectory length={len(x)} is too short"
         self.dt = dt
+        self.deg = deg
 
         # compute acceleration sign
         acc_vec = np.arctan2(ay, ax)
@@ -175,104 +177,62 @@ class Trajectory:
         self.vy = vy
         self.ax = ax
         self.ay = ay
-        self.tan_vec = None
-        self.norm_vec = None
         
         # trajectory properties 
         self.length = len(self.x)
         self.interpolator = None
         self.arc_length = None
         self.s = None # below trajectory properties along agent generate curve
-        self.ds = None
-        self.dds = None
         self.norm = None
         self.tan_vec = None
         self.norm_vec = None
-        self.a_t = None
-        self.a_n = None
         self.a_vec = None # acceleration vector computed from curvature
-        self._compute_properties()
+        self._interpolate()
         
         # frenet trajectory
         self.s_condition = None
         self.d_condition = None
-    
-    def _compute_properties(self):
-        dx = np.gradient(self.x) / self.dt
-        dy = np.gradient(self.y) / self.dt
+
+    def _interpolate(self):
+        """ Interpolate trajectory to obtain curvature """
+        dx = np.hstack([np.array([0]), np.diff(self.x)])
+        dy = np.hstack([np.array([0]), np.diff(self.y)])
         ds = np.sqrt(dx**2 + dy**2)
         s = np.cumsum(ds)
+        self.arc_length = s[-1]
         
-        ddx = np.gradient(dx) / self.dt
-        ddy = np.gradient(dy) / self.dt
-        dds = np.gradient(ds) / self.dt
-
-        # curvature
-        numerator = dx * ddy - dy * ddx
-        norm_square = dx**2 + dy**2
-        kappa = numerator / norm_square ** 1.5
-        kappa = np.nan_to_num(kappa, nan=0)
-
+        self.fx = np.poly1d(np.polyfit(s, self.x, self.deg))
+        self.dfx = self.fx.deriv()
+        self.ddfx = self.dfx.deriv()
+        self.dddfx = self.ddfx.deriv()
+        
+        self.fy = np.poly1d(np.polyfit(s, self.y, self.deg))
+        self.dfy = self.fy.deriv()
+        self.ddfy = self.dfy.deriv()
+        self.dddfy = self.ddfy.deriv()
+        
+        self.kappa = np.array([compute_curvature(
+            self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
+        ) for i in range(self.length)])
+        
         # compute normal using tangent and kappa
         theta = self.theta
-        kappa_sign = np.sign(kappa + 1e-6)
+        kappa_sign = np.sign(self.kappa + 1e-6)
         norm = theta + np.pi/2 * kappa_sign 
         norm = wrap_angles(norm)
 
         tan_vec = angle_to_vector(theta)
         norm_vec = angle_to_vector(norm)
         
-        t_component = dds
-        n_component = np.abs(kappa) * ds**2
-        a_vec = compute_acceleration_vector(dds, ds, kappa, tan_vec, norm_vec)
+        a_vec = compute_acceleration_vector(
+            self.a, self.v, self.kappa, tan_vec, norm_vec
+        )
         
-        self.arc_length = s[-1]
-        self.kappa = kappa
-
         self.s = s
-        self.ds = ds
-        self.dds = dds
         self.norm = norm
         self.tan_vec = tan_vec
         self.norm_vec = norm_vec
-        self.a_t = t_component
-        self.a_n = n_component
         self.a_vec = a_vec
-
-    # def _interpolate(self):
-    #     """ Interpolate trajectory to obtain curvature """
-    #     # x = self.x[np.argsort(self.x)]
-    #     # y = self.y[np.argsort(self.x)]
-    #     # self.interpolator = CubicSpline(x, y)
-    #     # self.arc_length = np.abs(compute_arc_length(
-    #     #     self.interpolator.derivative(), x[0], x[-1]
-    #     # ))
-    #     # s = np.linspace(0, self.arc_length, self.length)
-
-    #     dx = np.hstack([np.array([0]), np.diff(self.x)])
-    #     dy = np.hstack([np.array([0]), np.diff(self.y)])
-    #     ds = np.sqrt(dx**2 + dy**2)
-    #     s = np.cumsum(ds)
-    #     self.arc_length = s[-1]
-        
-    #     self.fx = np.poly1d(np.polyfit(s, self.x, 5))
-    #     self.dfx = self.fx.deriv()
-    #     self.ddfx = self.dfx.deriv()
-    #     self.dddfx = self.ddfx.deriv()
-        
-    #     self.fy = np.poly1d(np.polyfit(s, self.y, 5))
-    #     self.dfy = self.fy.deriv()
-    #     self.ddfy = self.dfy.deriv()
-    #     self.dddfy = self.ddfy.deriv()
-        
-    #     self.kappa = np.array([compute_curvature(
-    #         self.dfx(s[i]), self.ddfx(s[i]), self.dfy(s[i]), self.ddfy(s[i])
-    #     ) for i in range(self.length)])
-        
-    #     self.tan_vec, self.norm_vec = compute_tangent_and_normal_vectors(
-    #         self.x, self.y, self.dt
-    #     )
-    #     self.norm = np.arctan2(self.norm_vec[:, 1], self.norm_vec[:, 0])
 
     def get_frenet_trajectory(self, ref_path):
         """ Convert self trajectory from cartesian to frenet frame
