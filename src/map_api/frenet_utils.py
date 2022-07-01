@@ -152,6 +152,21 @@ def compute_acceleration_vector(dds, ds, kappa, tan_vec, norm_vec):
     acc_vec = t_component * tan_vec + n_component * norm_vec
     return acc_vec
 
+def compute_normal_from_kappa(theta, kappa):
+    """ Compute normal vector direction from tangent and curvature 
+    
+    Args:
+        theta (float, np.array): tangent vector direction
+        kappa (float, np.array): trajectory curvature
+    
+    Returns:
+        norm (np.array): normal vector direction
+    """
+    kappa_sign = np.sign(kappa + 1e-6)
+    norm = theta + np.pi/2 * kappa_sign 
+    norm = wrap_angles(norm)
+    return norm
+
 def cartesian_to_frenet(rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa, order=3):
     """ Convert from cartesian to frenet coordinate
     Adapted from: https://github.com/ApolloAuto/apollo
