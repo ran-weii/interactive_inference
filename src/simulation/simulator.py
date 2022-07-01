@@ -7,6 +7,15 @@ TODO:
 be more specific with property naming so we can easily identify data for animation
 """
 class InteractionSimulator(gym.Env):
+    """ Simulator with 
+    
+    observations
+        ego: [x, y, vx, vy, psi, kappa] 
+        agents: [x, y, vx, vy, psi]
+    
+    actions:
+        [ax, ay]
+    """
     def __init__(self, dataset, map_data, dt=0.1):
         super().__init__()
         self.dt = dt
@@ -35,10 +44,10 @@ class InteractionSimulator(gym.Env):
         self._track_data = self.dataset[eps_id]
         self.t = 0
         self.T = len(self._track_data["act"])
-        self._sim_states = np.zeros((self.T, 5))
+        self._sim_states = np.zeros((self.T, 6))
         self._sim_acts = np.zeros((self.T, 2))
         
-        self._sim_states[0] = self._track_data["ego"][0][:5]
+        self._sim_states[0] = self._track_data["ego"][0][:6]
         obs_dict = {
             "ego": self._sim_states[0],
             "agents": self._track_data["agents"][0][:, :5]
@@ -50,12 +59,44 @@ class InteractionSimulator(gym.Env):
         assert self._track_data is not None, "Please reset episode"
         act = self._track_data["act"][self.t]
         return act
+    
+    def compute_psi_kappa(self, state, last_psi):
+        """ Compute heading and curvature 
         
+        Args:
+            state (np.array): current state vector [x, y, vx, vy]
+            last_state (np.array): last state vector [x, y, vx, vy]
+            last_psi (float): last heading value
+        
+        Returns:
+            psi (float): current heading
+            kappa (float): current curvature
+        """
+        if state[2] != 0 and state[3] != 0:
+            psi = np.arctan2(state[3], state[2])
+        else:
+            psi = last_psi
+        
+        # computer curvature
+        psi_history = np.hstack([self._sim_states[:self.t+1, 4], np.array([psi])])
+        x_history = np.hstack([self._sim_states[:self.t+1, 0], np.array([state[0]])])
+        y_history = np.hstack([self._sim_states[:self.t+1, 1], np.array([state[1]])])
+
+        d_psi = np.gradient(psi_history)
+        d_x = np.gradient(x_history)
+        d_y = np.gradient(y_history)
+        d_s = np.sqrt(d_x**2 + d_y**2)
+        kappa = d_psi[-1] / d_s[-1]
+        return psi, kappa
+
     def step(self, action):
-        state_action = np.hstack([self._sim_states[self.t][:4], action]).reshape(-1, 1)
+        state = self._sim_states[self.t][:4]
+        psi = self._sim_states[self.t][5]
+        state_action = np.hstack([state, action]).reshape(-1, 1)
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
-        heading = np.arctan2(next_state[-1], next_state[-2])
-        self._sim_states[self.t+1] = np.hstack([next_state, heading])
+        next_psi, next_kappa = self.compute_psi_kappa(next_state, psi)
+        
+        self._sim_states[self.t+1] = np.hstack([next_state, next_psi, next_kappa])
         self._sim_acts[self.t] = action
 
         self.t += 1
@@ -67,7 +108,7 @@ class InteractionSimulator(gym.Env):
         done = True if self.t == self.T - 1 else False
         info = {}
         return obs_dict, reward, done, info
-
+    
     def render(self):
         return 
 

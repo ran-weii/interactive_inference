@@ -8,6 +8,13 @@ make lane feature calculation a part of the observer
 make observer a wrapper for simulation
 """
 
+ACTION_SET = {
+    "ax_ego", # ego centric x acceleration
+    "ay_ego", # ego centric y acceleration
+    "dds", # frenet s acceleration
+    "ddd" # frenet d acceleration
+}
+
 FEATURE_SET = {
     "ego": [
         "s", # frenet s distance
@@ -85,12 +92,15 @@ class Observer:
     def reset(self):
         self._ref_path = None
         self._trajectory = None
+        self._s_condition_ego = None # [s, ds]
+        self._d_condition_ego = None # [d, dd]
 
     def observe(self, obs_env):
         """ Convert environment observations into a vector 
         
         Args:
-            obs_env (np.array): environment state [x, y, vx, vy, psi]
+            obs_env (dict): ego state [x, y, vx, vy, psi, kappa], 
+                agents state [x, y, vx, vy, psi]
         
         Returns:
             obs (torch.tensor): agent observation [1, obs_dim]
@@ -105,7 +115,7 @@ class Observer:
     
     def compute_ego_features(self, obs_env):
         ego_state = obs_env["ego"]
-        [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = ego_state
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, kappa_ego] = ego_state
         
         # match current lane
         if self._ref_path is None:
@@ -117,6 +127,7 @@ class Observer:
         s_condition_ego, d_condition_ego = self._ref_path.cartesian_to_frenet(
             x_ego, y_ego, v_ego, None, psi_ego, None, order=2
         )
+        self._s_condition_ego, self._d_condition_ego = s_condition_ego, d_condition_ego
         
         # compute ego features
         [s, ds], [d, dd] = s_condition_ego, d_condition_ego 
@@ -145,14 +156,12 @@ class Observer:
         ego_state = obs_env["ego"]
         agent_state = obs_env["agents"]
         
-        [x_ego, y_ego, vx_ego, vy_ego, psi_ego] = ego_state
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, kappa_ego] = ego_state
         [x_agent, y_agent, vx_agent, vy_agent, psi_agent] = agent_state[0]
         
         # convert to frenet coordinate
-        v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
-        s_condition_ego, d_condition_ego = self._ref_path.cartesian_to_frenet(
-            x_ego, y_ego, v_ego, None, psi_ego, None, order=2
-        )
+        s_condition_ego = self._s_condition_ego
+        d_condition_ego = self._d_condition_ego
         v_agent = np.sqrt(vx_agent**2 + vy_agent**2)
         s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
             x_agent, y_agent, v_agent, None, psi_agent, None, order=2
