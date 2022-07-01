@@ -134,6 +134,24 @@ def compute_tangent_and_normal_vectors(x, y, dt=0.1):
     acc = t_component * tan_vec + n_component * norm_vec
     return tan_vec, norm_vec
 
+def compute_acceleration_vector(dds, ds, kappa, tan_vec, norm_vec):
+    """ Compute acceleration vector using tangent and normal components 
+    
+    Args:
+        dds (np.array): signed acceleration alone the ego trajectory. size=[batch_size]
+        ds (np.array): signed velocity alone the ego trajectory. size=[batch_size]
+        kappa (np.array): curvature of the ego trajectory. size=[batch_size]
+        tan_vec (np.array): tangent uint vector. size=[batch_size, 2]
+        norm_vec (np.array): normal unit vectory. size=[batch_size, 2]
+    
+    Returns:
+        acc_vec (np.array): acceleration vector. size=[batch_size, 2]
+    """
+    t_component = dds.reshape(-1, 1)
+    n_component = (np.abs(kappa) * ds**2).reshape(-1, 1)
+    acc_vec = t_component * tan_vec + n_component * norm_vec
+    return acc_vec
+
 def cartesian_to_frenet(rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, kappa, order=3):
     """ Convert from cartesian to frenet coordinate
     Adapted from: https://github.com/ApolloAuto/apollo
