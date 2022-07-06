@@ -10,7 +10,11 @@ from src.data.ego_dataset import EgoDataset
 from src.simulation.simulator import InteractionSimulator
 from src.visualization.animation import animate, save_animation
 
+from src.simulation.observers import FEATURE_SET
+from src.simulation.observers import Observer
+from src.simulation.controllers import AgentWrapper
 from src.map_api.frenet import FrenetPath
+from src.map_api.frenet_utils import compute_normal_from_kappa
 from src.map_api.frenet_utils import compute_acceleration_vector
 from src.data.geometry import angle_to_vector, wrap_angles
 
@@ -79,10 +83,43 @@ def test_simulator_from_data():
     ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=True)
     save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
 
-def test_observer():
-    from src.simulation.observers import Observer
-    from src.simulation.observers import FEATURE_SET
+def test_simulator_with_observer():
+    """ Test simulator from user defined accelerations """
+    df_track = load_data(data_path, scenario, filename)
+    ego_dataset = EgoDataset(df_track)
     
+    env = InteractionSimulator(ego_dataset, map_data)
+    
+    # frenet actions
+    act = np.array([0, 0])
+
+    class Agent:
+        def eval(self):
+            pass 
+
+        def choose_action(self, *kargs, **kwargs):
+            return torch.from_numpy(act)
+
+    agent = Agent()
+    observer = Observer(map_data)
+    controller = AgentWrapper(observer, agent, ["dds", "ddd"], "ace")
+
+    obs_env = env.reset(1)
+    for t in range(env.T):
+        # get true agent control
+        # ctl_env = env.get_action()
+        ctl_env = controller.choose_action(obs_env)
+        
+        obs_env, r, done, info = env.step(ctl_env)
+        
+        if done:
+            break
+
+    ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=False)
+    save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
+    print("test_simulator passed")
+
+def test_observer():
     observer = Observer(
         map_data, ego_features=FEATURE_SET["ego"],
         relative_features=FEATURE_SET["relative"]
@@ -98,5 +135,6 @@ def test_observer():
     print("test_pbserver_new passed")
 
 if __name__ == "__main__":
-    test_simulator_from_data()
+    # test_simulator_from_data()
+    test_simulator_with_observer()
     # test_observer()
