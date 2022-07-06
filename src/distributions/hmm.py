@@ -68,6 +68,12 @@ class ContinuousGaussianHMM(Model):
 
     def ctl_mixture_log_prob(self, pi, u):
         return self.ctl_model.mixture_log_prob(pi, u)
+    
+    def obs_ancestral_sample(self, z, num_samples):
+        return self.obs_model.ancestral_sample(z, num_samples)
+    
+    def ctl_ancestral_sample(self, z, num_samples):
+        return self.ctl_model.ancestral_sample(z, num_samples)
 
     def alpha(self, b, x, u=None, a=None, logp_x=None, logp_u=None):
         """ Compute forward message for a single time step
