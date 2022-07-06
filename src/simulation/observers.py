@@ -90,6 +90,7 @@ class Observer:
         self.reset()
     
     def reset(self):
+        self._ref_lane_id = None
         self._ref_path = None
         self._trajectory = None
         self._s_condition_ego = None # [s, ds]
@@ -119,8 +120,8 @@ class Observer:
         
         # match current lane
         if self._ref_path is None:
-            ref_lane_id = self.map_data.match_lane(x_ego, y_ego)
-            self._ref_path = self.map_data.lanes[ref_lane_id].centerline.frenet_path
+            self._ref_lane_id = self.map_data.match_lane(x_ego, y_ego)
+            self._ref_path = self.map_data.lanes[self._ref_lane_id].centerline.frenet_path
         
         # convert to frenet coordinate
         v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
