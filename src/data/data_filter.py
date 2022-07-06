@@ -242,11 +242,12 @@ def filter_segment_by_length(seg_id, min_seg_len):
     new_seg_len = df_seg_id["new_seg_len"].values
     return new_seg_id, new_seg_len
 
-def classify_tail_merging(df, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
+def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
     """ Classify tail merging using logistic regression
     
     Args:
         df (pd.dataframe): track dataframe with fields ["seg_id", "d", "dd", "ddd"]
+        tail (bool, optional): whether to classify the tail of an episode. If false classify head. Default=True
         p_tail (float, optional): proportion of trajectory to be considered tail. Default=0.3
         max_d (float, optional): maximum distance from centerline. Tail trajectories with the last step 
             exceeding max_d will be labeled as merging for classifier training. Default=1.2
@@ -264,9 +265,11 @@ def classify_tail_merging(df, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
         df = df.drop(columns=["is_tail_merging"])
     
     # get tail trajectories
-    df_tail = df.groupby("seg_id").apply(
-        lambda x: x.tail(np.ceil(p_tail * len(x)).astype(int))
-    ).reset_index(drop=True)
+    if tail:
+        func = lambda x: x.tail(np.ceil(p_tail * len(x)).astype(int))
+    else:
+        func = lambda x: x.head(np.ceil(p_tail * len(x)).astype(int))
+    df_tail = df.groupby("seg_id").apply(func).reset_index(drop=True)
     
     def label_merging(x):
         is_merging = np.zeros(len(x))
