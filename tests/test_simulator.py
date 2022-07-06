@@ -6,10 +6,13 @@ import matplotlib.pyplot as plt
 
 from src.data.train_utils import load_data
 from src.map_api.lanelet import MapReader
-from src.data.data_filter import filter_lane, filter_tail_merging
-from src.data.ego_dataset import EgoDataset, RelativeDataset
+from src.data.ego_dataset import EgoDataset
 from src.simulation.simulator import InteractionSimulator
 from src.visualization.animation import animate, save_animation
+
+from src.map_api.frenet import FrenetPath
+from src.map_api.frenet_utils import compute_acceleration_vector
+from src.data.geometry import angle_to_vector, wrap_angles
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -25,37 +28,56 @@ filename = "vehicle_tracks_007.csv"
 map_data = MapReader(cell_len=10)
 map_data.parse(os.path.join(data_path, "maps", scenario + ".osm"))
 
-def test_simulator():
+def test_simulator_from_data():
+    """ Use preprocessed frenet actions to control the simulator """
     df_track = load_data(data_path, scenario, filename)
-    
-    min_eps_len = 50
-    max_eps_len = 1000
     ego_dataset = EgoDataset(df_track)
-    track_data = ego_dataset[0]
     
     env = InteractionSimulator(ego_dataset, map_data)
     
-    obs_env = env.reset(11)
+    obs_env = env.reset(0)
+    
+    eps_id = env._track_data["meta"][1]
+    df_eps = df_track.loc[df_track["eps_id"] == eps_id].reset_index(drop=True)
+    
+    lane_id = df_eps["lane_id"].values[0]
+    ref_path = FrenetPath(np.array(map_data.lanes[lane_id].centerline.linestring.coords))
     for t in range(env.T):
         # get true agent control
-        ctl_env = env.get_action()
+        ctl_env = env.get_action()        
+        
+        # get acceleration from frenet state in dataset
+        vx = df_eps["vx"].values
+        vy = df_eps["vy"].values
+        v = np.sqrt(vx**2 + vy**2)
+
+        ax = df_eps["ax"].values
+        ay = df_eps["ay"].values
+        a = np.sqrt(ax**2 + ay**2)
+        
+        theta = df_eps["psi_rad"].values
+        norm = df_eps["norm"].values
+        kappa = df_eps["kappa"].values
+        
+        acc_vec = np.arctan2(ay, ax)
+        delta_vec = wrap_angles(acc_vec - theta)
+        sign = np.ones_like(theta)
+        sign[delta_vec > 0.5 * np.pi] = -1
+        sign[delta_vec < 0.5 * -np.pi] = -1
+        a *= sign
+
+        tan_vec = angle_to_vector(theta)
+        norm_vec = angle_to_vector(norm)
+        ctl_env = compute_acceleration_vector(a, v, kappa, tan_vec, norm_vec)
+        ctl_env = ctl_env[t].reshape(-1)
+
         obs_env, r, done, info = env.step(ctl_env)
         
         if done:
             break
-    
-    print("true", env._track_data["ego"][:, 5])
-    print("est", env._sim_states[:, 5])
 
-    fig, ax = plt.subplots(3, 2, figsize=(6, 4))
-    ax = ax.flat
-    for i in range(6):
-        ax[i].plot(env._track_data["ego"][:, i])
-        ax[i].plot(env._sim_states[:, i])
-    plt.tight_layout()
-    plt.show()
-    # ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=True)
-    # save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
+    ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=True)
+    save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
 
 def test_observer():
     from src.simulation.observers import Observer
@@ -76,5 +98,5 @@ def test_observer():
     print("test_pbserver_new passed")
 
 if __name__ == "__main__":
-    # test_simulator()
-    test_observer()
+    test_simulator_from_data()
+    # test_observer()
