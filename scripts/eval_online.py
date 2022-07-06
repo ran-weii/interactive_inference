@@ -120,7 +120,7 @@ def main(arglist):
     
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     agent = model.agent
     print(agent)
     
