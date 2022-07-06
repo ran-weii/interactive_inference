@@ -189,6 +189,52 @@ class VINAgent(AbstractAgent):
         alpha_a = torch.stack(alpha_a)
         return alpha_b, alpha_a
     
+    def predict(self, x, u, prior=True, inference=True, sample_method="ace", num_samples=1):
+        """ Predict observations and controls
+
+        Args:
+            x (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+            a (torch.tensor): action sequence. size=[T, batch_size, ctl_dim]
+            prior (bool, optional): whether to use prior predictive. 
+                If false use posterior predictive. Default=True
+            inference (bool, optional): inference mode return likelihood. 
+                If false return samples. Default=True
+            sample_method (str, optional): sampling method. choices=["ace", "bma"], Default="ace"
+            num_samples (int, optional): number of samples to return. Default=1
+
+        Returns:
+            logp_o (torch.tensor): observation likelihood. size=[T, batch_size]
+            logp_u (torch.tensor): control likelihood. size=[T-1, batch_size]
+            x_sample (torch.tensor): sampled observation sequence. size=[num_samples, T, batch_size, obs_dim]
+            u_sample (torch.tensor): sampled control sequence. size=[num_samples, T-1, batch_size, ctl_dim]
+            alpha_b (torch.tensor): state forward messages. size=[T, batch_size, state_dim]
+            alpha_a (torch.tensor): action forward messages. size=[T-1, batch_size, act_dim]
+        """
+        alpha_b, alpha_a = self.forward(x, u)
+        
+        batch_size = x.shape[1]
+        if prior:
+            z0 = self.hmm.transition_model.get_initial_state()
+            z0 = z0 * torch.ones(batch_size, 1).to(self.device)
+            z = torch.cat([z0.unsqueeze(0), alpha_b[:-1]], dim=0)
+        else:
+            z = alpha_b
+        
+        if not inference:
+            logp_o = self.hmm.obs_mixture_log_prob(z, x)
+            logp_u = self.hmm.ctl_mixture_log_prob(alpha_a, u[:-1])
+            return logp_o, logp_u
+        else:
+            # model average prediction
+            if sample_method == "ace":
+                x_sample = self.hmm.obs_ancestral_sample(z, num_samples)
+                u_sample = self.hmm.ctl_ancestral_sample(alpha_a, num_samples)
+            else:
+                x_sample = self.hmm.obs_bayesian_average(z)
+                u_sample = self.hmm.ctl_bayesian_average(alpha_a)
+            
+            return x_sample, u_sample, alpha_b, alpha_a
+
     def act_loss(self, o, u, mask, forward_out):
         """ Compute action loss 
         
