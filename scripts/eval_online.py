@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 
 # set up imports
-from src.simulation.observers import FEATURE_SET
+from src.simulation.observers import FEATURE_SET, ACTION_SET
 from src.data.train_utils import load_data
 from src.data.data_filter import filter_segment_by_length
 from src.map_api.lanelet import MapReader
@@ -78,24 +78,30 @@ def main(arglist):
         df_track["eps_id"].values, arglist.min_eps_len
     )
     
+    # load config 
+    with open(os.path.join(exp_path, "args.json"), "r") as f:
+        config = json.load(f)
+
     """ TODO: add code to adapt input feature set """
+    # define feature set
     ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
     relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
     feature_set = ego_features + relative_features
     assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
     assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
     
-    dataset = EgoDataset(
-        df_track, train_labels_col="is_train", max_eps_len=arglist.max_eps_len
-    )
+    # define action set
+    if config["action_set"] == "frenet":
+        action_set = ["dds", "ddd"]
+    else:
+        action_set = ["ax_ego", "ay_ego"]
+    assert set(action_set).issubset(set(ACTION_SET))
+    
+    dataset = EgoDataset(df_track, train_labels_col="is_train")
     obs_dim, ctl_dim = len(feature_set), 2 
 
     print(f"feature set: {feature_set}")
     print(f"test size: {len(dataset)}")
-    
-    # load config 
-    with open(os.path.join(exp_path, "args.json"), "r") as f:
-        config = json.load(f)
     
     # init dynamics model
     if config["dynamics_model"] == "cghmm":
@@ -113,7 +119,7 @@ def main(arglist):
         model = BehaviorCloning(agent)
     
     # load state dict
-    state_dict = torch.load(os.path.join(exp_path, "model.pt"))
+    state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
     model.load_state_dict(state_dict)
     agent = model.agent
     print(agent)
@@ -127,8 +133,8 @@ def main(arglist):
     observer = Observer(
         map_data, ego_features=ego_features, relative_features=relative_features
     )
-    controller = AgentWrapper(observer, agent, sample_method="ace")
-
+    controller = AgentWrapper(observer, agent, action_set, sample_method="ace")
+    
     # sample eval episodes
     test_eps_id = np.random.choice(np.arange(len(dataset)), arglist.num_eps)
     
@@ -141,7 +147,6 @@ def main(arglist):
         ani = animate(map_data, sim_states, track_data, title=title)
 
         animations.append(ani)
-        
     
     # save results
     if arglist.save:
