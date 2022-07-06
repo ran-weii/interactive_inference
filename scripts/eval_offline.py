@@ -131,7 +131,7 @@ def main(arglist):
         figs_u.append(fig_u)
 
     u_sample_components = sample_action_components(agent.hmm.ctl_model, num_samples=50)
-    fig_cmp, ax = plot_scatter(u_sample_components, "ax_ego", "ay_ego")
+    fig_cmp, ax = plot_scatter(u_sample_components, action_set[0], action_set[1])
     
     # save results
     if arglist.save:
