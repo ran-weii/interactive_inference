@@ -91,7 +91,7 @@ class InteractionSimulator(gym.Env):
 
     def step(self, action):
         state = self._sim_states[self.t][:4]
-        psi = self._sim_states[self.t][5]
+        psi = self._sim_states[self.t][4]
         state_action = np.hstack([state, action]).reshape(-1, 1)
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
         next_psi, next_kappa = self.compute_psi_kappa(next_state, psi)
