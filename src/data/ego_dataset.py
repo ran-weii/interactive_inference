@@ -75,7 +75,7 @@ class EgoDataset(Dataset):
         self, df_track, train_labels_col=None, max_dist=50., max_agents=8
         ):
         super().__init__()
-        eps_id = df_track["eps_id"].values.copy().astype(float)
+        eps_id = df_track["eps_id"].values.copy()
         if train_labels_col is not None:
             eps_id[df_track[train_labels_col] == 0] = np.nan
         
