@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from src.data.train_utils import load_data
 from src.map_api.lanelet import MapReader
-from src.data.ego_dataset import EgoDataset
+from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.simulation.simulator import InteractionSimulator
 from src.visualization.animation import animate, save_animation
 
@@ -94,6 +94,9 @@ def test_simulator_with_observer():
     act = np.array([0, 0])
 
     class Agent:
+        def __init__(self):
+            self._b = None
+
         def eval(self):
             pass 
 
@@ -134,7 +137,60 @@ def test_observer():
     assert list(obs.shape) == [1, len(observer.feature_set)]
     print("test_pbserver_new passed")
 
+def test_data_wrapper():
+    from src.simulation.controllers import DataWrapper
+    df_track = load_data(data_path, scenario, filename)
+    ego_dataset = EgoDataset(df_track)
+
+    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
+    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
+    feature_set = ego_features + relative_features
+    action_set = ["dds", "ddd"]
+    # action_set = ["ax_ego", "ay_ego"]
+    rel_dataset = RelativeDataset(df_track, feature_set, action_set, max_eps_len=1000)
+    
+    env = InteractionSimulator(ego_dataset, map_data)
+    
+    # dummy agent
+    class Agent:
+        def __init__(self):
+            self._b = None
+        
+        def reset(self):
+            pass 
+
+        def eval(self):
+            pass 
+
+        def choose_action(self, *kargs, **kwargs):
+            return torch.from_numpy(np.array([0, 0]))
+    
+    eps_id = 2
+    observer = Observer(map_data)
+    agent = Agent()
+    eps_data = rel_dataset[eps_id]
+    controller = DataWrapper(eps_data, observer, agent, action_set, "ace")
+    controller.reset()
+
+    obs_env = env.reset(eps_id)
+    for t in range(env.T-1):
+        # get true agent control
+        # ctl_env = env.get_action()
+        ctl_env = controller.choose_action(obs_env)
+        
+        obs_env, r, done, info = env.step(ctl_env)
+        # exit()
+        
+        if done:
+            break
+
+    ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=False)
+    save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
+
+    print("test_data_wrapper passed")
+
 if __name__ == "__main__":
     # test_simulator_from_data()
-    test_simulator_with_observer()
+    # test_simulator_with_observer()
     # test_observer()
+    test_data_wrapper()
