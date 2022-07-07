@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from src.data.ego_dataset import collate_fn, sample_sequence
 
 class ReplayBuffer:  
     """ Replay buffer with hidden state """  
@@ -14,15 +15,15 @@ class ReplayBuffer:
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.obs_dim = obs_dim
-
-        self.state = np.array([]).reshape(0, state_dim)
-        self.act = np.array([]).reshape(0, act_dim)
-        self.obs = np.array([]).reshape(0, obs_dim)
-
+        
+        self.episodes = []
+        self.eps_len = []
+        
+        self.num_eps = 0
         self.size = 0
         self.max_size = max_size
         
-        self.state_eps = []
+        self.state_eps = [] # store a single episode
         self.act_eps = [] # store a single episode
         self.obs_eps = [] # store a single episode
 
@@ -32,23 +33,67 @@ class ReplayBuffer:
         self.act_eps.append(controller._prev_act.data.numpy())
         self.obs_eps.append(controller._obs.data.numpy())
 
-    def push(self, obs_eps=None, act_eps=None):
+    def push(self):
         """ Store episode """
         state = np.vstack(self.state_eps)
         act = np.vstack(self.act_eps)
         obs = np.vstack(self.obs_eps)
 
-        self.state = np.concatenate([state, self.state], axis=0)
-        self.act = np.concatenate([act, self.act], axis=0)
-        self.obs = np.concatenate([obs, self.obs], axis=0)
+        self.episodes.append({
+            "state": state[:-1],
+            "obs": obs[:-1],
+            "act": act[:-1],
+            "next_state": state[1:],
+            "next_obs": obs[1:]
+        })
+        self.eps_len.append(len(state))
+        
+        self.num_eps += 1
+        self.size += len(self.episodes[-1]["state"])
+        if self.size > self.max_size:
+            while self.size > self.max_size:
+                self.size -= len(self.episodes[0]["state"])
+                self.episodes = self.episodes[1:]
+                self.eps_len = self.eps_len[1:]
+                self.num_eps = len(self.eps_len)
+        self.state_eps = []
+        self.act_eps = [] 
+        self.obs_eps = []
 
-        if len(self.obs) > self.max_size:
-            self.state = self.state[:self.max_size]
-            self.act = self.act[:self.max_size]
-            self.obs = self.obs[:self.max_size]
-        self.size = len(self.obs)
+    def sample_random(self, batch_size):
+        """ sample random steps """
+        state = np.vstack([e["state"] for e in self.episodes])
+        obs = np.vstack([e["obs"] for e in self.episodes])
+        act = np.vstack([e["act"] for e in self.episodes])
+        next_state = np.vstack([e["next_state"] for e in self.episodes])
+        next_obs = np.vstack([e["next_obs"] for e in self.episodes])
+        # print("sample random", state.shape, obs.shape, act.shape, next_state.shape, next_obs.shape)
 
+        idx = np.random.randint(0, self.size, size=batch_size)
+        batch = dict(
+            state=state[idx], obs=obs[idx], act=act[idx],
+            next_state=next_state[idx], next_obs=next_obs[idx]
+        )
+        return {k: torch.from_numpy(v).to(torch.float32) for k, v in batch.items()}
 
+    def sample_episodes(self, batch_size, max_len=200):
+        """ sample random episodes """
+        idx = np.random.randint(0, self.num_eps, size=batch_size)
+        
+        batch = []
+        for i in idx:
+            obs = torch.from_numpy(self.episodes[i]["obs"]).to(torch.float32)
+            act = torch.from_numpy(self.episodes[i]["act"]).to(torch.float32)
+
+            # truncate sequence
+            sample_ids = sample_sequence(len(obs), max_len, gamma=1.)
+            obs = obs[sample_ids]
+            act = act[sample_ids]
+
+            batch.append({"ego": obs, "act": act})
+        
+        out = collate_fn(batch)
+        return out
         
         
 class RecurrentBuffer:
