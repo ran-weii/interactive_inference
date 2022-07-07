@@ -241,11 +241,7 @@ class AgentWrapper:
             act = self.agent.choose_action(
                 obs, self._prev_act, sample_method=self.sample_method, num_samples=1
             ).view(1, 2)
-            self._prev_act = act.clone()
-        
-        self._obs = obs
-        self._b = self.agent._b
-        self.t += 1
+            self._prev_act = act.clone() 
 
         # convert action to global frame
         [ax, ay] = act.numpy().flatten()
@@ -253,21 +249,25 @@ class AgentWrapper:
             act_env = self.ego_action_to_global(ax, ay, obs_env)
         else:
             act_env = self.frenet_action_to_global(ax, ay, obs_env)
+
+        self._obs = obs
+        self._b = self.agent._b
+        self.t += 1
         return act_env
 
 class DataWrapper(AgentWrapper):
     """ Wrapper to implement actions from the dataset while tracking agent beliefs """
-    def __init__(self, data, observer, agent, action_set, sample_method):
+    def __init__(self, eps_data, observer, agent, action_set, sample_method):
         """
         Args:
-            data (dict): data dict from relative dataset
+            eps_data (dict): episode data dict from relative dataset
             observer (Observer): observer object to compute features
             agent (Agent): Agent object with choose_action method
             action_set (list): action set for whether to use ego or frenet actions
             sample_method (str): agent sample method. Choices=["ace", "acm", "bma"]
         """
         super().__init__(observer, agent, action_set, sample_method)
-        self.data = data
+        self.eps_data = eps_data
 
     def choose_action(self, obs_env):
         """
@@ -283,16 +283,15 @@ class DataWrapper(AgentWrapper):
                 obs, self._prev_act, sample_method=self.sample_method, num_samples=1
             ).view(1, 2)
             self._prev_act = act.clone()
+
+        # convert action to global frame
+        [ax, ay] = self.eps_data["act"][self.t].data.numpy()
+        if self.action_set[0] == "ax_ego":
+            act_env = self.ego_action_to_global(ax, ay, obs_env)
+        else:
+            act_env = self.frenet_action_to_global(ax, ay, obs_env)
         
         self._obs = obs
         self._b = self.agent._b
-
-        # convert action to global frame
-        act = self.data["act"][self.t]
-        [ax, ay] = act
-        if self.action_set[0] == "ax_ego":
-            act_env = self.data["act"][self.t]
-        else:
-            act_env = self.frenet_action_to_global(ax, ay, obs_env)
         self.t += 1
         return act_env
