@@ -48,6 +48,28 @@ class MLP(Model):
         return x
 
 
+class GRUMLP(Model):
+    """ GRU + MLP """
+    def __init__(self, input_dim, output_dim, hidden_dim, gru_layers, mlp_layers, activation):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.gru_layers = gru_layers
+
+        self.gru = nn.GRU(input_dim, hidden_dim, gru_layers)
+        self.mlp = MLP(gru_layers * hidden_dim, output_dim, hidden_dim, mlp_layers, activation)
+
+    def forward(self, x):
+        h0 = self.init_hidden(x.shape[1])
+        out, hn = self.gru(x, h0)
+        hn = hn.transpose(0, 1).flatten(1, -1)
+        out = self.mlp(hn)
+        return out
+    
+    def init_hidden(self, batch_size):
+        h0 = torch.zeros(self.gru_layers, batch_size, self.hidden_dim)
+        return h0
+
+
 class PopArt(Model):
     """ Linear layer with output normalization """
     def __init__(self, in_features, out_features, momentum=0.1, epsilon=1e-5):
