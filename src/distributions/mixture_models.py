@@ -44,6 +44,10 @@ class ConditionalGaussian(Model):
         )
         return s
     
+    def init_batch_norm(self, mean, variance):
+        self.bn.moving_mean.data = mean
+        self.bn.moving_variance.data = variance
+
     def get_distribution_class(self, transform=True, requires_grad=True):
         [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
