@@ -176,7 +176,10 @@ class AgentWrapper:
         self._prev_act = None
     
     def reset(self):
+        self.t = 0
         self.agent.reset()
+        self._obs = None # current observation vector
+        self._b = None # current posterior belief
         self._prev_act = None # torch.zeros(1, 2) for legacy code, make a copy for legacy?
     
     def ego_action_to_global(self, ax, ay, obs_env):
@@ -240,10 +243,56 @@ class AgentWrapper:
             ).view(1, 2)
             self._prev_act = act.clone()
         
+        self._obs = obs
+        self._b = self.agent._b
+        self.t += 1
+
         # convert action to global frame
         [ax, ay] = act.numpy().flatten()
         if self.action_set[0] == "ax_ego":
             act_env = self.ego_action_to_global(ax, ay, obs_env)
         else:
             act_env = self.frenet_action_to_global(ax, ay, obs_env)
+        return act_env
+
+class DataWrapper(AgentWrapper):
+    """ Wrapper to implement actions from the dataset while tracking agent beliefs """
+    def __init__(self, data, observer, agent, action_set, sample_method):
+        """
+        Args:
+            data (dict): data dict from relative dataset
+            observer (Observer): observer object to compute features
+            agent (Agent): Agent object with choose_action method
+            action_set (list): action set for whether to use ego or frenet actions
+            sample_method (str): agent sample method. Choices=["ace", "acm", "bma"]
+        """
+        super().__init__(observer, agent, action_set, sample_method)
+        self.data = data
+
+    def choose_action(self, obs_env):
+        """
+        Args:
+            obs_env (dict): enviroinment observation {"ego", "agents"}
+        
+        Returns:
+            act_env (np.array): actions in the global coordinate [2]
+        """
+        obs = self.observer.observe(obs_env) # torch.tensor
+        with torch.no_grad():
+            act = self.agent.choose_action(
+                obs, self._prev_act, sample_method=self.sample_method, num_samples=1
+            ).view(1, 2)
+            self._prev_act = act.clone()
+        
+        self._obs = obs
+        self._b = self.agent._b
+
+        # convert action to global frame
+        act = self.data["act"][self.t]
+        [ax, ay] = act
+        if self.action_set[0] == "ax_ego":
+            act_env = self.data["act"][self.t]
+        else:
+            act_env = self.frenet_action_to_global(ax, ay, obs_env)
+        self.t += 1
         return act_env
