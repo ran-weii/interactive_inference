@@ -168,8 +168,8 @@ def compute_features(df, map_data, min_seg_len, parallel):
         if np.isnan(x["lead_track_id"]):
             obs = np.nan * np.ones(len(feature_set))
         else:
-            ego_state = x[["x", "y", "vx", "vy", "psi_rad"]].values
-            agent_state = x[["x_agent", "y_agent", "vx_agent", "vy_agent", "psi_rad_agent"]].values.reshape(1, -1)
+            ego_state = x[["x", "y", "vx", "vy", "psi_rad", "length", "width"]].values
+            agent_state = x[["x_agent", "y_agent", "vx_agent", "vy_agent", "psi_rad_agent", "length_agent", "width_agent"]].values.reshape(1, -1)
             state = {"ego": ego_state, "agents": agent_state}
             obs = observer.observe(state).numpy().flatten()
         return pd.Series(obs)
