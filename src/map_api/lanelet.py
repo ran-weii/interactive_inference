@@ -35,6 +35,8 @@ class MapReader:
         # properties
         self._drivable_polygon = None
         self._cells = []
+        self.x_lim = None
+        self.y_lim = None
     
     @property
     def drivable_polygon(self):
@@ -256,6 +258,13 @@ class MapReader:
                     turn_direction, vehicle, pedestrian, bicycle, relation)
         
         self._extract_lanes()
+        
+        # get map limits
+        point_coords = np.array([list(p.point.coords) for i, p in self.points.items()]).reshape(-1, 2)
+        max_coords = point_coords.max(axis=0)
+        min_coords = point_coords.min(axis=0)
+        self.x_lim = [min_coords[0] - 10, max_coords[0] + 10]
+        self.y_lim = [min_coords[1] - 10, max_coords[1] + 10]
         
         if verbose:
             print("found {} points, {} ways, {} lanelets, {} lanes".format(
