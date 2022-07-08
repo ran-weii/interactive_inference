@@ -44,22 +44,22 @@ class AnimationVisualizer:
         x_ego = states[:, 0].reshape(-1, 1)
         y_ego = states[:, 1].reshape(-1, 1)
         psi_ego = states[:, 4].reshape(-1, 1)
-        l_ego = ego[:, 6].reshape(-1, 1)
-        w_ego = ego[:, 7].reshape(-1, 1)
+        l_ego = ego[:, 5].reshape(-1, 1)
+        w_ego = ego[:, 6].reshape(-1, 1)
         id_ego = ego[:, -1].reshape(-1, 1)
 
         x_ego_data = ego[:, 0].reshape(-1, 1)
         y_ego_data = ego[:, 1].reshape(-1, 1)
         psi_ego_data = ego[:, 4].reshape(-1, 1)
-        l_ego_data = ego[:, 6].reshape(-1, 1)
-        w_ego_data = ego[:, 7].reshape(-1, 1)
+        l_ego_data = ego[:, 5].reshape(-1, 1)
+        w_ego_data = ego[:, 6].reshape(-1, 1)
         id_ego_data = ego[:, -1].reshape(-1, 1)
 
         x_agents = agents[:, :, 0]
         y_agents = agents[:, :, 1]
         psi_agents = agents[:, :, 4]
-        l_agents = agents[:, :, 6]
-        w_agents = agents[:, :, 7]
+        l_agents = agents[:, :, 5]
+        w_agents = agents[:, :, 6]
         id_agents = agents[:, :, -1]
 
         self.x = np.concatenate([x_ego, x_ego_data, x_agents], axis=1)
