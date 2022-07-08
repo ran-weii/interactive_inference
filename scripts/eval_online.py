@@ -101,6 +101,7 @@ def main(arglist):
     obs_dim, ctl_dim = len(feature_set), 2 
 
     print(f"feature set: {feature_set}")
+    print(f"action set: {action_set}")
     print(f"test size: {len(dataset)}")
     
     # init dynamics model
