@@ -1,11 +1,11 @@
 import math
 import torch
 import torch.nn as nn
-from src.agents.models import MLP
+from src.distributions.nn_models import Model, MLP
 from src.distributions.legacy.models import ConditionalDistribution, HiddenMarkovModel
 from src.distributions.flows import BatchNormTransform
 
-class AbstractAgent(nn.Module):
+class AbstractAgent(Model):
     def __init__(self, state_dim, act_dim, obs_dim, ctl_dim, horizon):
         super().__init__()
         self.state_dim = state_dim
@@ -13,8 +13,6 @@ class AbstractAgent(nn.Module):
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.horizon = horizon
-
-        self.reset()
     
     def reset(self):
         """ Reset internal states for online inference """
@@ -24,13 +22,11 @@ class AbstractAgent(nn.Module):
         """ Initialize hidden states """
         raise NotImplementedError 
 
-    def forward(self, o, u, h=None, inference=False):
-        """
+    def forward(self, o, u):
+        """ Forward algorithm
         Args:
             o (torch.tensor): 
             u (torch.tensor): 
-            h (torch.tensor):
-            inference (bool, optional): inference mode. Default=False
         """
         raise NotImplementedError
     
