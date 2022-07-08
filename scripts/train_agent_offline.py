@@ -15,6 +15,7 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 # model imports
 from src.distributions.hmm import ContinuousGaussianHMM, EmbeddedContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
+from src.agents.rule_based import IDM
 from src.algo.irl import BehaviorCloning
 
 # training imports
@@ -46,7 +47,7 @@ def parse_args():
     parser.add_argument("--state_embed_dim", type=int, default=30, help="agent hmm state embedding dimension, default=30")
     parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
     parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
-    parser.add_argument("--agent", type=str, choices=["vin"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "idm"], default="vin", help="agent type, default=vin")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
@@ -87,6 +88,12 @@ def main(arglist):
     else:
         action_set = ["ax_ego", "ay_ego"]
     assert set(action_set).issubset(set(ACTION_SET))
+    
+    # compute obs and ctl mean and variance stats
+    obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
+    obs_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].var().values).to(torch.float32)
+    ctl_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].mean().values).to(torch.float32)
+    ctl_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).to(torch.float32)
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
@@ -128,6 +135,12 @@ def main(arglist):
     # init agent
     if arglist.agent == "vin":
         agent = VINAgent(dynamics_model, arglist.horizon)
+        agent.hmm.obs_model.init_batch_norm(obs_mean, obs_var)
+        agent.hmm.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+
+    if arglist.agent == "idm":
+        agent = IDM(std=ctl_var)
+
     
     # init trainer
     if arglist.algo == "bc":
@@ -153,7 +166,7 @@ def main(arglist):
 
         model.load_state_dict(state_dict)
         print(f"loaded checkpoint from {cp_path}")
-
+    
     model, df_history = train(
         model, train_loader, test_loader, arglist.epochs, verbose=1
     )
