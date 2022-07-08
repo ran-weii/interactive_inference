@@ -79,7 +79,8 @@ class AIRL(Model):
         self.fake_buffer = ReplayBuffer(
             agent.state_dim, agent.ctl_dim, agent.obs_dim, buffer_size
         )
-        input_dim = self.agent.state_dim + self.agent.obs_dim + self.agent.ctl_dim
+        # input_dim = self.agent.state_dim + self.agent.obs_dim + self.agent.ctl_dim
+        input_dim = self.agent.obs_dim + self.agent.ctl_dim
         self.discriminator = MLP(
             input_dim=input_dim,
             output_dim=1,
@@ -151,8 +152,10 @@ class AIRL(Model):
         fake_obs = self.normalize(fake_batch["obs"], self.obs_mean, self.obs_var)
         fake_act = self.normalize(fake_batch["act"], self.act_mean, self.act_var)
         
-        real_inputs = torch.cat([real_state, real_obs, real_act], dim=-1)
-        fake_inputs = torch.cat([fake_state, fake_obs, fake_act], dim=-1)
+        # real_inputs = torch.cat([real_state, real_obs, real_act], dim=-1)
+        # fake_inputs = torch.cat([fake_state, fake_obs, fake_act], dim=-1)
+        real_inputs = torch.cat([real_obs, real_act], dim=-1)
+        fake_inputs = torch.cat([fake_obs, fake_act], dim=-1)
         inputs = torch.cat([real_inputs, fake_inputs], dim=0)
 
         real_labels = torch.zeros(self.batch_size, 1)
@@ -177,8 +180,10 @@ class AIRL(Model):
             self.agent.reset()
             next_alpha_a = self.agent.plan(next_state).unsqueeze(0)
             next_act = self.agent.hmm.ctl_ancestral_sample(next_alpha_a, 1).view(self.batch_size, -1)
-        inputs = torch.cat([state, obs, act], dim=-1)
-        next_inputs = torch.cat([next_state, next_obs, next_act], dim=-1)
+        # inputs = torch.cat([state, obs, act], dim=-1)
+        # next_inputs = torch.cat([next_state, next_obs, next_act], dim=-1)
+        inputs = torch.cat([obs, act], dim=-1)
+        next_inputs = torch.cat([next_obs, next_act], dim=-1)
         
         with torch.no_grad():
             # compute reward
@@ -209,7 +214,8 @@ class AIRL(Model):
 
         q = [torch.empty(0)] * self.agent.act_dim
         for i in range(self.agent.act_dim):
-            inputs_i = torch.cat([alpha_b, obs, ctl_sample[:, :, i]], dim=-1)
+            # inputs_i = torch.cat([alpha_b, obs, ctl_sample[:, :, i]], dim=-1)
+            inputs_i = torch.cat([obs, ctl_sample[:, :, i]], dim=-1)
             q1 = self.q1(inputs_i)
             q2 = self.q2(inputs_i)
             q[i] = torch.max(q1, q2)
@@ -223,6 +229,7 @@ class AIRL(Model):
 
     def take_gradient_step(self):
         # train discriminator 
+        loss_d = []
         for i in range(self.d_steps):
             d_loss = self.discriminator_loss()
             d_loss.backward()
@@ -230,10 +237,13 @@ class AIRL(Model):
                 nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.grad_clip)
             self.d_optimizer.step()
             self.d_optimizer.zero_grad()
+            loss_d.append(d_loss.data.item())
             # print("d_loss", d_loss.data.item())
         # exit()
         
         # train critic
+        loss_q = []
+        loss_a = []
         for i in range(self.ac_steps):
             # train critic
             q_loss = self.critic_loss()
@@ -259,6 +269,9 @@ class AIRL(Model):
             self.agent_optimizer.step()
             self.agent_optimizer.zero_grad()
             self.q_optimizer.zero_grad()
+
+            loss_q.append(q_loss.data.item())
+            loss_a.append(a_loss.data.item())
             # print("q_loss", q_loss.data.item(), "a_loss", a_loss.data.item())
 
         # update target networks
@@ -269,10 +282,15 @@ class AIRL(Model):
             ):
                 p_target.data.mul(self.polyak)
                 p_target.data.add_((1 - self.polyak) * p.data)
+        # stats = {
+        #     "loss_d": d_loss.data.item(),
+        #     "loss_q": q_loss.data.item(),
+        #     "loss_a": a_loss.data.item(),
+        # }
         stats = {
-            "loss_d": d_loss.data.item(),
-            "loss_q": q_loss.data.item(),
-            "loss_a": a_loss.data.item(),
+            "loss_d": np.mean(loss_d),
+            "loss_q": np.mean(loss_q),
+            "loss_a": np.mean(loss_a),
         }
         return stats
 
