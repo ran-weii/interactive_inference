@@ -98,6 +98,8 @@ class InteractionSimulator(gym.Env):
         
         state_action = np.hstack([state, action]).reshape(-1, 1)
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
+        next_state[0] = np.clip(next_state[0], self.map_data.x_lim[0], self.map_data.x_lim[1])
+        next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
         next_psi = self.compute_psi_kappa(next_state, psi)
         
         self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
