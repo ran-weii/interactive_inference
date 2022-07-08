@@ -7,17 +7,16 @@ from src.distributions.utils import rectify
 class IDM(AbstractAgent):
     """ Intelligent driver model """
     def __init__(
-        self, v0=80., T=1.7, s0=2., a=0.3, b=2., delta=4., 
-        k1=-0.01, k2=-0.2, std=torch.ones(1, 2).to(torch.float32)
+        self, v0=80., tau=0.1, s0=0.01, a=0.1, b=2., 
+        k1=-0.01, k2=-0.2, std=torch.tensor([0.6, 0.003]).to(torch.float32)
         ):
         """
         Args:
             v0 (float): desired speed in km/h. Default=80
-            T (float): time headway in s. Default=1.7
+            tau (float): time headway in s. Default=1.7
             s0 (float): minimum gap in m. Default=2
             a (float): acceleration in m/s/s. Default=0.3
             b (float): deceleration in m/s/s. Default=2.
-            delta (float): desired acceleration factor. Default=4.
             k1 (float): lateral distance gain. Default=-0.01
             k2 (float): lateral velocity gain. Default=-0.2
             std (torch.tensor): control std. size=[1, 2]
@@ -25,11 +24,10 @@ class IDM(AbstractAgent):
         super().__init__(None, None, None, None, None)
         self.eps = 1e-6
         self.v0 = nn.Parameter(torch.tensor([v0]).log())
-        self.T = nn.Parameter(torch.tensor([T]).log())
+        self.tau = nn.Parameter(torch.tensor([tau]).log())
         self.s0 = nn.Parameter(torch.tensor([s0]).log())
         self.a = nn.Parameter(torch.tensor([a]).log())
         self.b = nn.Parameter(torch.tensor([b]).log())
-        self.delta = nn.Parameter(torch.tensor([delta]).log())
         self.k1 = nn.Parameter(torch.tensor([k1]))
         self.k2 = nn.Parameter(torch.tensor([k2]))
         self.lv = nn.Parameter(0.5 * torch.log(std + self.eps))
@@ -50,16 +48,16 @@ class IDM(AbstractAgent):
         
         # get constants
         v0 = rectify(self.v0)
-        T = rectify(self.T)
-        s0 = rectify(self.s0)
-        a = rectify(self.a)
+        tau = rectify(self.tau) + 1.5
+        s0 = rectify(self.s0) + 2.
+        a = rectify(self.a) + 0.3
         b = rectify(self.b)
-        delta = rectify(self.delta)
         
         # compute longitudinal acc
-        delta_s = ds * T + 0.5 * ds * ds_rel / torch.sqrt(a * b + self.eps)
-        s_star = s0 + torch.max(torch.zeros_like(d), delta_s)
-        dds = self.a * (torch.ones_like(d) - (ds / (v0 + self.eps))**delta - (s_star / (s_rel + self.eps))**2)
+        delta_s = ds * tau + 0.5 * ds * ds_rel / torch.sqrt(a * b + self.eps)
+        s_star = s0 + torch.max(torch.zeros_like(d), delta_s) # desired gap distance
+        v_delta = torch.exp(torch.log(torch.abs(ds) + self.eps) - torch.log(v0)) ** 4
+        dds = a * (torch.ones_like(d) - v_delta - (s_star / (s_rel + self.eps))**2)
         
         # compute lateral acc using a feedback controller
         ddd = self.k1 * d + self.k2 * dd
@@ -98,6 +96,7 @@ class IDM(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
         """
         mu, lv = self.compute_action_dist(o, u)
+        mu = mu.clip(-8., 8.)
         a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
         return a
 
