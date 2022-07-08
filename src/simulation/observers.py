@@ -64,6 +64,22 @@ AUGMENTATION_PARAMETERS = {
     "loom_d": {"flip_lr": 0}
 }
 
+def calc_looming(s_rel, ds_rel, l, w, l0):
+    """ Calculate longitudinal looming 
+    
+    Args:
+        s_rel (float): relative distance
+        ds_rel (float): relative velocity
+        l (float): lead vehicle length
+        w (float): lead vehicle width
+        l0 (float): ego vehicle length
+    """
+    x = s_rel - l/2 - l0/2
+    theta = 2 * np.arctan(0.5 * w / x)
+    theta_dot = w * ds_rel / (x**2 + w**2/4)
+    loom = theta_dot/theta
+    return loom
+
 class Observer:
     """ Observer object that computes features in the frenet frame """
     default_ego_features = ["ds", "dd", "d", "psi_error_r", "kappa_r"]
@@ -116,7 +132,7 @@ class Observer:
     
     def compute_ego_features(self, obs_env):
         ego_state = obs_env["ego"]
-        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, kappa_ego] = ego_state
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego] = ego_state
         
         # match current lane
         if self._ref_path is None:
@@ -157,8 +173,8 @@ class Observer:
         ego_state = obs_env["ego"]
         agent_state = obs_env["agents"]
         
-        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, kappa_ego] = ego_state
-        [x_agent, y_agent, vx_agent, vy_agent, psi_agent] = agent_state[0]
+        [x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego] = ego_state
+        [x_agent, y_agent, vx_agent, vy_agent, psi_agent, l_agent, w_agent] = agent_state[0]
         
         # convert to frenet coordinate
         s_condition_ego = self._s_condition_ego
@@ -174,7 +190,7 @@ class Observer:
         psi_rel = wrap_angles(psi_ego - psi_agent)
         
         # compute looming
-        loom_s = np.clip(ds_rel / (s_rel + self.eps), -10, 10)
+        loom_s = np.clip(calc_looming(s_rel, ds_rel, l_agent, w_agent, l_ego), -10, 10)
         loom_d = np.clip(dd_rel / (d_rel + self.eps), -10, 10)
         obs_dict = {
             "s_rel": s_rel, "d_rel": d_rel, "psi_rel": psi_rel, 
