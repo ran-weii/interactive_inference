@@ -91,11 +91,14 @@ def test_simulator_with_observer():
     env = InteractionSimulator(ego_dataset, map_data)
     
     # frenet actions
-    act = np.array([0, 0])
+    act = np.array([0, 1])
 
     class Agent:
         def __init__(self):
             self._b = None
+        
+        def reset(self):
+            pass 
 
         def eval(self):
             pass 
@@ -106,6 +109,7 @@ def test_simulator_with_observer():
     agent = Agent()
     observer = Observer(map_data)
     controller = AgentWrapper(observer, agent, ["dds", "ddd"], "ace")
+    controller.reset()
 
     obs_env = env.reset(1)
     for t in range(env.T):
@@ -191,6 +195,6 @@ def test_data_wrapper():
 
 if __name__ == "__main__":
     # test_simulator_from_data()
-    # test_simulator_with_observer()
+    test_simulator_with_observer()
     # test_observer()
-    test_data_wrapper()
+    # test_data_wrapper()
