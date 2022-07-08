@@ -196,6 +196,35 @@ def main(arglist):
         arglist.num_eps, arglist.epochs, arglist.max_eps_len
     )
 
+    # save results
+    if arglist.save:
+        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+        exp_path = os.path.join(arglist.exp_path, "agents")
+        agent_path = os.path.join(exp_path, arglist.agent)
+        save_path = os.path.join(agent_path, date_time)
+        if not os.path.exists(exp_path):
+            os.mkdir(exp_path)
+        if not os.path.exists(agent_path):
+            os.mkdir(agent_path)
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        
+        # save args
+        with open(os.path.join(save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+        
+        # save model
+        torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
+        
+        # save history
+        df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
+        
+        # save history plot
+        fig_history, _ = plot_history(df_history, model.loss_keys)
+        fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
+        
+        print(f"\nmodel saved at: {save_path}")
+
 if __name__ == "__main__":
     arglist = parse_args()
     main(arglist)
