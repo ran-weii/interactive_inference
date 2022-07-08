@@ -88,7 +88,7 @@ class EgoDataset(Dataset):
         """ TODO: remove lbd and rbd from ego fields and animation visualizer """
         self.meta_fields = ["track_id", "eps_id"]
         self.ego_fields = [
-            "x", "y", "vx", "vy", "psi_rad", "kappa", "length", "width", "track_id"
+            "x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id"
         ]
         self.agent_id_fields = [
             "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",

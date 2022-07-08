@@ -5,13 +5,14 @@ from src.simulation.dynamics import ConstantAcceleration
 """
 TODO: 
 be more specific with property naming so we can easily identify data for animation
+vectorize environment
 """
 class InteractionSimulator(gym.Env):
     """ Simulator with 
     
     observations
-        ego: [x, y, vx, vy, psi, kappa] 
-        agents: [x, y, vx, vy, psi]
+        ego: [x, y, vx, vy, psi, l, w] 
+        agents: [x, y, vx, vy, psi, l, w]
     
     actions:
         [ax, ay]
@@ -44,13 +45,13 @@ class InteractionSimulator(gym.Env):
         self._track_data = self.dataset[eps_id]
         self.t = 0
         self.T = len(self._track_data["act"])
-        self._sim_states = np.zeros((self.T, 6))
+        self._sim_states = np.zeros((self.T, 7))
         self._sim_acts = np.zeros((self.T, 2))
         
-        self._sim_states[0] = self._track_data["ego"][0][:6]
+        self._sim_states[0] = self._track_data["ego"][0][:7]
         obs_dict = {
             "ego": self._sim_states[0],
-            "agents": self._track_data["agents"][0][:, :5]
+            "agents": self._track_data["agents"][0][:, :7]
         }
         return obs_dict
     
@@ -78,31 +79,34 @@ class InteractionSimulator(gym.Env):
             psi = last_psi
         
         # computer curvature
-        psi_history = np.hstack([self._sim_states[:self.t+1, 4], np.array([psi])])
-        x_history = np.hstack([self._sim_states[:self.t+1, 0], np.array([state[0]])])
-        y_history = np.hstack([self._sim_states[:self.t+1, 1], np.array([state[1]])])
+        # psi_history = np.hstack([self._sim_states[:self.t+1, 4], np.array([psi])])
+        # x_history = np.hstack([self._sim_states[:self.t+1, 0], np.array([state[0]])])
+        # y_history = np.hstack([self._sim_states[:self.t+1, 1], np.array([state[1]])])
 
-        d_psi = np.gradient(psi_history)
-        d_x = np.gradient(x_history)
-        d_y = np.gradient(y_history)
-        d_s = np.sqrt(d_x**2 + d_y**2)
-        kappa = d_psi[-1] / d_s[-1]
-        return psi, kappa
+        # d_psi = np.gradient(psi_history)
+        # d_x = np.gradient(x_history)
+        # d_y = np.gradient(y_history)
+        # d_s = np.sqrt(d_x**2 + d_y**2)
+        # kappa = d_psi[-1] / d_s[-1]
+        return psi
 
     def step(self, action):
         state = self._sim_states[self.t][:4]
         psi = self._sim_states[self.t][4]
+        l = self._sim_states[self.t][5]
+        w = self._sim_states[self.t][6]
+        
         state_action = np.hstack([state, action]).reshape(-1, 1)
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
-        next_psi, next_kappa = self.compute_psi_kappa(next_state, psi)
+        next_psi = self.compute_psi_kappa(next_state, psi)
         
-        self._sim_states[self.t+1] = np.hstack([next_state, next_psi, next_kappa])
+        self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
         self._sim_acts[self.t] = action
 
         self.t += 1
         obs_dict = {
             "ego": self._sim_states[self.t],
-            "agents": self._track_data["agents"][self.t][:, :5]
+            "agents": self._track_data["agents"][self.t][:, :7]
         }
         reward = None
         done = True if self.t == self.T - 1 else False
