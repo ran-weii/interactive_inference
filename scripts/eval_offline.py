@@ -15,12 +15,12 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 # model imports
 from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
+from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning
 
 # eval imports
-from src.evaluation.offline import (
-    eval_actions_episode, eval_dynamics_episode, sample_action_components)
-from src.visualization.utils import set_plotting_style, plot_time_series, plot_scatter
+from src.evaluation.offline import eval_actions_episode
+from src.visualization.utils import set_plotting_style, plot_time_series
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "mlp"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--max_eps_len", type=int, default=200, 
@@ -100,7 +100,12 @@ def main(arglist):
     # init agent
     if arglist.agent == "vin":
         agent = VINAgent(dynamics_model, config["horizon"])
-
+    elif arglist.agent == "mlp":
+        agent = MLPAgent(
+            obs_dim, ctl_dim, config["hidden_dim"], config["num_hidden"],
+            use_tanh=True, ctl_limits=torch.tensor([5.5124, 0.0833])
+        )
+    
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
@@ -129,9 +134,6 @@ def main(arglist):
         )
 
         figs_u.append(fig_u)
-
-    u_sample_components = sample_action_components(agent.hmm.ctl_model, num_samples=50)
-    fig_cmp, ax = plot_scatter(u_sample_components, action_set[0], action_set[1])
     
     # save results
     if arglist.save:
@@ -141,8 +143,6 @@ def main(arglist):
         
         for i, f in enumerate(figs_u):
             f.savefig(os.path.join(save_path, f"test_scene_{i}_action.png"), dpi=100)
-        
-        fig_cmp.savefig(os.path.join(save_path, f"action_components.png"), dpi=100)
 
         print("\nonline evaluation results saved at {}".format(save_path))
 
