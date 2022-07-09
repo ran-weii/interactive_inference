@@ -47,7 +47,6 @@ def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
         u_sample (torch.tensor): sampled action sequence. size=[num_samples, T, ctl_dim]
     """
     agent.eval()
-    agent.reset()
     
     with torch.no_grad():
         u_sample = agent.choose_action_batch(
