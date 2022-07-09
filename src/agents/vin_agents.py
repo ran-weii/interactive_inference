@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.agents.baseline import AbstractAgent
+from src.agents.core import AbstractAgent
 from src.agents.planners import value_iteration
 from src.distributions.utils import kl_divergence, poisson_pdf, rectify
 
@@ -87,14 +87,14 @@ class EFEPlanner(nn.Module):
 class VINAgent(AbstractAgent):
     """ Value iteraction network agent with ContinuousGaussianHMM dynamics model"""
     def __init__(self, dynamics_model, horizon, rwd_model="efe"):
-        state_dim = dynamics_model.state_dim
-        act_dim = dynamics_model.act_dim
-        obs_dim = dynamics_model.obs_dim
-        ctl_dim = dynamics_model.ctl_dim
-        super().__init__(state_dim, act_dim, obs_dim, ctl_dim, horizon)
+        super().__init__()
+        self.state_dim = dynamics_model.state_dim
+        self.act_dim = dynamics_model.act_dim
+        self.obs_dim = dynamics_model.obs_dim
+        self.ctl_dim = dynamics_model.ctl_dim
         
         self.hmm = dynamics_model
-        self.planner = EFEPlanner(state_dim, horizon)
+        self.planner = EFEPlanner(self.state_dim, horizon)
     
     def load_dynamics_model(self, state_dict, requires_grad):
         """ Load pretrained dynamics model 
