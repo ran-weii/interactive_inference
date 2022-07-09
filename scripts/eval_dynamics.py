@@ -18,8 +18,8 @@ from src.agents.vin_agents import VINAgent
 from src.algo.irl import BehaviorCloning
 
 # eval imports
-from src.evaluation.offline import eval_dynamics_episode
-from src.visualization.utils import set_plotting_style, plot_time_series
+from src.evaluation.offline import eval_dynamics_episode, sample_action_components
+from src.visualization.utils import set_plotting_style, plot_time_series, plot_scatter
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -140,6 +140,10 @@ def main(arglist):
         
         figs_o.append(fig_o)
     
+    # plot action components
+    u_sample_components = sample_action_components(agent.hmm.ctl_model, num_samples=50)
+    fig_cmp, ax = plot_scatter(u_sample_components, action_set[0], action_set[1])
+
     """ TODO: plot marginal samples """
     
     # save results
@@ -150,6 +154,8 @@ def main(arglist):
         
         for i, f in enumerate(figs_o):
             f.savefig(os.path.join(save_path, f"test_scene_{i}_dynamics.png"), dpi=100)
+        
+        fig_cmp.savefig(os.path.join(save_path, f"action_components.png"), dpi=100)
         
         print("\nonline evaluation results saved at {}".format(save_path))
     
