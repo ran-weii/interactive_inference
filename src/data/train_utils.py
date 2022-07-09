@@ -6,13 +6,14 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, random_split
 
-def load_data(data_path, scenario, filename):
+def load_data(data_path, scenario, filename, train=True):
     """ Load processed data 
     
     Args:
         data_path (str): root data path. e.g. ../interaction-dataset-master
         scenario (str): scenario name. e.g. DR_CHN_Merging_ZS
         filename (str): track file name. e.g. vehicle_tracks_007.csv
+        train (bool, optional): whether in training mode. If False flip is_train labels. Default=True
     
     Returns:
         df_track (pd.dataframe): concatenated processed track data
@@ -34,7 +35,10 @@ def load_data(data_path, scenario, filename):
     ).drop(columns=["track_id", "frame_id"])
     df_track = pd.concat([df_track, df_kf, df_neighbors, df_features, df_labels], axis=1)
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
-
+    
+    if not train:
+        df_track["is_train"] = 1 - df_track["is_train"]
+        
     # add scenario and record id
     record_id = re.compile(r"\d\d\d").search(filename).group()
     df_track.insert(0, "scenario", scenario)
