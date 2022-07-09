@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.distributions as torch_dist
-from src.agents.baseline import AbstractAgent
+from src.agents.core import AbstractAgent
 from src.distributions.utils import rectify
 
 class IDM(AbstractAgent):
