@@ -28,6 +28,9 @@ class MLPAgent(AbstractAgent):
         
         if self.use_tanh:
             self.tanh_transform = TanhTransform(ctl_limits)
+    
+    def reset(self):
+        self._b = None 
 
     def forward(self, o, u):
         dist_params = self.mlp(o)
@@ -41,12 +44,12 @@ class MLPAgent(AbstractAgent):
         return distribution
 
     def choose_action(self, o, u, sample_method="", num_samples=1):
-        mu, lv = self.forward(o)
+        mu, lv = self.forward(o, u)
         ctl = self.get_action_dist(mu, lv).rsample((num_samples,))
         return ctl
 
     def choose_action_batch(self, o, u, sample_method="", num_samples=1):
-        mu, lv = self.forward(o)
+        mu, lv = self.forward(o, u)
         ctl = self.get_action_dist(mu, lv).rsample((num_samples,))
         return ctl
     
