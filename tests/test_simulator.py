@@ -196,9 +196,9 @@ def test_data_wrapper():
 def test_idm_agent():
     from src.agents.rule_based import IDM
 
-    df_track = load_data(data_path, scenario, filename)
+    df_track = load_data(data_path, scenario, filename, train=True)
 
-    ego_dataset = EgoDataset(df_track)
+    ego_dataset = EgoDataset(df_track, train_labels_col="is_train", max_eps=10, create_svt=False)
     
     env = InteractionSimulator(ego_dataset, map_data)
 
@@ -206,7 +206,6 @@ def test_idm_agent():
     relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
     action_set = ["dds", "ddd"]
     ctl_std = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).view(1, 2).to(torch.float32)
-    # ctl_std = torch.
     
     agent = IDM(std=ctl_std)
     observer = Observer(map_data, ego_features=ego_features, relative_features=relative_features)
