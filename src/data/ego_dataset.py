@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
@@ -64,28 +66,97 @@ def aug_flip_lr(obs, act, feature_set):
         act_aug[:, 1] *= -1
     return obs_aug, act_aug
 
-""" NOTE: 
-simulation should not be done with fixed neighbors, 
-it should be similar to the realtime neighbor graph in sisl interaction simulator,
-ignore this fact for now 
-"""
-class EgoDataset(Dataset):
-    """ Dataset for raw state outputs """
-    def __init__(
-        self, df_track, train_labels_col=None, max_dist=50., max_agents=8
-        ):
+def create_svt(df_track, unique_eps_id, agent_id_fields, state_fields, act_fields, meta_fields, verbose=True):
+    """ Create stacked vehicle trajectories 
+    
+    Args:
+        df_track (pd.dataframe): track dataframe with field eps_id and agent_id_fields
+        unique_eps_id (list): unique episode id that will be processed
+        agent_id_fields (list): list of agent id fields in df
+        state_fields (list): list of state fields in df
+        meta_fields (list): list of meta fields in df
+        verbose (bool, optional): whether to verbose during processing. Default=True
+    
+    Returns:
+        svt (list): list of stacked vehicle trajectries. Each svt is a dict with keys:
+            ["ego", "agent", "meta"]. ego_size=[T, state_dim], agent_size=[T, num_agent, state_dim],
+            meta_size=[meta_dim]
+    """
+    def concat_agent_df(df_ego, df_track, agent_id):
+        df_agent = df_track.copy()
+        df_agent.columns = [c + "_agent" for c in df_agent.columns]
+        df_joint = df_ego.merge(
+            df_agent,
+            left_on=["scenario", "record_id", "frame_id", agent_id],
+            right_on=["scenario_agent", "record_id_agent", "frame_id_agent", "track_id_agent"],
+            how="left"
+        )
+        df_agent = df_joint[[f + "_agent" for f in state_fields]]
+        return df_agent
+    
+    svt = []
+    pbar = tqdm(unique_eps_id) if verbose else unique_eps_id
+    for i, eps_id in enumerate(pbar):
+        if verbose:
+            pbar.set_description(f"create svt for eps: {eps_id}")
+
+        df_eps = df_track.loc[df_track["eps_id"] == eps_id].reset_index(drop=True)
+        ego_states = df_eps[state_fields].values
+        ego_acts = df_eps[act_fields].values
+        
+        T = len(df_eps)
+        agent_states = np.nan * np.ones((T, len(agent_id_fields), len(state_fields)))
+        for j, agent_id in enumerate(agent_id_fields):
+            df_agent = concat_agent_df(df_eps, df_track, agent_id)
+            agent_states[:, j] = df_agent.values
+        
+        meta_states = df_eps[meta_fields].values[0]
+        svt.append({
+            "meta": meta_states,
+            "ego": ego_states,
+            "agents": agent_states,
+            "act": ego_acts
+        })
+    return svt 
+
+
+class BaseDataset(Dataset):
+    def __init__(self, df_track, train_labels_col=None):
         super().__init__()
         eps_id = df_track["eps_id"].values.copy()
         if train_labels_col is not None:
             eps_id[df_track[train_labels_col] == 0] = np.nan
-        
         unique_eps = np.unique(eps_id)
         self.unique_eps = unique_eps[np.isnan(unique_eps) == False]
         self.df_track = df_track.copy()
-        self.max_dist = max_dist
-        self.max_agents = max_agents
+    
+    def __len__(self):
+        return len(self.unique_eps)
+
+    def __getitem__(self, idx):
+        raise NotImplementedError
+
+
+class EgoDataset(BaseDataset):
+    """ Dataset for raw ego and agent state outputs 
+        Used to feed the simulator, assume other agents do not change trajectories
+    """
+    def __init__(self, df_track, train_labels_col=None, max_eps=500, create_svt=False):
+        """
+        Args:
+            df_track (pd.dataframe): track dataframe
+            train_labels_col (str): columns name of train labels. Used to reduce unique episode ids
+            max_eps (int, optional): maximum number of episodes to store. Default=500
+            create_svt (bool, optional): whether to create svt in init. Default=False
+        """
+        super().__init__(df_track, train_labels_col)
+        self.create_svt = create_svt
+        if len(self.unique_eps) > max_eps:
+            sample_id = np.random.choice(
+                np.arange(len(self.unique_eps)), max_eps, replace=False
+            )
+            self.unique_eps = self.unique_eps[sample_id]
         
-        """ TODO: remove lbd and rbd from ego fields and animation visualizer """
         self.meta_fields = ["track_id", "eps_id"]
         self.ego_fields = [
             "x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id"
@@ -96,52 +167,30 @@ class EgoDataset(Dataset):
             "left_follow_track_id", "right_follow_track_id"
         ]
         self.act_fields = ["ax", "ay"]
+        
+        if create_svt:
+            self.svt = create_svt(
+                self.df_track, self.unique_eps, self.agent_id_fields, 
+                self.ego_fields, self.act_fields, self.meta_fields
+            )        
             
     def __len__(self):
         return len(self.unique_eps)
     
     def __getitem__(self, idx):
-        df_ego = self.df_track.loc[
-            self.df_track["eps_id"] == self.unique_eps[idx]
-        ].reset_index(drop=True)
-        
-        obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy()
-        obs_ego = df_ego[self.ego_fields].to_numpy()
-        obs_agents = self.get_agent_obs(df_ego)
-        act_ego = df_ego[self.act_fields].to_numpy()
-        
-        out_dict = {
-            "meta": obs_meta,
-            "ego": obs_ego,
-            "agents": obs_agents,
-            "act": act_ego
-        }
+        if self.create_svt:
+            out_dict = self.svt[idx]
+        else:
+            unique_eps = [self.unique_eps[idx]]
+            svt = create_svt(
+                self.df_track, unique_eps, self.agent_id_fields, 
+                self.ego_fields, self.act_fields, self.meta_fields, verbose=False
+            )
+            out_dict = svt[0]
         return out_dict
-    
-    def get_agent_obs(self, df_ego):
-        scenario = df_ego["scenario"].iloc[0]
-        record_id = df_ego["record_id"].iloc[0]
-        ego_id = df_ego["track_id"].iloc[0]
-        T = len(df_ego)
-        
-        df_scenario = self.df_track.loc[self.df_track["scenario"] == scenario]
-        df_record = df_scenario.loc[df_scenario["record_id"] == record_id]
-        df_record = df_record.loc[df_record["track_id"] != ego_id]
-        
-        obs_agents = -np.nan * np.ones((T, self.max_agents, len(self.ego_fields)))
-        for t in range(T):
-            frame_id = df_ego["frame_id"].iloc[t]
-            df_frame = df_record.loc[df_record["frame_id"] == frame_id]
-            
-            agent_ids = df_ego.iloc[t][self.agent_id_fields].values
-            for i, agent_id in enumerate(agent_ids):
-                if not np.isnan(agent_id) and (i + 1) <= self.max_agents:
-                    df_agent = df_frame.loc[df_frame["track_id"] == agent_id]
-                    obs_agents[t, i] = df_agent[self.ego_fields].to_numpy().flatten()
-        return obs_agents
 
     
-class RelativeDataset(EgoDataset):
+class RelativeDataset(BaseDataset):
     def __init__(self, df_track, feature_set, action_set, train_labels_col=None, 
         min_eps_len=50, max_eps_len=1000, augmentation=[]):
         super().__init__(df_track, train_labels_col)
