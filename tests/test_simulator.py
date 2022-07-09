@@ -91,7 +91,7 @@ def test_simulator_with_observer():
     env = InteractionSimulator(ego_dataset, map_data)
     
     # frenet actions
-    act = np.array([0, 1])
+    act = np.array([0, 0])
 
     class Agent:
         def __init__(self):
@@ -193,8 +193,44 @@ def test_data_wrapper():
 
     print("test_data_wrapper passed")
 
+def test_idm_agent():
+    from src.agents.rule_based import IDM
+
+    df_track = load_data(data_path, scenario, filename)
+
+    ego_dataset = EgoDataset(df_track)
+    
+    env = InteractionSimulator(ego_dataset, map_data)
+
+    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
+    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
+    action_set = ["dds", "ddd"]
+    ctl_std = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).view(1, 2).to(torch.float32)
+    # ctl_std = torch.
+    
+    agent = IDM(std=ctl_std)
+    observer = Observer(map_data, ego_features=ego_features, relative_features=relative_features)
+    controller = AgentWrapper(observer, agent, ["dds", "ddd"], "ace")
+    controller.reset()
+
+    obs_env = env.reset(2)
+    for t in range(env.T):
+        # get true agent control
+        # ctl_env = env.get_action()
+        ctl_env = controller.choose_action(obs_env)
+        
+        obs_env, r, done, info = env.step(ctl_env)
+        
+        if done:
+            break
+    
+    ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=False)
+    save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
+    print("test_idm_agent passed")
+
 if __name__ == "__main__":
     # test_simulator_from_data()
-    test_simulator_with_observer()
+    # test_simulator_with_observer()
     # test_observer()
     # test_data_wrapper()
+    test_idm_agent()
