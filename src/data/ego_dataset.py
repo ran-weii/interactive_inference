@@ -121,13 +121,21 @@ def create_svt_from_df(df_track, unique_eps_id, agent_id_fields, state_fields, a
 
 
 class BaseDataset(Dataset):
-    def __init__(self, df_track, train_labels_col=None):
+    def __init__(self, df_track, train_labels_col=None, max_eps=500, seed=0):
         super().__init__()
+        np.random.seed(seed)
         eps_id = df_track["eps_id"].values.copy()
         if train_labels_col is not None:
             eps_id[df_track[train_labels_col] == 0] = np.nan
         unique_eps = np.unique(eps_id)
         self.unique_eps = unique_eps[np.isnan(unique_eps) == False]
+        
+        if len(self.unique_eps) > max_eps:
+            sample_id = np.random.choice(
+                np.arange(len(self.unique_eps)), max_eps, replace=False
+            )
+            self.unique_eps = self.unique_eps[sample_id]
+
         self.df_track = df_track.copy()
     
     def __len__(self):
@@ -141,7 +149,7 @@ class EgoDataset(BaseDataset):
     """ Dataset for raw ego and agent state outputs 
         Used to feed the simulator, assume other agents do not change trajectories
     """
-    def __init__(self, df_track, train_labels_col=None, max_eps=500, create_svt=False):
+    def __init__(self, df_track, train_labels_col=None, max_eps=500, create_svt=False, seed=0):
         """
         Args:
             df_track (pd.dataframe): track dataframe
@@ -149,13 +157,8 @@ class EgoDataset(BaseDataset):
             max_eps (int, optional): maximum number of episodes to store. Default=500
             create_svt (bool, optional): whether to create svt in init. Default=False
         """
-        super().__init__(df_track, train_labels_col)
+        super().__init__(df_track, train_labels_col, max_eps, seed)
         self.create_svt = create_svt
-        if len(self.unique_eps) > max_eps:
-            sample_id = np.random.choice(
-                np.arange(len(self.unique_eps)), max_eps, replace=False
-            )
-            self.unique_eps = self.unique_eps[sample_id]
         
         self.meta_fields = ["track_id", "eps_id"]
         self.ego_fields = [
@@ -192,12 +195,13 @@ class EgoDataset(BaseDataset):
     
 class RelativeDataset(BaseDataset):
     def __init__(self, df_track, feature_set, action_set, train_labels_col=None, 
-        min_eps_len=50, max_eps_len=1000, augmentation=[]):
-        super().__init__(df_track, train_labels_col)
+        max_eps=500, max_eps_len=1000, augmentation=[], seed=0):
+        super().__init__(df_track, train_labels_col, max_eps, seed)
         assert set(feature_set).issubset(set(df_track.columns))
         self.max_eps_len = max_eps_len
         self.ego_fields = feature_set
         self.act_fields = action_set
+        self.meta_fields = ["track_id", "eps_id"]
         self.augmentation = augmentation
         
     def __getitem__(self, idx):
