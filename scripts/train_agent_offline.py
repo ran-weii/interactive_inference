@@ -16,6 +16,7 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 from src.distributions.hmm import ContinuousGaussianHMM, EmbeddedContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.agents.rule_based import IDM
+from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning
 
 # training imports
@@ -47,10 +48,13 @@ def parse_args():
     parser.add_argument("--state_embed_dim", type=int, default=30, help="agent hmm state embedding dimension, default=30")
     parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
     parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
-    parser.add_argument("--agent", type=str, choices=["vin", "idm"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
+    # nn args
+    parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
+    parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
     # training args
     parser.add_argument("--algo", type=str, choices=["bc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
@@ -94,6 +98,10 @@ def main(arglist):
     obs_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].var().values).to(torch.float32)
     ctl_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].mean().values).to(torch.float32)
     ctl_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).to(torch.float32)
+    
+    ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
+    ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
+    ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.5
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
@@ -141,6 +149,11 @@ def main(arglist):
     if arglist.agent == "idm":
         agent = IDM(std=ctl_var)
 
+    if arglist.agent == "mlp":
+        agent = MLPAgent(
+            obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
+            use_tanh=True, ctl_limits=ctl_lim
+        )
     
     # init trainer
     if arglist.algo == "bc":
