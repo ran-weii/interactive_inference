@@ -1,5 +1,7 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import constraints
 from torch.distributions.transformed_distribution import TransformedDistribution
 from pyro.distributions.torch_transform import TransformModule
@@ -39,7 +41,30 @@ class SimpleTransformedModule(TransformedDistribution):
             else:
                 raise NotImplementedError
         return entropy
-        
+
+
+class TanhTransform(TransformModule):
+    """ Adapted from Pytorch implementation """
+    domain = constraints.real
+    codomain = constraints.real
+    bijective = True
+    event_dim = 0
+    def __init__(self, limits):
+        super().__init__()
+        self.limits = limits
+
+    def __call__(self, x):
+        return self.limits * torch.tanh(x)
+    
+    def _inverse(self, y):
+        y = y / self.limits
+        return torch.atanh(y)
+
+    def log_abs_det_jacobian(self, x, y):
+        ldj = (2. * (math.log(2.) - x - F.softplus(-2. * x)))#.sum(-1, keepdim=True)
+        return ldj
+
+
 """ TODO
 test batch norm on multidimension input, verify log_prob accuracy
 add torch transformation class with affine mean, variance, and entropy transforms
