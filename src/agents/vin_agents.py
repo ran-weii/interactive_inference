@@ -167,6 +167,7 @@ class VINAgent(AbstractAgent):
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
         """
+        self.reset()
         batch_size = o.shape[1]
         T = o.shape[0]
         
