@@ -20,6 +20,7 @@ from src.evaluation.online import eval_episode
 # model imports
 from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
+from src.agents.rule_based import IDM
 from src.algo.irl import BehaviorCloning
 
 # plotting imports
@@ -45,7 +46,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "idm"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--min_eps_len", type=int, default=100,
@@ -114,6 +115,8 @@ def main(arglist):
     # init agent
     if arglist.agent == "vin":
         agent = VINAgent(dynamics_model, config["horizon"])
+    if arglist.agent == "idm":
+        agent = IDM()
 
     # init model
     if config["algo"] == "bc":
