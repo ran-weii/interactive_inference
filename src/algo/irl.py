@@ -44,8 +44,7 @@ class BehaviorCloning(Model):
             o = o.to(self.device)
             u = u.to(self.device)
             mask = mask.to(self.device)
-
-            self.agent.reset() # reset agent state
+            
             out = self.agent(o, u)
             loss_u, stats_u = self.agent.act_loss(o, u, mask, out)
             loss_o, stats_o = self.agent.obs_loss(o, u, mask, out)
