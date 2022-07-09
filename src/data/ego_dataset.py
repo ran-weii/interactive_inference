@@ -66,8 +66,8 @@ def aug_flip_lr(obs, act, feature_set):
         act_aug[:, 1] *= -1
     return obs_aug, act_aug
 
-def create_svt(df_track, unique_eps_id, agent_id_fields, state_fields, act_fields, meta_fields, verbose=True):
-    """ Create stacked vehicle trajectories 
+def create_svt_from_df(df_track, unique_eps_id, agent_id_fields, state_fields, act_fields, meta_fields, verbose=True):
+    """ Create stacked vehicle trajectories from track dataframe
     
     Args:
         df_track (pd.dataframe): track dataframe with field eps_id and agent_id_fields
@@ -169,7 +169,7 @@ class EgoDataset(BaseDataset):
         self.act_fields = ["ax", "ay"]
         
         if create_svt:
-            self.svt = create_svt(
+            self.svt = create_svt_from_df(
                 self.df_track, self.unique_eps, self.agent_id_fields, 
                 self.ego_fields, self.act_fields, self.meta_fields
             )        
@@ -182,7 +182,7 @@ class EgoDataset(BaseDataset):
             out_dict = self.svt[idx]
         else:
             unique_eps = [self.unique_eps[idx]]
-            svt = create_svt(
+            svt = create_svt_from_df(
                 self.df_track, unique_eps, self.agent_id_fields, 
                 self.ego_fields, self.act_fields, self.meta_fields, verbose=False
             )
