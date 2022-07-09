@@ -50,8 +50,8 @@ class TanhTransform(TransformModule):
     bijective = True
     event_dim = 0
     def __init__(self, limits):
-        super().__init__()
-        self.limits = limits
+        super().__init__() 
+        self.limits = nn.Parameter(limits, requires_grad=False)
 
     def __call__(self, x):
         return self.limits * torch.tanh(x)
