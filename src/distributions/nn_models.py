@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from src.distributions.flows import BatchNormTransform
 
 class Model(nn.Module):
     """ Constructor for nn models with device property """
@@ -37,7 +38,7 @@ class MLP(Model):
         self.layers = nn.ModuleList(layers)
 
         if batch_norm:
-            self.bn = nn.BatchNorm1d(input_dim, affine=False)
+            self.bn = BatchNormTransform(input_dim, affine=False)
 
     def __repr__(self):
         s = "{}(input_dim={}, output_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
