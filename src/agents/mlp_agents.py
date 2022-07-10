@@ -23,7 +23,8 @@ class MLPAgent(AbstractAgent):
             output_dim=ctl_dim * 2,
             hidden_dim=hidden_dim,
             num_hidden=num_hidden,
-            activation=activation
+            activation=activation,
+            batch_norm=True
         )
         
         if self.use_tanh:
