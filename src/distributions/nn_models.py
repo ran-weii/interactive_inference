@@ -12,13 +12,14 @@ class Model(nn.Module):
 
 
 class MLP(Model):
-    def __init__(self, input_dim, output_dim, hidden_dim, num_hidden, activation):
+    def __init__(self, input_dim, output_dim, hidden_dim, num_hidden, activation, batch_norm=True):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.hidden_dim = hidden_dim
         self.num_hidden = num_hidden
         self.activation = activation
+        self.batch_norm = batch_norm
         
         if activation == "relu":
             act = nn.ReLU()
@@ -35,6 +36,9 @@ class MLP(Model):
         layers.append(nn.Linear(hidden_dim, output_dim))
         self.layers = nn.ModuleList(layers)
 
+        if batch_norm:
+            self.bn = nn.BatchNorm1d(input_dim, affine=False)
+
     def __repr__(self):
         s = "{}(input_dim={}, output_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
             self.__class__.__name__, self.input_dim, self.output_dim, 
@@ -43,6 +47,9 @@ class MLP(Model):
         return s
 
     def forward(self, x):
+        if self.batch_norm:
+            x = self.bn(x)
+            
         for layer in self.layers:
             x = layer(x)
         return x
