@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 from src.simulation.dynamics import ConstantAcceleration
+from src.data.geometry import clip_norm
 
 """
 TODO: 
@@ -25,6 +26,9 @@ class InteractionSimulator(gym.Env):
         self.map_data = map_data
         self.dynamics_model = ConstantAcceleration(self.dt)
         
+        self.x_lim = map_data.x_lim
+        self.y_lim = map_data.y_lim
+        self.v_lim = 150.
         self.action_limits = np.array([10, 5]).astype(np.float32)
         self.action_space = gym.spaces.Box(
             low=-self.action_limits,
@@ -100,6 +104,7 @@ class InteractionSimulator(gym.Env):
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
         next_state[0] = np.clip(next_state[0], self.map_data.x_lim[0], self.map_data.x_lim[1])
         next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
+        next_state[[2, 3]] = clip_norm(next_state[[2, 3]], self.v_lim)
         next_psi = self.compute_psi_kappa(next_state, psi)
         
         self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
