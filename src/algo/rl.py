@@ -14,14 +14,16 @@ class DoubleQNetwork(Model):
             output_dim=1,
             hidden_dim=hidden_dim,
             num_hidden=num_hidden,
-            activation=activation
+            activation=activation,
+            batch_norm=True
         )
         self.q2 = MLP(
             input_dim=obs_dim + ctl_dim,
             output_dim=1,
             hidden_dim=hidden_dim,
             num_hidden=num_hidden,
-            activation=activation
+            activation=activation,
+            batch_norm=True
         )
     
     def forward(self, o, u):
