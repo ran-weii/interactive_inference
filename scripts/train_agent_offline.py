@@ -105,8 +105,7 @@ def main(arglist):
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
-        min_eps_len=arglist.min_eps_len, max_eps_len=arglist.max_eps_len,
-        augmentation=[aug_flip_lr]
+        max_eps_len=arglist.max_eps_len, augmentation=[aug_flip_lr], seed=arglist.seed
     )
     train_loader, test_loader = train_test_split(
         dataset, arglist.train_ratio, arglist.batch_size, 
