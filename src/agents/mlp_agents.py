@@ -53,6 +53,11 @@ class MLPAgent(AbstractAgent):
         ctl = self.get_action_dist(mu, lv).rsample((num_samples,))
         return ctl
     
+    def ctl_log_prob(self, o, u):
+        mu, lv = self.forward(o, u)
+        logp_u = self.get_action_dist(mu, lv).log_prob(u).sum(-1)
+        return logp_u
+
     def act_loss(self, o, u, mask, forward_out):
         mu, lv = forward_out
         logp_u = self.get_action_dist(mu, lv).log_prob(u).sum(-1)
