@@ -31,6 +31,17 @@ def angle_to_vector(theta):
     out /= np.linalg.norm(out, axis=-1, keepdims=True)
     return out
 
+def clip_norm(x, max, axis=-1):
+    """ Clip the norm of a vector 
+    
+    Args:
+        x (np.array): array to be clipped
+        max (np.array): maximum norm
+    """
+    x_norm = np.linalg.norm(x, axis=axis)
+    x[x_norm > max] /= x_norm / max
+    return x
+
 def dist_two_points(x1, y1, x2, y2):
     """ Two point distance formula """
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
