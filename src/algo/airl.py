@@ -8,15 +8,16 @@ import torch.nn.functional as F
 
 # rollout imports
 from src.evaluation.online import eval_episode
-from src.simulation.controllers import AgentWrapper, DataWrapper
+from src.simulation.controllers import AgentWrapper
 
 # model imports
 from src.distributions.nn_models import Model, MLP
-from src.algo.rl_utils import ReplayBuffer
+from src.algo.rl import DoubleQNetwork
+from src.algo.replay_buffers import ReplayBuffer
 
-
+""" TODO: modify this to work with recurrent agent """
 class AIRL(Model):
-    """ Adversarial IRL algorithm """
+    """ Fully observable Adversarial IRL algorithm """
     def __init__(
         self, 
         agent, 
@@ -28,6 +29,7 @@ class AIRL(Model):
         gru_layers=2,
         mlp_layers=2,
         gamma=0.9,
+        beta=0.2,
         buffer_size=1e5, 
         rnn_steps=10, 
         batch_size=128, 
@@ -60,6 +62,7 @@ class AIRL(Model):
         self.act_var = act_var
         
         self.gamma = gamma
+        self.beta = beta
         self.rnn_steps = rnn_steps
         self.batch_size = batch_size
         self.max_eps_len = max_eps_len
@@ -73,44 +76,33 @@ class AIRL(Model):
         self.polyak = polyak
         
         self.agent = agent
+        self.ref_agent = deepcopy(agent)
         self.real_buffer = ReplayBuffer(
-            agent.state_dim, agent.ctl_dim, agent.obs_dim, buffer_size
+            agent.obs_dim, agent.ctl_dim, 1e10
         )
         self.fake_buffer = ReplayBuffer(
-            agent.state_dim, agent.ctl_dim, agent.obs_dim, buffer_size
+            agent.obs_dim, agent.ctl_dim, buffer_size
         )
-        # input_dim = self.agent.state_dim + self.agent.obs_dim + self.agent.ctl_dim
+
         input_dim = self.agent.obs_dim + self.agent.ctl_dim
         self.discriminator = MLP(
             input_dim=input_dim,
             output_dim=1,
             hidden_dim=hidden_dim,
             num_hidden=mlp_layers,
-            activation="silu"
+            activation="silu",
+            batch_norm=True
         )
-        self.q1 = MLP(
-            input_dim=input_dim,
-            output_dim=1,
-            hidden_dim=hidden_dim,
-            num_hidden=mlp_layers,
-            activation="silu"
+        self.critic = DoubleQNetwork(
+            agent.obs_dim, agent.ctl_dim, hidden_dim, mlp_layers, activation="silu"
         )
-        self.q2 = MLP(
-            input_dim=input_dim,
-            output_dim=1,
-            hidden_dim=hidden_dim,
-            num_hidden=mlp_layers,
-            activation="silu"
-        )
-        self.q1_target = deepcopy(self.q1)
-        self.q2_target = deepcopy(self.q2)
+        self.critic_target = deepcopy(self.critic)
         
         self.d_optimizer = torch.optim.Adam(
             self.discriminator.parameters(), lr=lr_d, weight_decay=decay
         )
         self.q_optimizer = torch.optim.Adam(
-            list(self.q1.parameters()) + list(self.q2.parameters()), 
-            lr=lr_q, weight_decay=decay
+            self.critic.parameters(), lr=lr_q, weight_decay=decay
         )
         self.agent_optimizer = torch.optim.Adam(
             self.agent.parameters(), lr=lr_agent, weight_decay=decay
@@ -143,19 +135,14 @@ class AIRL(Model):
     def discriminator_loss(self):
         real_batch = self.real_buffer.sample_random(self.batch_size)
         fake_batch = self.fake_buffer.sample_random(self.batch_size)
-
-        real_state = real_batch["state"]
-        real_obs = self.normalize(real_batch["obs"], self.obs_mean, self.obs_var)
-        real_act = self.normalize(real_batch["act"], self.act_mean, self.act_var)
         
-        fake_state = fake_batch["state"]
-        fake_obs = self.normalize(fake_batch["obs"], self.obs_mean, self.obs_var)
-        fake_act = self.normalize(fake_batch["act"], self.act_mean, self.act_var)
+        real_obs = real_batch["obs"]
+        real_ctl = real_batch["ctl"]
+        fake_obs = fake_batch["obs"]
+        fake_ctl = fake_batch["ctl"]
         
-        # real_inputs = torch.cat([real_state, real_obs, real_act], dim=-1)
-        # fake_inputs = torch.cat([fake_state, fake_obs, fake_act], dim=-1)
-        real_inputs = torch.cat([real_obs, real_act], dim=-1)
-        fake_inputs = torch.cat([fake_obs, fake_act], dim=-1)
+        real_inputs = torch.cat([real_obs, real_ctl], dim=-1)
+        fake_inputs = torch.cat([fake_obs, fake_ctl], dim=-1)
         inputs = torch.cat([real_inputs, fake_inputs], dim=0)
 
         real_labels = torch.zeros(self.batch_size, 1)
@@ -168,63 +155,43 @@ class AIRL(Model):
     
     def critic_loss(self):
         fake_batch = self.fake_buffer.sample_random(self.batch_size)
-
-        state = fake_batch["state"]
-        obs = self.normalize(fake_batch["obs"], self.obs_mean, self.obs_var)
-        act = self.normalize(fake_batch["act"], self.act_mean, self.act_var)
-        next_state = fake_batch["next_state"]
-        next_obs = self.normalize(fake_batch["next_obs"], self.obs_mean, self.obs_var)
-
+        obs = fake_batch["obs"]
+        ctl = fake_batch["ctl"]
+        next_obs = fake_batch["next_obs"]
+        
         # sample next action
         with torch.no_grad():
-            self.agent.reset()
-            next_alpha_a = self.agent.plan(next_state).unsqueeze(0)
-            next_act = self.agent.hmm.ctl_ancestral_sample(next_alpha_a, 1).view(self.batch_size, -1)
-        # inputs = torch.cat([state, obs, act], dim=-1)
-        # next_inputs = torch.cat([next_state, next_obs, next_act], dim=-1)
-        inputs = torch.cat([obs, act], dim=-1)
-        next_inputs = torch.cat([next_obs, next_act], dim=-1)
+            next_ctl = self.agent.choose_action(next_obs, ctl).squeeze(0)
+        inputs = torch.cat([obs, ctl], dim=-1)
         
         with torch.no_grad():
             # compute reward
-            log_r = self.discriminator(inputs)
+            log_r = self.discriminator(inputs) 
+            logp_u = self.ref_agent.ctl_log_prob(obs, ctl).unsqueeze(-1)
+            r = -log_r + logp_u
             
             # compute value target
-            q1_next = self.q1_target(next_inputs)
-            q2_next = self.q2_target(next_inputs)
-            q_next = torch.max(q1_next, q2_next)
-            q_target = log_r + self.gamma * q_next
+            q1_next, q2_next = self.critic(next_obs, next_ctl)
+            q_next = torch.min(q1_next, q2_next)
+            q_target = r + self.gamma * q_next
 
-        q1 = self.q1(inputs)
-        q2 = self.q2(inputs)
+        q1, q2 = self.critic(obs, ctl)
         q1_loss = torch.pow(q1 - q_target, 2).mean()
         q2_loss = torch.pow(q2 - q_target, 2).mean()
         q_loss = (q1_loss + q2_loss) / 2
         return q_loss
     
     def actor_loss(self):
-        batch_size = min(self.fake_buffer.num_eps, int(self.batch_size / 3))
-        obs, ctl, mask = self.fake_buffer.sample_episodes(batch_size, self.max_eps_len)
-        
-        self.agent.reset()
-        alpha_b, alpha_a = self.agent(obs, ctl)
-        
-        # compute value for each action strata
-        ctl_sample = self.agent.hmm.ctl_model.sample((len(obs), batch_size,)).squeeze(-3)
+        fake_batch = self.fake_buffer.sample_random(self.batch_size)
+        obs = fake_batch["obs"]
+        ctl = fake_batch["ctl"]
 
-        q = [torch.empty(0)] * self.agent.act_dim
-        for i in range(self.agent.act_dim):
-            # inputs_i = torch.cat([alpha_b, obs, ctl_sample[:, :, i]], dim=-1)
-            inputs_i = torch.cat([obs, ctl_sample[:, :, i]], dim=-1)
-            q1 = self.q1(inputs_i)
-            q2 = self.q2(inputs_i)
-            q[i] = torch.max(q1, q2)
-        q = torch.stack(q).squeeze(-1).permute(1, 2, 0)
+        ctl_sample = self.agent.choose_action(obs, ctl).squeeze(0)
+        logp_u = self.agent.ctl_log_prob(obs, ctl_sample).unsqueeze(-1)
         
-        # compute stratified loss
-        a_loss = torch.sum(alpha_a * q, dim=-1)
-        a_loss = torch.sum(a_loss * mask, dim=0) / mask.sum(0, keepdim=True)
-        a_loss = a_loss.mean()
+        q1, q2 = self.critic(obs, ctl_sample)
+        q = torch.min(q1, q2)
+        a_loss = torch.mean(logp_u - q)
         return a_loss
 
     def take_gradient_step(self):
@@ -249,21 +216,20 @@ class AIRL(Model):
             q_loss = self.critic_loss()
             q_loss.backward()
             if self.grad_clip is not None:
-                nn.utils.clip_grad_norm_(
-                    list(self.q1.parameters()) + list(self.q2.parameters()), self.grad_clip
-                )
+                nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
             self.q_optimizer.step()
             self.q_optimizer.zero_grad()
 
             # train actor
             a_loss = self.actor_loss()
             a_loss.backward()
-            # for n, p in self.agent.named_parameters():
+            # for n, p in self.named_parameters():
             #     if p.grad is not None:
             #         print(n, p.grad.data.norm())
             #     else:
             #         print(n, None)
             # exit()
+            
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.agent.parameters(), self.grad_clip)
             self.agent_optimizer.step()
@@ -272,21 +238,24 @@ class AIRL(Model):
 
             loss_q.append(q_loss.data.item())
             loss_a.append(a_loss.data.item())
-            # print("q_loss", q_loss.data.item(), "a_loss", a_loss.data.item())
-
+        #     print("q_loss", q_loss.data.item(), "a_loss", a_loss.data.item())
+        # exit()
         # update target networks
         with torch.no_grad():
             for p, p_target in zip(
-                list(self.q1.parameters()) + list(self.q2.parameters()),
-                list(self.q1_target.parameters()) + list(self.q2_target.parameters()),
+                self.critic.parameters(), self.critic_target.parameters()
             ):
                 p_target.data.mul(self.polyak)
                 p_target.data.add_((1 - self.polyak) * p.data)
-        # stats = {
-        #     "loss_d": d_loss.data.item(),
-        #     "loss_q": q_loss.data.item(),
-        #     "loss_a": a_loss.data.item(),
-        # }
+        
+        # update reference agent
+        with torch.no_grad():
+            for p, p_ref in zip(
+                self.agent.parameters(), self.ref_agent.parameters()
+            ):
+                p_ref.data.mul(self.polyak)
+                p_ref.data.add_((1 - self.polyak) * p.data)
+
         stats = {
             "loss_d": np.mean(loss_d),
             "loss_q": np.mean(loss_q),
@@ -295,39 +264,39 @@ class AIRL(Model):
         return stats
 
 
-def train(env, observer, model, dataset, action_set, num_eps, epochs, max_steps, verbose=1):
+def train(env, observer, model, real_dataset, action_set, num_eps, epochs, max_steps, verbose=1):
     """ Training loop for adversarial inverse reinforcment learning 
     
     Args:
         env (Env): rl environment
         observer (Observer): observer object
         model (class): trainer model class
-        dataset (torch.dataset): real dataset object
+        real_dataset (torch.dataset): real dataset object
         action_set (list): agent action set
         num_episodes (int): number of episodes per epoch
         epochs (int): number of training epochs
         max_steps (int): maximum number of steps per episode
         verbose (int, optional): verbose interval. Default=1
     """
+    # fill real buffer
+    for i in range(len(real_dataset)):
+        data = real_dataset[i]
+        obs = data["ego"].numpy()
+        ctl = data["act"].numpy()
+        model.real_buffer.push(obs, ctl)
+    
     start = time.time()
     history = []
     for e in range(epochs):
         eps_ids = np.random.choice(np.arange(len(env.dataset)), num_eps)
         for i, eps_id in enumerate(eps_ids):
-            fake_controller = AgentWrapper(observer, model.agent, action_set, "ace")
-            real_controller = DataWrapper(dataset[eps_id], observer, model.agent, action_set, "ace")
+            fake_controller = AgentWrapper(observer, model.ref_agent, action_set, "ace")
 
             # rollout fake episode
             sim_states, sim_acts, track_data = eval_episode(
                 env, fake_controller, eps_id, max_steps, model.fake_buffer
             )
             model.fake_buffer.push()
-
-            # rollout real episode
-            sim_states, sim_acts, track_data = eval_episode(
-                env, real_controller, eps_id, max_steps, model.real_buffer
-            )
-            model.real_buffer.push()
         
         stats = model.take_gradient_step()
         tnow = time.time() - start
