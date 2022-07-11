@@ -200,18 +200,18 @@ def cartesian_to_frenet(rs, rx, ry, rtheta, rkappa, rdkappa, x, y, v, a, theta, 
     cos_theta_r = math.cos(rtheta)
     sin_theta_r = math.sin(rtheta)
     
-    # compute constants
     cross_rd_nd = cos_theta_r * dy - sin_theta_r * dx
-    delta_theta = theta - rtheta
-    tan_delta_theta = math.tan(delta_theta)
-    cos_delta_theta = math.cos(delta_theta)
-    
+
     # first order conversion
     s_condition[0] = rs
     d_condition[0] = math.copysign(math.sqrt(dx * dx + dy * dy), cross_rd_nd)
     
     # second order conversion
     if order >= 2:
+        delta_theta = theta - rtheta
+        tan_delta_theta = math.tan(delta_theta)
+        cos_delta_theta = math.cos(delta_theta)
+
         one_minus_kappa_r_d = 1 - rkappa * d_condition[0]
         s_condition[1] = v * cos_delta_theta / one_minus_kappa_r_d
         d_condition[1] = one_minus_kappa_r_d * tan_delta_theta
