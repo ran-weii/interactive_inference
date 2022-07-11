@@ -52,7 +52,7 @@ class TanhTransform(TransformModule):
     def __init__(self, limits):
         super().__init__() 
         self.limits = nn.Parameter(limits, requires_grad=False)
-        self.eps = 1e-6
+        self.eps = 1e-5
 
     def __call__(self, x):
         return self.limits * torch.tanh(x)
@@ -63,6 +63,7 @@ class TanhTransform(TransformModule):
 
     def log_abs_det_jacobian(self, x, y):
         ldj = (2. * (math.log(2.) - x - F.softplus(-2. * x)))
+        ldj += torch.abs(self.limits).log()
         return ldj
 
 
