@@ -55,6 +55,8 @@ def parse_args():
     # nn args
     parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
+    parser.add_argument("--activation", type=str, default="relu", help="nn activation, default=relu")
+    parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     # training args
     parser.add_argument("--algo", type=str, choices=["bc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
@@ -151,7 +153,7 @@ def main(arglist):
     if arglist.agent == "mlp":
         agent = MLPAgent(
             obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
-            use_tanh=True, ctl_limits=ctl_lim
+            activation=arglist.activation, use_tanh=arglist.use_tanh, ctl_limits=ctl_lim
         )
     
     # init trainer
