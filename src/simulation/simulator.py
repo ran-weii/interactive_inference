@@ -63,12 +63,7 @@ class InteractionSimulator(gym.Env):
         self._sim_ctl = np.zeros((self.T, 2))
         
         self._sim_states[0] = self._track_data["ego"][0][:7]
-
-        # match lane
-        x, y = self._sim_states[self.t, 0], self._sim_states[self.t, 1]
-        self._ref_lane_id = self.map_data.match_lane(x, y)
-        self._ref_path = self.map_data.lanes[self._ref_lane_id].centerline.frenet_path
-
+        
         state_dict = {
             "ego": self._sim_states[0],
             "agents": self._track_data["agents"][0][:, :7]
@@ -122,7 +117,7 @@ class InteractionSimulator(gym.Env):
         }
         obs = self.observer.observe(state_dict)
         reward = self.reward_model(self._sim_obs[self.t], self._sim_ctl[self.t])
-        done = True if (self.t == self.T) or self.t >= self.max_eps_steps else False
+        done = True if (self.t + 1 == self.T) or self.t >= self.max_eps_steps else False
         info = self.observer.get_info()
 
         # udpate self
