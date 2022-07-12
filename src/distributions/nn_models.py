@@ -13,7 +13,7 @@ class Model(nn.Module):
 
 
 class MLP(Model):
-    def __init__(self, input_dim, output_dim, hidden_dim, num_hidden, activation, batch_norm=True):
+    def __init__(self, input_dim, output_dim, hidden_dim, num_hidden, activation, batch_norm=False):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -41,9 +41,9 @@ class MLP(Model):
             self.bn = BatchNormTransform(input_dim, affine=False)
 
     def __repr__(self):
-        s = "{}(input_dim={}, output_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
+        s = "{}(input_dim={}, output_dim={}, hidden_dim={}, num_hidden={}, activation={}, batch_norm={})".format(
             self.__class__.__name__, self.input_dim, self.output_dim, 
-            self.hidden_dim, self.num_hidden, self.activation
+            self.hidden_dim, self.num_hidden, self.activation, self.batch_norm
         )
         return s
 
