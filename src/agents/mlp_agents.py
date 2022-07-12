@@ -1,4 +1,6 @@
+import math
 import torch
+import torch.nn.functional as F
 import torch.distributions as torch_dist
 from torch.distributions.transforms import TanhTransform
 from src.agents.core import AbstractAgent
@@ -47,8 +49,13 @@ class MLPAgent(AbstractAgent):
 
     def choose_action(self, o, u, sample_method="", num_samples=1):
         mu, lv = self.forward(o, u)
-        ctl = self.get_action_dist(mu, lv).rsample((num_samples,))
-        return ctl
+        dist = torch_dist.Normal(mu, rectify(lv))
+        ctl = dist.rsample((num_samples,))
+        logp = dist.log_prob(ctl).sum(-1, keepdim=True)
+        if self.use_tanh:
+            logp -= (2. * (math.log(2.) - ctl - F.softplus(-2. * ctl))).sum(-1, keepdim=True)
+            ctl *= self.ctl_limits
+        return ctl, logp
 
     def choose_action_batch(self, o, u, sample_method="", num_samples=1):
         mu, lv = self.forward(o, u)

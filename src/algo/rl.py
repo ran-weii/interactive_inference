@@ -108,8 +108,8 @@ class SAC(nn.Module):
         prev_ctl = self.agent._prev_ctl
 
         with torch.no_grad():
-            ctl = self.agent.choose_action(obs, prev_ctl).squeeze(0)
-        return ctl
+            ctl, _ = self.agent.choose_action(obs, prev_ctl)
+        return ctl.squeeze(0)
 
     def compute_critic_loss(self):
         batch = self.replay_buffer.sample_random(self.batch_size)
@@ -125,8 +125,8 @@ class SAC(nn.Module):
 
         # sample next action
         with torch.no_grad():
-            next_ctl = self.agent.choose_action(next_obs, ctl).squeeze(0)
-            logp = self.agent.ctl_log_prob(next_obs, next_ctl).unsqueeze(-1)
+            next_ctl, logp = self.agent.choose_action(next_obs, ctl)
+            next_ctl = next_ctl.squeeze(0)
         
         with torch.no_grad():    
             # compute value target
@@ -148,12 +148,12 @@ class SAC(nn.Module):
         # normalize observation
         obs = self.normalize_obs(obs)
 
-        ctl_sample = self.agent.choose_action(obs, ctl).squeeze(0)
-        logp_u = self.agent.ctl_log_prob(obs, ctl_sample).unsqueeze(-1)
+        ctl_sample, logp = self.agent.choose_action(obs, ctl)
+        ctl_sample = ctl_sample.squeeze(0)
         
         q1, q2 = self.critic(obs, ctl_sample)
         q = torch.min(q1, q2)
-        a_loss = torch.mean(self.beta * logp_u - q)
+        a_loss = torch.mean(self.beta * logp - q)
         return a_loss
 
     def take_gradient_step(self, logger=None):
