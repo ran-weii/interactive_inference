@@ -32,7 +32,7 @@ class InteractionSimulator(gym.Env):
         self.y_lim = map_data.y_lim
         self.v_lim = 150. # velocity limit
         self.a_lim = 5. # acceleration limit
-        self.action_limits = np.array([10, 5]).astype(np.float32)
+        self.action_limits = np.array([8, 3]).astype(np.float32)
         self.action_space = gym.spaces.Box(
             low=-self.action_limits,
             high=self.action_limits,
@@ -98,13 +98,14 @@ class InteractionSimulator(gym.Env):
         
         # transfrom agent control
         ctl = ctl.numpy().flatten()
+        ctl = np.clip(ctl, -self.action_limits, self.action_limits)
         action = self.observer.agent_control_to_global(ctl[0], ctl[1], psi)
         
         # step the dynamics
         state_action = np.hstack([state, action]).reshape(-1, 1)
         next_state = self.dynamics_model.step(state_action).flatten()[:4]
 
-        # clip state
+        # clip position and velocity
         next_state[0] = np.clip(next_state[0], self.map_data.x_lim[0], self.map_data.x_lim[1])
         next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
         next_state[[2, 3]] = clip_norm(next_state[[2, 3]], self.v_lim)
