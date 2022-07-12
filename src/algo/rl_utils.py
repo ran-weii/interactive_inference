@@ -1,6 +1,7 @@
 import time
 import pprint
 import numpy as np
+from src.evaluation.online import eval_episode
 
 class Logger():
     def __init__(self):
@@ -31,10 +32,14 @@ class Logger():
 
         # erase epoch stats
         self.epoch_dict = dict()
+    
+    def log_test_episode(self, sim_states, track_data):
+        self.test_episodes.append({"sim_states": sim_states, "track_data": track_data})
+
 
 def train(
     env, model, epochs, steps_per_epoch=1000, 
-    update_after=3000, update_every=50
+    update_after=3000, update_every=50, log_test_every=10
     ):
     """
     Args:
@@ -44,6 +49,7 @@ def train(
         steps_per_epoch (int, optional): number of environment steps per epoch. Default=1000
         update_after (int, optional): initial burn-in steps before training. Default=3000
         update_every (int, optional): number of environment steps between training. Default=50
+        log_test_every (int, optional): epochs between logging test episode. Default=10
     """
     logger = Logger()
 
@@ -87,5 +93,15 @@ def train(
             logger.push({"time": time.time() - start_time})
             logger.log()
             print()
-
+            
+            if t > update_after and epoch % log_test_every == 0:
+                eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
+                sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
+                logger.log_test_episode(sim_states, track_data)
+                print(f"test mean reward: {np.mean(rewards)}\n")
+    
+    # final test episode
+    eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
+    sim_states, sim_acts, track_data = eval_episode(env, model.agent, eval_eps_id)
+    logger.log_test_episode(sim_states, track_data)
     return model, logger
