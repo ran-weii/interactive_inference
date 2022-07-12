@@ -76,12 +76,17 @@ class ReplayBuffer:
         """ sample random steps """ 
         obs = np.vstack([e["obs"] for e in self.episodes])
         ctl = np.vstack([e["ctl"] for e in self.episodes])
+        rwd = np.vstack([e["rwd"] for e in self.episodes])
         next_obs = np.vstack([e["next_obs"] for e in self.episodes])
         done = np.vstack([e["done"] for e in self.episodes])
         
         idx = np.random.randint(0, self.size, size=batch_size)
         batch = dict(
-            obs=obs[idx], ctl=ctl[idx], next_obs=next_obs[idx], done=done[idx]
+            obs=obs[idx], 
+            ctl=ctl[idx], 
+            rwd=rwd[idx], 
+            next_obs=next_obs[idx], 
+            done=done[idx]
         )
         return {k: torch.from_numpy(v).to(torch.float32) for k, v in batch.items()}
 
@@ -95,6 +100,7 @@ class ReplayBuffer:
         self.moving_mean = self.moving_mean * (1 - self.momentum) + moving_mean * self.momentum
         self.moving_mean_square = self.moving_mean_square * (1 - self.momentum) + moving_mean_square * self.momentum
         self.moving_variance = self.moving_variance * (1 - self.momentum) + moving_variance * self.momentum 
+
 
 class RecurrentBuffer:  
     """ Replay buffer with hidden state """  
