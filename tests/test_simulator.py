@@ -36,46 +36,21 @@ def test_simulator_from_data():
     """ Use preprocessed frenet actions to control the simulator """
     df_track = load_data(data_path, scenario, filename)
     ego_dataset = EgoDataset(df_track)
+    observer = Observer(map_data)
+    env = InteractionSimulator(ego_dataset, map_data, observer)
     
-    env = InteractionSimulator(ego_dataset, map_data)
-    
-    obs_env = env.reset(0)
+    obs = env.reset(0)
     
     eps_id = env._track_data["meta"][1]
     df_eps = df_track.loc[df_track["eps_id"] == eps_id].reset_index(drop=True)
     
-    lane_id = df_eps["lane_id"].values[0]
-    ref_path = FrenetPath(np.array(map_data.lanes[lane_id].centerline.linestring.coords))
     for t in range(env.T):
-        # get true agent control
-        ctl_env = env.get_action()        
+        # get agent frenet acceleration
+        dds = df_eps["dds"].values[t]
+        ddd = df_eps["ddd"].values[t]
+        ctl = torch.tensor([dds, ddd]).view(1, -1)
         
-        # get acceleration from frenet state in dataset
-        vx = df_eps["vx"].values
-        vy = df_eps["vy"].values
-        v = np.sqrt(vx**2 + vy**2)
-
-        ax = df_eps["ax"].values
-        ay = df_eps["ay"].values
-        a = np.sqrt(ax**2 + ay**2)
-        
-        theta = df_eps["psi_rad"].values
-        norm = df_eps["norm"].values
-        kappa = df_eps["kappa"].values
-        
-        acc_vec = np.arctan2(ay, ax)
-        delta_vec = wrap_angles(acc_vec - theta)
-        sign = np.ones_like(theta)
-        sign[delta_vec > 0.5 * np.pi] = -1
-        sign[delta_vec < 0.5 * -np.pi] = -1
-        a *= sign
-
-        tan_vec = angle_to_vector(theta)
-        norm_vec = angle_to_vector(norm)
-        ctl_env = compute_acceleration_vector(a, v, kappa, tan_vec, norm_vec)
-        ctl_env = ctl_env[t].reshape(-1)
-
-        obs_env, r, done, info = env.step(ctl_env)
+        obs, r, done, info = env.step(ctl)
         
         if done:
             break
@@ -228,8 +203,8 @@ def test_idm_agent():
     print("test_idm_agent passed")
 
 if __name__ == "__main__":
-    # test_simulator_from_data()
+    test_simulator_from_data()
     # test_simulator_with_observer()
     # test_observer()
     # test_data_wrapper()
-    test_idm_agent()
+    # test_idm_agent()
