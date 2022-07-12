@@ -3,13 +3,14 @@ import torch
 from src.data.ego_dataset import collate_fn, sample_sequence
 
 class ReplayBuffer:
-    def __init__(self, obs_dim, ctl_dim, max_size):
+    def __init__(self, obs_dim, ctl_dim, max_size, momentum=0.1):
         """
         Args:
             state_dim (int): hidden state dimension
             ctl_dim (int): action dimension
             obs_dim (int): observation dimension
             max_size (int): maximum buffer size
+            momentum (float): moving stats momentum
         """
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
@@ -23,12 +24,19 @@ class ReplayBuffer:
         
         self.obs_eps = [] # store a single episode
         self.ctl_eps = [] # store a single episode
+        self.rwd_eps = [] # store a single episode
         self.done_eps = [] # store a single episode
+        
+        self.momentum = momentum
+        self.moving_mean = np.zeros((obs_dim,))
+        self.moving_mean_square = np.zeros((obs_dim,))
+        self.moving_variance = np.ones((obs_dim, ))
 
-    def __call__(self, controller, done=False):
+    def __call__(self, obs, ctl, rwd, done=False):
         """ Append episode history """ 
-        self.obs_eps.append(controller._obs.data.numpy())
-        self.ctl_eps.append(controller._prev_act.data.numpy())
+        self.obs_eps.append(obs.data.numpy())
+        self.ctl_eps.append(ctl.data.numpy())
+        self.rwd_eps.append(np.array(rwd).reshape(1, 1))
         self.done_eps.append(np.array([int(done)]).reshape(1, 1))
 
     def push(self, obs=None, ctl=None, done=None):
@@ -36,14 +44,17 @@ class ReplayBuffer:
         if obs is None and ctl is None:
             obs = np.vstack(self.obs_eps)
             ctl = np.vstack(self.ctl_eps)
+            rwd = np.vstack(self.rwd_eps)
             done = np.vstack(self.done_eps)
         
         self.episodes.append({ 
             "obs": obs[:-1],
             "ctl": ctl[:-1],
+            "rwd": rwd[:-1],
             "next_obs": obs[1:],
             "done": done[1:]
         })
+        self.update_obs_stats(obs)
         
         self.eps_len.append(len(self.episodes[-1]["obs"]))
         
@@ -58,6 +69,7 @@ class ReplayBuffer:
                 self.num_eps = len(self.eps_len)
         self.obs_eps = []
         self.ctl_eps = [] 
+        self.rwd_eps = []
         self.done_eps = []
 
     def sample_random(self, batch_size):
@@ -73,6 +85,16 @@ class ReplayBuffer:
         )
         return {k: torch.from_numpy(v).to(torch.float32) for k, v in batch.items()}
 
+    def update_obs_stats(self, obs):
+        batch_size = len(obs)
+        
+        moving_mean = (self.moving_mean * self.size + np.sum(obs, axis=0)) / (self.size + batch_size)
+        moving_mean_square = (self.moving_mean_square * self.size + np.sum(obs**2, axis=0)) / (self.size + batch_size)
+        moving_variance = moving_mean_square - moving_mean**2
+
+        self.moving_mean = self.moving_mean * (1 - self.momentum) + moving_mean * self.momentum
+        self.moving_mean_square = self.moving_mean_square * (1 - self.momentum) + moving_mean_square * self.momentum
+        self.moving_variance = self.moving_variance * (1 - self.momentum) + moving_variance * self.momentum 
 
 class RecurrentBuffer:  
     """ Replay buffer with hidden state """  
