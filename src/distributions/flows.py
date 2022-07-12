@@ -42,7 +42,7 @@ class SimpleTransformedModule(TransformedDistribution):
                 raise NotImplementedError
         return entropy
 
-
+""" NOTE: too unstable for certain action space """
 class TanhTransform(TransformModule):
     """ Adapted from Pytorch implementation """
     domain = constraints.real
