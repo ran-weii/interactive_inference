@@ -1,4 +1,5 @@
 from copy import deepcopy
+import numpy as np
 import torch
 import torch.nn as nn
 from src.distributions.nn_models import Model
@@ -49,14 +50,31 @@ class DoubleQNetwork(Model):
 class SAC(nn.Module):
     """ Soft actor critic """
     def __init__(
-        self, agent, hidden_dim, num_hidden, gamma, beta, 
-        buffer_size, batch_size, lr, decay, polyak, grad_clip
+        self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, 
+        buffer_size=int(1e6), batch_size=100, a_steps=50, lr=1e-3, decay=0, 
+        polyak=0.995, grad_clip=None
         ):
+        """
+        Args:
+            agent (Agent): actor agent
+            hidden_dim (int): value network hidden dim
+            num_hidden (int): value network hidden layers
+            gamma (float, optional): discount factor. Default=0.9
+            beta (float, optional): softmax temperature. Default=0.2
+            buffer_size (int, optional): replay buffer size. Default=1e6
+            batch_size (int, optional): training batch size. Default=100
+            a_steps (int, optional): model update steps per training step. Default=50
+            lr (float, optional): learning rate. Default=1e-3
+            decay (float, optional): weight decay. Default=0
+            polyak (float, optional): target network polyak averaging factor. Default=0.995
+            grad_clip (float, optional): gradient clipping. Default=None
+        """
         super().__init__()
         self.gamma = gamma
         self.beta = beta
 
         self.batch_size = batch_size
+        self.a_steps = a_steps
         self.grad_clip = grad_clip
         self.polyak = polyak
 
@@ -94,12 +112,12 @@ class SAC(nn.Module):
         return ctl
 
     def compute_critic_loss(self):
-        fake_batch = self.replay_buffer.sample_random(self.batch_size)
-        obs = fake_batch["obs"]
-        ctl = fake_batch["ctl"]
-        r = fake_batch["rwd"]
-        next_obs = fake_batch["next_obs"]
-        done = fake_batch["done"]      
+        batch = self.replay_buffer.sample_random(self.batch_size)
+        obs = batch["obs"]
+        ctl = batch["ctl"]
+        r = batch["rwd"]
+        next_obs = batch["next_obs"]
+        done = batch["done"]      
         
         # normalize observation
         obs = self.normalize_obs(obs)
@@ -123,9 +141,9 @@ class SAC(nn.Module):
         return q_loss
 
     def compute_actor_loss(self):
-        fake_batch = self.replay_buffer.sample_random(self.batch_size)
-        obs = fake_batch["obs"]
-        ctl = fake_batch["ctl"]
+        batch = self.replay_buffer.sample_random(self.batch_size)
+        obs = batch["obs"]
+        ctl = batch["ctl"]
 
         # normalize observation
         obs = self.normalize_obs(obs)
@@ -138,38 +156,53 @@ class SAC(nn.Module):
         a_loss = torch.mean(self.beta * logp_u - q)
         return a_loss
 
-    def take_gradient_step(self):
+    def take_gradient_step(self, logger=None):
         self.critic.train()
         self.agent.train()
-
-        # train critic
-        critic_loss = self.compute_critic_loss()
-        critic_loss.backward()
-        if self.grad_clip is not None:
-            nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
-        self.critic_optimizer.step()
-        self.critic_optimizer.zero_grad()
-        self.actor_optimizer.zero_grad()
-
-        # train actor
-        actor_loss = self.compute_actor_loss()
-        actor_loss.backward()
-        if self.grad_clip is not None:
-            nn.utils.clip_grad_norm_(self.agent.parameters(), self.grad_clip)
-        self.actor_optimizer.step()
-        self.actor_optimizer.zero_grad()
-        self.critic_optimizer.zero_grad()
         
-        # update target networks
-        with torch.no_grad():
-            for p, p_target in zip(
-                self.critic.parameters(), self.critic_target.parameters()
-            ):
-                p_target.data.mul_(self.polyak)
-                p_target.data.add_((1 - self.polyak) * p.data)
- 
+        critic_loss_epoch = []
+        actor_loss_epoch = []
+        for i in range(self.a_steps):
+            # train critic
+            critic_loss = self.compute_critic_loss()
+            critic_loss.backward()
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
+            self.critic_optimizer.step()
+            self.critic_optimizer.zero_grad()
+            self.actor_optimizer.zero_grad()
+
+            critic_loss_epoch.append(critic_loss.data.item())
+
+            # train actor
+            actor_loss = self.compute_actor_loss()
+            actor_loss.backward()
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(self.agent.parameters(), self.grad_clip)
+            self.actor_optimizer.step()
+            self.actor_optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
+
+            actor_loss_epoch.append(actor_loss.data.item())
+            
+            # update target networks
+            with torch.no_grad():
+                for p, p_target in zip(
+                    self.critic.parameters(), self.critic_target.parameters()
+                ):
+                    p_target.data.mul_(self.polyak)
+                    p_target.data.add_((1 - self.polyak) * p.data)
+            
+            if logger is not None:
+                logger.push({
+                    "critic_loss": critic_loss.data.item(),
+                    "actor_loss": actor_loss.data.item()
+                })
+
         stats = {
-            "critic_loss": critic_loss.data.item(),
-            "actor_loss": actor_loss.data.item(),
+            "critic_loss": np.mean(critic_loss_epoch),
+            "actor_loss": np.mean(actor_loss_epoch),
         }
+        self.critic.eval()
+        self.agent.eval()
         return stats
