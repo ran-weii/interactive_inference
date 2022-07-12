@@ -109,10 +109,6 @@ class InteractionSimulator(gym.Env):
         next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
         next_state[[2, 3]] = clip_norm(next_state[[2, 3]], self.v_lim)
         next_psi = self.compute_psi_kappa(next_state, psi)
-
-        # compute lane deviation
-        x, y = next_state[0], next_state[1]
-        s, d = self._ref_path.cartesian_to_frenet(x, y, None, None, None, None, order=1)
         
         self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
         self._sim_acts[self.t] = action
@@ -124,7 +120,7 @@ class InteractionSimulator(gym.Env):
         obs = self.observer.observe(state_dict)
         reward = None
         done = True if (self.t == self.T) or self.t >= self.max_eps_steps else False
-        info = {"terminated": np.abs(d[0]) > 3.8, "s": s[0], "d": d[0]}
+        info = self.observer.get_info()
 
         # udpate self
         self.t += 1
