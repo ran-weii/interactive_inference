@@ -61,8 +61,8 @@ class AIRL(Model):
         self.act_mean = act_mean
         self.act_var = act_var
         
-        self.gamma = gamma
-        self.beta = beta
+        self.gamma = gamma # discount factor
+        self.beta = beta # softmax temperature
         self.rnn_steps = rnn_steps
         self.batch_size = batch_size
         self.max_eps_len = max_eps_len
@@ -153,31 +153,39 @@ class AIRL(Model):
         loss = F.binary_cross_entropy(out, labels)
         return loss
     
+    def compute_reward(self, obs, ctl):
+        inputs = torch.cat([obs, ctl], dim=-1)
+        log_r = self.discriminator(inputs)
+        logp_ref = self.ref_agent.ctl_log_prob(obs, ctl).unsqueeze(-1)
+        r = -log_r + logp_ref
+        return r
+
     def critic_loss(self):
         fake_batch = self.fake_buffer.sample_random(self.batch_size)
         obs = fake_batch["obs"]
         ctl = fake_batch["ctl"]
         next_obs = fake_batch["next_obs"]
+        done = fake_batch["done"]
         
         # sample next action
         with torch.no_grad():
             next_ctl = self.agent.choose_action(next_obs, ctl).squeeze(0)
-        inputs = torch.cat([obs, ctl], dim=-1)
+            logp = self.agent.ctl_log_prob(next_obs, next_ctl).unsqueeze(-1)
         
         with torch.no_grad():
             # compute reward
-            log_r = self.discriminator(inputs) 
-            logp_u = self.ref_agent.ctl_log_prob(obs, ctl).unsqueeze(-1)
-            r = -log_r + logp_u
+            r = self.compute_reward(obs, ctl)
             
             # compute value target
             q1_next, q2_next = self.critic(next_obs, next_ctl)
             q_next = torch.min(q1_next, q2_next)
-            q_target = r + self.gamma * q_next
+            q_target = r + (1 - done) * self.gamma * (q_next - self.beta * logp)
 
         q1, q2 = self.critic(obs, ctl)
         q1_loss = torch.pow(q1 - q_target, 2).mean()
         q2_loss = torch.pow(q2 - q_target, 2).mean()
+        # q1_loss = nn.HuberLoss()(q1, q_target)
+        # q2_loss = nn.HuberLoss()(q2, q_target)
         q_loss = (q1_loss + q2_loss) / 2
         return q_loss
     
@@ -191,7 +199,7 @@ class AIRL(Model):
         
         q1, q2 = self.critic(obs, ctl_sample)
         q = torch.min(q1, q2)
-        a_loss = torch.mean(logp_u - q)
+        a_loss = torch.mean(self.beta * logp_u - q)
         return a_loss
 
     def take_gradient_step(self):
@@ -218,17 +226,13 @@ class AIRL(Model):
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
             self.q_optimizer.step()
+            self.agent_optimizer.step()
             self.q_optimizer.zero_grad()
+            self.agent_optimizer.zero_grad()
 
             # train actor
             a_loss = self.actor_loss()
             a_loss.backward()
-            # for n, p in self.named_parameters():
-            #     if p.grad is not None:
-            #         print(n, p.grad.data.norm())
-            #     else:
-            #         print(n, None)
-            # exit()
             
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.agent.parameters(), self.grad_clip)
@@ -240,6 +244,7 @@ class AIRL(Model):
             loss_a.append(a_loss.data.item())
         #     print("q_loss", q_loss.data.item(), "a_loss", a_loss.data.item())
         # exit()
+
         # update target networks
         with torch.no_grad():
             for p, p_target in zip(
@@ -249,12 +254,13 @@ class AIRL(Model):
                 p_target.data.add_((1 - self.polyak) * p.data)
         
         # update reference agent
-        with torch.no_grad():
-            for p, p_ref in zip(
-                self.agent.parameters(), self.ref_agent.parameters()
-            ):
-                p_ref.data.mul(self.polyak)
-                p_ref.data.add_((1 - self.polyak) * p.data)
+        # with torch.no_grad():
+        #     for p, p_ref in zip(
+        #         self.agent.parameters(), self.ref_agent.parameters()
+        #     ):
+        #         p_ref.data.mul(self.polyak)
+        #         p_ref.data.add_((1 - self.polyak) * p.data)
+        self.ref_agent = deepcopy(self.agent)
 
         stats = {
             "loss_d": np.mean(loss_d),
@@ -283,7 +289,8 @@ def train(env, observer, model, real_dataset, action_set, num_eps, epochs, max_s
         data = real_dataset[i]
         obs = data["ego"].numpy()
         ctl = data["act"].numpy()
-        model.real_buffer.push(obs, ctl)
+        done = np.zeros((len(obs), 1))
+        model.real_buffer.push(obs, ctl, done)
     
     start = time.time()
     history = []
@@ -309,3 +316,49 @@ def train(env, observer, model, real_dataset, action_set, num_eps, epochs, max_s
 
     df_history = pd.DataFrame(history)
     return model, df_history
+
+# def train(env, observer, model, real_dataset, action_set, num_eps, epochs, max_steps, verbose=1):
+#     """ Training loop for adversarial inverse reinforcment learning 
+    
+#     Args:
+#         env (Env): rl environment
+#         observer (Observer): observer object
+#         model (class): trainer model class
+#         real_dataset (torch.dataset): real dataset object
+#         action_set (list): agent action set
+#         num_episodes (int): number of episodes per epoch
+#         epochs (int): number of training epochs
+#         max_steps (int): maximum number of steps per episode
+#         verbose (int, optional): verbose interval. Default=1
+#     """
+#     # fill real buffer
+#     for i in range(len(real_dataset)):
+#         data = real_dataset[i]
+#         obs = data["ego"].numpy()
+#         ctl = data["act"].numpy()
+#         model.real_buffer.push(obs, ctl)
+    
+#     start = time.time()
+#     history = []
+#     for e in range(epochs):
+#         eps_ids = np.random.choice(np.arange(len(env.dataset)), num_eps)
+#         for i, eps_id in enumerate(eps_ids):
+#             fake_controller = AgentWrapper(observer, model.ref_agent, action_set, "ace")
+
+#             # rollout fake episode
+#             sim_states, sim_acts, track_data = eval_episode(
+#                 env, fake_controller, eps_id, max_steps, model.fake_buffer
+#             )
+#             model.fake_buffer.push()
+        
+#         stats = model.take_gradient_step()
+#         tnow = time.time() - start
+#         stats.update({"epoch": e, "time": tnow, "train": 1})
+#         history.append(stats)
+
+#         if (e + 1) % verbose == 0:
+#             s = model.stdout(stats)
+#             print("e: {}/{}, {}, t: {:.2f}".format(e + 1, epochs, s, tnow))
+
+#     df_history = pd.DataFrame(history)
+#     return model, df_history
