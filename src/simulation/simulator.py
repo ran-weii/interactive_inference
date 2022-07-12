@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 from src.simulation.dynamics import ConstantAcceleration
+from src.simulation.reward import CarfollowingReward
 from src.data.geometry import clip_norm
 
 """
@@ -18,7 +19,7 @@ class InteractionSimulator(gym.Env):
     global actions:
         [ax, ay]
     """
-    def __init__(self, dataset, map_data, observer, max_eps_steps=1000, dt=0.1):
+    def __init__(self, dataset, map_data, observer, reward=CarfollowingReward, max_eps_steps=1000, dt=0.1):
         super().__init__()
         self.max_eps_steps = max_eps_steps
         self.dt = dt
@@ -27,6 +28,7 @@ class InteractionSimulator(gym.Env):
         self.map_data = map_data
         self.observer = observer
         self.dynamics_model = ConstantAcceleration(self.dt)
+        self.reward_model = CarfollowingReward(observer.feature_set)
         
         self.x_lim = map_data.x_lim
         self.y_lim = map_data.y_lim
@@ -119,7 +121,7 @@ class InteractionSimulator(gym.Env):
             "agents": self._track_data["agents"][self.t+1][:, :7]
         }
         obs = self.observer.observe(state_dict)
-        reward = None
+        reward = self.reward_model(self._sim_obs[self.t], self._sim_ctl[self.t])
         done = True if (self.t == self.T) or self.t >= self.max_eps_steps else False
         info = self.observer.get_info()
 
