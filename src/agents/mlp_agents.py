@@ -24,7 +24,7 @@ class MLPAgent(AbstractAgent):
             hidden_dim=hidden_dim,
             num_hidden=num_hidden,
             activation=activation,
-            batch_norm=True
+            batch_norm=False
         )
         
         if self.use_tanh:
@@ -32,6 +32,7 @@ class MLPAgent(AbstractAgent):
     
     def reset(self):
         self._b = None 
+        self._prev_ctl = None
 
     def forward(self, o, u):
         dist_params = self.mlp(o)
