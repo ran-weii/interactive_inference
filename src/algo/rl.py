@@ -96,7 +96,9 @@ class SAC(nn.Module):
             self.agent.parameters(), lr=lr, weight_decay=decay
         )
         self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
-    
+        
+        self.plot_keys = ["eps_return_avg", "critic_loss_avg", "actor_loss_avg"]
+
     def normalize_obs(self, obs):
         mu = torch.from_numpy(self.replay_buffer.moving_mean).to(torch.float32)
         std = torch.from_numpy(self.replay_buffer.moving_variance**0.5).to(torch.float32)
