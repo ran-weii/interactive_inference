@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import torch
 from src.data.geometry import wrap_angles, coord_transformation
+from src.data.geometry import angle_to_vector
+from src.map_api.frenet_utils import compute_normal_from_kappa
+from src.map_api.frenet_utils import compute_acceleration_vector
 
 """ TODO: 
 make lane feature calculation a part of the observer 
@@ -84,10 +87,10 @@ class Observer:
     """ Observer object that computes features in the frenet frame """
     default_ego_features = ["ds", "dd", "d", "psi_error_r", "kappa_r"]
     default_relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "psi_rel", "loom_s"]
-    
+    default_action_set = ["dds", "ddd"]
     def __init__(
         self, map_data, ego_features=default_ego_features, 
-        relative_features=default_relative_features, fp_dist=30.):
+        relative_features=default_relative_features, action_set=default_action_set, fp_dist=30.):
         """
         Args:
             map_data (MapReader): map data object
@@ -100,6 +103,7 @@ class Observer:
         assert all([f in FEATURE_SET["relative"] for f in relative_features]), "relative feature not in FEATURE_SET"
         self.map_data = map_data
         self.feature_set = ego_features + relative_features
+        self.action_set = action_set
         self.fp_dist = fp_dist
         self.eps = 1e-6
         
@@ -198,6 +202,57 @@ class Observer:
             "loom_s": loom_s, "loom_d": loom_d
         }
         return obs_dict
+    
+    def agent_control_to_global(self, ax, ay, psi):
+        """ Convert agent control to global frame """
+        if self.action_set[0] == "ax_ego":
+            act_env = self.ego_action_to_global(ax, ay, psi)
+        else:
+            act_env = self.frenet_action_to_global(ax, ay)
+        return act_env
+
+    def ego_action_to_global(self, ax, ay, psi):
+        """ Convert actions from ego frame to global frame 
+        
+        Args:
+            ax (float): x acceleration in ego frame
+            ay (float): y acceleration in ego frame
+            psi (np.array): heading in radians
+
+        Returns:
+            act_env (np.array): action in global frame. size=[2]
+        """
+        ax_env, ay_env = coord_transformation(ax, ay, None, None, theta=psi)
+        act_env = np.array([ax_env, ay_env])
+        return act_env
+    
+    def frenet_action_to_global(self, dds, ddd):
+        """ Convert actions from frenet frame to global frame 
+        
+        Args:
+            dds (float): s acceleration in frenet frame
+            ddd (float): d acceleration in frenet frame
+
+        Returns:
+            act_env (np.array): action in global frame. size=[2]
+        """
+        ref_path = self._ref_path
+        s_condition = self._s_condition_ego
+        d_condition = self._d_condition_ego
+        s_condition = np.hstack([s_condition, np.array([dds])])
+        d_condition = np.hstack([d_condition, np.array([ddd])])
+        cartesian_state = ref_path.frenet_to_cartesian(
+            s_condition, d_condition
+        )
+        
+        [x, y, v, a, theta, kappa] = cartesian_state
+        norm = compute_normal_from_kappa(theta, kappa)
+        tan_vec = angle_to_vector(theta)
+        norm_vec = angle_to_vector(norm)
+        act_env = compute_acceleration_vector(
+            a, v, kappa, tan_vec, norm_vec
+        ).flatten()
+        return act_env
 
 
 class RelativeObserver:
