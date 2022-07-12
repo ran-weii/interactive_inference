@@ -23,23 +23,28 @@ class ReplayBuffer:
         
         self.obs_eps = [] # store a single episode
         self.ctl_eps = [] # store a single episode
+        self.done_eps = [] # store a single episode
 
-    def __call__(self, controller):
+    def __call__(self, controller, done=False):
         """ Append episode history """ 
         self.obs_eps.append(controller._obs.data.numpy())
         self.ctl_eps.append(controller._prev_act.data.numpy())
+        self.done_eps.append(np.array([int(done)]).reshape(1, 1))
 
-    def push(self, obs=None, ctl=None):
+    def push(self, obs=None, ctl=None, done=None):
         """ Store episode """
         if obs is None and ctl is None:
             obs = np.vstack(self.obs_eps)
             ctl = np.vstack(self.ctl_eps)
-
+            done = np.vstack(self.done_eps)
+        
         self.episodes.append({ 
             "obs": obs[:-1],
             "ctl": ctl[:-1],
-            "next_obs": obs[1:]
+            "next_obs": obs[1:],
+            "done": done[1:]
         })
+        
         self.eps_len.append(len(self.episodes[-1]["obs"]))
         
         self.num_eps += 1
@@ -53,16 +58,18 @@ class ReplayBuffer:
                 self.num_eps = len(self.eps_len)
         self.obs_eps = []
         self.ctl_eps = [] 
+        self.done_eps = []
 
     def sample_random(self, batch_size):
         """ sample random steps """ 
         obs = np.vstack([e["obs"] for e in self.episodes])
         ctl = np.vstack([e["ctl"] for e in self.episodes])
         next_obs = np.vstack([e["next_obs"] for e in self.episodes])
-
+        done = np.vstack([e["done"] for e in self.episodes])
+        
         idx = np.random.randint(0, self.size, size=batch_size)
         batch = dict(
-            obs=obs[idx], ctl=ctl[idx],next_obs=next_obs[idx]
+            obs=obs[idx], ctl=ctl[idx], next_obs=next_obs[idx], done=done[idx]
         )
         return {k: torch.from_numpy(v).to(torch.float32) for k, v in batch.items()}
 
