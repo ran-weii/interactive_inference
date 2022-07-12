@@ -11,34 +11,40 @@ vectorize environment
 class InteractionSimulator(gym.Env):
     """ Simulator with 
     
-    observations
+    global states
         ego: [x, y, vx, vy, psi, l, w] 
         agents: [x, y, vx, vy, psi, l, w]
     
-    actions:
+    global actions:
         [ax, ay]
     """
-    def __init__(self, dataset, map_data, dt=0.1):
+    def __init__(self, dataset, map_data, observer, max_eps_steps=1000, dt=0.1):
         super().__init__()
+        self.max_eps_steps = max_eps_steps
         self.dt = dt
 
         self.dataset = dataset
         self.map_data = map_data
+        self.observer = observer
         self.dynamics_model = ConstantAcceleration(self.dt)
         
         self.x_lim = map_data.x_lim
         self.y_lim = map_data.y_lim
-        self.v_lim = 150.
+        self.v_lim = 150. # velocity limit
+        self.a_lim = 5. # acceleration limit
         self.action_limits = np.array([10, 5]).astype(np.float32)
         self.action_space = gym.spaces.Box(
             low=-self.action_limits,
             high=self.action_limits,
             dtype=np.float64
         )
+        self.obs_dim = len(self.observer.feature_set)
         
         self._track_data = None # recorded track data {"ego", "agents"}
         self._sim_states = None # simulated states [x, y, vx, vy, psi, kappa]
         self._sim_acts = None # simulated actions [ax, ay]
+        self._sim_obs = None # agent observation 
+        self._sim_ctl = None # agent control
         self.t = None # current time
         self.T = None # episode max time
 
@@ -48,9 +54,11 @@ class InteractionSimulator(gym.Env):
     def reset(self, eps_id):
         self._track_data = self.dataset[eps_id]
         self.t = 0
-        self.T = len(self._track_data["act"])
-        self._sim_states = np.zeros((self.T, 7))
-        self._sim_acts = np.zeros((self.T, 2))
+        self.T = len(self._track_data["ego"]) - 1
+        self._sim_states = np.zeros((self.T + 1, 7))
+        self._sim_acts = np.zeros((self.T + 1, 2))
+        self._sim_obs = np.zeros((self.T + 1, self.obs_dim))
+        self._sim_ctl = np.zeros((self.T, 2))
         
         self._sim_states[0] = self._track_data["ego"][0][:7]
 
@@ -59,13 +67,72 @@ class InteractionSimulator(gym.Env):
         self._ref_lane_id = self.map_data.match_lane(x, y)
         self._ref_path = self.map_data.lanes[self._ref_lane_id].centerline.frenet_path
 
-        obs_dict = {
+        state_dict = {
             "ego": self._sim_states[0],
             "agents": self._track_data["agents"][0][:, :7]
         }
-        return obs_dict
+
+        self.observer.reset()
+        obs = self.observer.observe(state_dict)
+        self._sim_obs[self.t] = obs.view(-1).numpy()
+        return obs
     
-    def get_action(self):
+    def step(self, ctl):
+        """ Step the environment
+        
+        Args:
+            ctl (torch.tensor): control vector in agent's chosen frame of reference. 
+                To be transformed by the observer into the global frame. size=[1, 2]
+
+        Returns:
+            obs (torch.tensor): observation vector. size=[1, obs_dim]
+            reward ():
+            done (bool): whether maximum steps have been reached
+            info (dict): 
+        """
+        # unpack current state
+        state = self._sim_states[self.t][:4]
+        psi = self._sim_states[self.t][4]
+        l = self._sim_states[self.t][5]
+        w = self._sim_states[self.t][6]
+        
+        # transfrom agent control
+        ctl = ctl.numpy().flatten()
+        action = self.observer.agent_control_to_global(ctl[0], ctl[1], psi)
+        
+        # step the dynamics
+        state_action = np.hstack([state, action]).reshape(-1, 1)
+        next_state = self.dynamics_model.step(state_action).flatten()[:4]
+
+        # clip state
+        next_state[0] = np.clip(next_state[0], self.map_data.x_lim[0], self.map_data.x_lim[1])
+        next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
+        next_state[[2, 3]] = clip_norm(next_state[[2, 3]], self.v_lim)
+        next_psi = self.compute_psi_kappa(next_state, psi)
+
+        # compute lane deviation
+        x, y = next_state[0], next_state[1]
+        s, d = self._ref_path.cartesian_to_frenet(x, y, None, None, None, None, order=1)
+        
+        self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
+        self._sim_acts[self.t] = action
+        
+        state_dict = {
+            "ego": self._sim_states[self.t+1],
+            "agents": self._track_data["agents"][self.t+1][:, :7]
+        }
+        obs = self.observer.observe(state_dict)
+        reward = None
+        done = True if (self.t == self.T) or self.t >= self.max_eps_steps else False
+        info = {"terminated": np.abs(d[0]) > 3.8, "s": s[0], "d": d[0]}
+
+        # udpate self
+        self.t += 1
+        self._sim_obs[self.t] = obs.view(-1).numpy()
+        self._sim_ctl[self.t-1] = ctl
+        return obs, reward, done, info
+
+    def get_action_from_data(self):
         """ Get observed action from track data """
         assert self._track_data is not None, "Please reset episode"
         act = self._track_data["act"][self.t]
@@ -99,36 +166,6 @@ class InteractionSimulator(gym.Env):
         # d_s = np.sqrt(d_x**2 + d_y**2)
         # kappa = d_psi[-1] / d_s[-1]
         return psi
-
-    def step(self, action):
-        state = self._sim_states[self.t][:4]
-        psi = self._sim_states[self.t][4]
-        l = self._sim_states[self.t][5]
-        w = self._sim_states[self.t][6]
-        
-        state_action = np.hstack([state, action]).reshape(-1, 1)
-        next_state = self.dynamics_model.step(state_action).flatten()[:4]
-        next_state[0] = np.clip(next_state[0], self.map_data.x_lim[0], self.map_data.x_lim[1])
-        next_state[1] = np.clip(next_state[1], self.map_data.y_lim[0], self.map_data.y_lim[1])
-        next_state[[2, 3]] = clip_norm(next_state[[2, 3]], self.v_lim)
-        next_psi = self.compute_psi_kappa(next_state, psi)
-
-        # compute lane deviation
-        x, y = next_state[0], next_state[1]
-        s, d = self._ref_path.cartesian_to_frenet(x, y, None, None, None, None, order=1)
-        
-        self._sim_states[self.t+1] = np.hstack([next_state, next_psi, l, w])
-        self._sim_acts[self.t] = action
-
-        self.t += 1
-        obs_dict = {
-            "ego": self._sim_states[self.t],
-            "agents": self._track_data["agents"][self.t][:, :7]
-        }
-        reward = None
-        done = True if self.t == self.T - 1 else False
-        info = {"terminated": np.abs(d[0]) > 3.8, "s": s[0], "d": d[0]}
-        return obs_dict, reward, done, info
     
     def render(self):
         return 
