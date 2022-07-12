@@ -26,7 +26,7 @@ class Logger():
             else:
                 stats[key] = val[-1]
 
-        pprint.pprint(stats)
+        pprint.pprint({k: np.round(v, 4) for k, v, in stats.items()})
         self.history.append(stats)
 
         # erase epoch stats
@@ -78,10 +78,6 @@ def train(
         # train model
         if t >= update_after and t % update_every == 0:
             train_stats = model.take_gradient_step(logger)
-            # logger.push(train_stats)
-            # for j in range(update_every):
-            #     train_stats = model.take_gradient_step()
-            #     logger.push(train_stats)
 
         # end of epoch handeling
         if (t + 1) % steps_per_epoch == 0:
