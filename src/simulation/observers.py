@@ -254,6 +254,16 @@ class Observer:
         ).flatten()
         return act_env
 
+    def get_info(self):
+        """ Get simulator info. Return terminated=True if d > max_d (3.8) """
+        max_d = 3.8
+        info = {
+            "terminated": np.abs(self._d_condition_ego[0]) > max_d,
+            "s": self._s_condition_ego[0],
+            "d": self._d_condition_ego[0]
+        }
+        return info
+
 
 class RelativeObserver:
     def __init__(self, map_data, frame="frenet", fields="rel"):
