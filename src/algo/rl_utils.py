@@ -56,7 +56,7 @@ def train(
     total_steps = epochs * steps_per_epoch
     start_time = time.time()
     
-    model.agent.reset()
+    model.reset()
     eps_id = np.random.choice(np.arange(len(env.dataset)))
     obs, eps_return, eps_len = env.reset(eps_id), 0, 0
     for t in range(total_steps):
@@ -77,7 +77,7 @@ def train(
             logger.push({"eps_return": eps_return/eps_len})
             logger.push({"eps_len": eps_len})
             
-            model.agent.reset()
+            model.reset()
             eps_id = np.random.choice(np.arange(len(env.dataset)))
             obs, eps_return, eps_len = env.reset(eps_id), 0, 0
 
@@ -102,6 +102,6 @@ def train(
     
     # final test episode
     eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
-    sim_states, sim_acts, track_data = eval_episode(env, model.agent, eval_eps_id)
+    sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
     logger.log_test_episode(sim_states, track_data)
     return model, logger
