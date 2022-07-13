@@ -30,6 +30,12 @@ class DoubleQNetwork(Model):
             batch_norm=False
         )
     
+    def __repr__(self):
+        s = "{}(hidden_dim={}, num_hidden={}, activation={})".format(
+            self.__class__.__name__, self.q1.hidden_dim, self.q1.num_hidden, self.q1.activation
+        )
+        return s
+
     def forward(self, o, u):
         """ Compute q1 and q2 values
         
@@ -50,9 +56,8 @@ class DoubleQNetwork(Model):
 class SAC(nn.Module):
     """ Soft actor critic """
     def __init__(
-        self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, 
-        buffer_size=int(1e6), batch_size=100, a_steps=50, lr=1e-3, decay=0, 
-        polyak=0.995, grad_clip=None
+        self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, polyak=0.995, norm_obs=False,
+        buffer_size=int(1e6), batch_size=100, a_steps=50, lr=1e-3, decay=0, grad_clip=None
         ):
         """
         Args:
@@ -61,22 +66,26 @@ class SAC(nn.Module):
             num_hidden (int): value network hidden layers
             gamma (float, optional): discount factor. Default=0.9
             beta (float, optional): softmax temperature. Default=0.2
+            polyak (float, optional): target network polyak averaging factor. Default=0.995
+            norm_obs (bool, optional): whether to normalize observations for critic. Default=False
             buffer_size (int, optional): replay buffer size. Default=1e6
             batch_size (int, optional): training batch size. Default=100
             a_steps (int, optional): model update steps per training step. Default=50
             lr (float, optional): learning rate. Default=1e-3
             decay (float, optional): weight decay. Default=0
-            polyak (float, optional): target network polyak averaging factor. Default=0.995
             grad_clip (float, optional): gradient clipping. Default=None
         """
         super().__init__()
         self.gamma = gamma
         self.beta = beta
+        self.polyak = polyak
+        self.norm_obs = norm_obs
 
         self.batch_size = batch_size
         self.a_steps = a_steps
+        self.lr = lr
+        self.decay = decay
         self.grad_clip = grad_clip
-        self.polyak = polyak
 
         self.agent = agent
 
@@ -97,20 +106,41 @@ class SAC(nn.Module):
         )
         self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
         
+        self.obs_mean = nn.Parameter(torch.zeros(agent.obs_dim), requires_grad=False)
+        self.obs_variance = nn.Parameter(torch.ones(agent.obs_dim), requires_grad=False)
+        
         self.plot_keys = ["eps_return_avg", "critic_loss_avg", "actor_loss_avg"]
+    
+    def __repr__(self):
+        s_agent = self.agent.__repr__()
+        s_critic = self.critic.__repr__()
+        s = "{}(gamma={}, beta={}, polyak={}, norm_obs={}, "\
+            "buffer_size={}, batch_size={}, a_steps={}, "\
+            "lr={}, decay={}, grad_clip={}, \n    agent={}, \n    critic={}\n)".format(
+            self.__class__.__name__, self.gamma, self.beta, self.polyak, self.norm_obs,
+            self.replay_buffer.max_size, self.batch_size, self.a_steps,
+            self.lr, self.decay, self.grad_clip, s_agent, s_critic
+        )
+        return s
 
     def normalize_obs(self, obs):
-        # mu = torch.from_numpy(self.replay_buffer.moving_mean).to(torch.float32)
-        # std = torch.from_numpy(self.replay_buffer.moving_variance**0.5).to(torch.float32)
-        # obs_norm = (obs - mu) / std
-        obs_norm = obs
+        obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
         return obs_norm
+    
+    def update_normalization_stats(self):
+        mean = torch.from_numpy(self.replay_buffer.moving_mean).to(torch.float32)
+        variance = torch.from_numpy(self.replay_buffer.moving_variance).to(torch.float32)
+
+        self.obs_mean.data = mean
+        self.obs_variance.data = variance
+
+        self.agent.obs_mean.data = mean
+        self.agent.obs_variance.data = variance
     
     def reset(self):
         self.agent.reset()
         
     def choose_action(self, obs):
-        obs = self.normalize_obs(obs)
         prev_ctl = self.agent._prev_ctl
 
         with torch.no_grad():
@@ -126,8 +156,8 @@ class SAC(nn.Module):
         done = batch["done"]      
         
         # normalize observation
-        obs = self.normalize_obs(obs)
-        next_obs = self.normalize_obs(next_obs)
+        obs_norm = self.normalize_obs(obs)
+        next_obs_norm = self.normalize_obs(next_obs)
 
         # sample next action
         with torch.no_grad():
@@ -136,11 +166,11 @@ class SAC(nn.Module):
         
         with torch.no_grad():    
             # compute value target
-            q1_next, q2_next = self.critic_target(next_obs, next_ctl)
+            q1_next, q2_next = self.critic_target(next_obs_norm, next_ctl)
             q_next = torch.min(q1_next, q2_next)
             q_target = r + (1 - done) * self.gamma * (q_next - self.beta * logp)
 
-        q1, q2 = self.critic(obs, ctl)
+        q1, q2 = self.critic(obs_norm, ctl)
         q1_loss = torch.pow(q1 - q_target, 2).mean()
         q2_loss = torch.pow(q2 - q_target, 2).mean()
         q_loss = (q1_loss + q2_loss) / 2
@@ -152,12 +182,12 @@ class SAC(nn.Module):
         ctl = batch["ctl"]
 
         # normalize observation
-        obs = self.normalize_obs(obs)
+        obs_norm = self.normalize_obs(obs)
 
         ctl_sample, logp = self.agent.choose_action(obs, ctl)
         ctl_sample = ctl_sample.squeeze(0)
         
-        q1, q2 = self.critic(obs, ctl_sample)
+        q1, q2 = self.critic(obs_norm, ctl_sample)
         q = torch.min(q1, q2)
         a_loss = torch.mean(self.beta * logp - q)
         return a_loss
@@ -165,6 +195,12 @@ class SAC(nn.Module):
     def take_gradient_step(self, logger=None):
         self.critic.train()
         self.agent.train()
+        self.update_normalization_stats()
+        # print(self.agent.obs_mean)
+        # print(self.obs_mean)
+        # print(self.agent.obs_variance)
+        # print(self.obs_variance)
+        # exit()
         
         critic_loss_epoch = []
         actor_loss_epoch = []
