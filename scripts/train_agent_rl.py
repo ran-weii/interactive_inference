@@ -23,6 +23,7 @@ from src.agents.mlp_agents import MLPAgent
 from src.algo.rl import SAC
 from src.algo.rl_utils import train
 from src.visualization.utils import plot_history
+from src.visualization.animation import animate, save_animation
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -65,6 +66,7 @@ def parse_args():
     parser.add_argument("--steps_per_epoch", type=int, default=1000, help="number of env steps per epoch, default=1000")
     parser.add_argument("--update_after", type=int, default=3000, help="burn-in env steps, default=3000")
     parser.add_argument("--update_every", type=int, default=50, help="update every env steps, default=50")
+    parser.add_argument("log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
     parser.add_argument("--a_steps", type=int, default=10, help="actor critic steps, default=50")
     parser.add_argument("--lr", type=float, default=0.001, help="model learning rate, default=0.001")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
@@ -108,7 +110,7 @@ def main(arglist):
 
     ego_dataset = EgoDataset(
         df_track, train_labels_col="is_train", 
-        max_eps=arglist.max_data_eps, create_svt=True, seed=arglist.seed
+        max_eps=arglist.max_data_eps, create_svt=arglist.create_svt, seed=arglist.seed
     )
     obs_dim, ctl_dim = len(feature_set), 2 
 
@@ -145,12 +147,11 @@ def main(arglist):
     
     model, logger = train(
         env, model, arglist.epochs, arglist.steps_per_epoch, 
-        arglist.update_after, arglist.update_every
+        arglist.update_after, arglist.update_every, log_test_every=arglist.log_test_every
     )
     
     df_history = pd.DataFrame(logger.history)
     df_history = df_history.assign(train=1)
-    print(df_history)
     
     # save results
     if arglist.save:
@@ -158,12 +159,15 @@ def main(arglist):
         exp_path = os.path.join(arglist.exp_path, "agents")
         agent_path = os.path.join(exp_path, arglist.agent)
         save_path = os.path.join(agent_path, date_time)
+        test_eps_path = os.path.join(save_path, "test_episodes")
         if not os.path.exists(exp_path):
             os.mkdir(exp_path)
         if not os.path.exists(agent_path):
             os.mkdir(agent_path)
         if not os.path.exists(save_path):
             os.mkdir(save_path)
+        if not os.path.exists(test_eps_path):
+            os.mkdir(test_eps_path)
         
         # save args
         with open(os.path.join(save_path, "args.json"), "w") as f:
@@ -179,6 +183,11 @@ def main(arglist):
         fig_history, _ =plot_history(df_history, model.plot_keys)
         fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
+        # save test episode animations
+        for i, test_episode in enumerate(logger.test_episodes):
+            ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
+            save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
+
         print(f"\nmodel saved at: {save_path}")
 
 if __name__ == "__main__":
