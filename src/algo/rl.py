@@ -128,14 +128,15 @@ class SAC(nn.Module):
         return obs_norm
     
     def update_normalization_stats(self):
-        mean = torch.from_numpy(self.replay_buffer.moving_mean).to(torch.float32)
-        variance = torch.from_numpy(self.replay_buffer.moving_variance).to(torch.float32)
+        if self.norm_obs:
+            mean = torch.from_numpy(self.replay_buffer.moving_mean).to(torch.float32)
+            variance = torch.from_numpy(self.replay_buffer.moving_variance).to(torch.float32)
 
-        self.obs_mean.data = mean
-        self.obs_variance.data = variance
+            self.obs_mean.data = mean
+            self.obs_variance.data = variance
 
-        self.agent.obs_mean.data = mean
-        self.agent.obs_variance.data = variance
+            self.agent.obs_mean.data = mean
+            self.agent.obs_variance.data = variance
     
     def reset(self):
         self.agent.reset()
