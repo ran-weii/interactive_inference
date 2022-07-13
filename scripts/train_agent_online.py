@@ -21,7 +21,7 @@ from src.agents.mlp_agents import MLPAgent
 
 # training imports
 from src.algo.irl import BehaviorCloning
-from src.algo.airl import AIRL
+from src.algo.airl import DAC
 from src.algo.rl_utils import train
 from src.visualization.utils import plot_history
 from src.visualization.animation import animate, save_animation
@@ -47,8 +47,9 @@ def parse_args():
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
+    parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observations for agent and algo, default=False")
     # trainer model args
-    parser.add_argument("--algo", type=str, choices=["sac"], default="sac", help="training algorithm, default=sac")
+    parser.add_argument("--algo", type=str, choices=["dac"], default="dac", help="training algorithm, default=dac")
     parser.add_argument("--hidden_dim", type=int, default=64, help="neural network hidden dims, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
     parser.add_argument("--activation", type=str, default="relu", help="neural network activation, default=relu")
@@ -127,7 +128,8 @@ def main(arglist):
 
     agent = MLPAgent(
         obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
-        activation=arglist.activation, use_tanh=arglist.use_tanh, ctl_limits=ctl_lim
+        activation=arglist.activation, use_tanh=arglist.use_tanh, 
+        ctl_limits=ctl_lim, norm_obs=arglist.norm_obs
     )
     
     # load agent from checkpoint
@@ -149,13 +151,13 @@ def main(arglist):
         print(f"loaded checkpoint from {cp_path}")
 
     # init trainer
-    if arglist.algo == "sac":
-        model = AIRL(
+    if arglist.algo == "dac":
+        model = DAC(
             agent, arglist.hidden_dim, arglist.num_hidden, 
-            gamma=arglist.gamma, beta=arglist.beta, buffer_size=arglist.buffer_size,
-            batch_size=arglist.batch_size, d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
-            lr=arglist.lr, decay=arglist.decay, polyak=arglist.polyak, 
-            grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
+            gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
+            buffer_size=arglist.buffer_size, batch_size=arglist.batch_size, 
+            d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
+            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
         )
         model.fill_real_buffer(rel_dataset)
 
@@ -175,7 +177,8 @@ def main(arglist):
 
     model, logger = train(
         env, model, arglist.epochs, arglist.steps_per_epoch, 
-        arglist.update_after, arglist.update_every, log_test_every=arglist.log_test_every
+        arglist.update_after, arglist.update_every, 
+        log_test_every=arglist.log_test_every
     )
     
     df_history = pd.DataFrame(logger.history)
