@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from copy import deepcopy
 import torch
 import torch.nn as nn
@@ -13,8 +12,8 @@ from src.algo.rl import DoubleQNetwork
 from src.algo.replay_buffers import ReplayBuffer
 
 """ TODO: modify this to work with recurrent agent """
-class AIRL(Model):
-    """ Fully observable discriminator actor critic """
+class DAC(Model):
+    """ Discriminator actor critic """
     def __init__(
         self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, polyak=0.995, 
         buffer_size=int(1e6), batch_size=100, d_steps=50, a_steps=50, lr=1e-3, decay=0, 
@@ -56,12 +55,9 @@ class AIRL(Model):
             agent.obs_dim, agent.ctl_dim, hidden_dim, num_hidden, "relu"
         )
         self.critic_target = deepcopy(self.critic)
-        self.ref_agent = deepcopy(self.agent)
 
         # freeze target parameters
         for param in self.critic_target.parameters():
-            param.requires_grad = False
-        for param in self.ref_agent.parameters():
             param.requires_grad = False
         
         self.d_optimizer = torch.optim.Adam(
@@ -114,21 +110,18 @@ class AIRL(Model):
     
     def reset(self):
         self.agent.reset()
-        self.ref_agent.reset()
 
     def choose_action(self, obs):
         obs = self.normalize_obs(obs)
-        prev_ctl = self.ref_agent._prev_ctl
+        prev_ctl = self.agent._prev_ctl
 
         with torch.no_grad():
-            ctl, _ = self.ref_agent.choose_action(obs, prev_ctl)
+            ctl, _ = self.agent.choose_action(obs, prev_ctl)
         return ctl.squeeze(0)
     
     def compute_reward(self, obs, ctl):
         inputs = torch.cat([obs, ctl], dim=-1)
         log_r = self.discriminator(inputs)
-        # logp_ref = self.ref_agent.ctl_log_prob(obs, ctl).unsqueeze(-1)
-        # r = -log_r + logp_ref
         r = -log_r
         return r
     
@@ -278,11 +271,6 @@ class AIRL(Model):
                     "critic_loss": critic_loss.data.item(),
                     "actor_loss": actor_loss.data.item()
                 })
-        
-        # update ref agent
-        self.ref_agent = deepcopy(self.agent)
-        for param in self.ref_agent.parameters():
-            param.requires_grad = False
 
         stats = {
             "d_loss": np.mean(d_loss_epoch),
