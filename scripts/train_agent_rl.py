@@ -46,6 +46,7 @@ def parse_args():
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
+    parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observations for agent and algo, default=False")
     # trainer model args
     parser.add_argument("--algo", type=str, choices=["sac"], default="sac", help="training algorithm, default=sac")
     parser.add_argument("--hidden_dim", type=int, default=64, help="neural network hidden dims, default=64")
@@ -120,16 +121,17 @@ def main(arglist):
 
     agent = MLPAgent(
         obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
-        activation=arglist.activation, use_tanh=arglist.use_tanh, ctl_limits=ctl_lim
+        activation=arglist.activation, use_tanh=arglist.use_tanh, 
+        ctl_limits=ctl_lim, norm_obs=arglist.norm_obs
     )
 
     # init trainer
     if arglist.algo == "sac":
         model = SAC(
             agent, arglist.hidden_dim, arglist.num_hidden, 
-            gamma=arglist.gamma, beta=arglist.beta, buffer_size=arglist.buffer_size,
-            batch_size=arglist.batch_size, a_steps=arglist.a_steps, lr=arglist.lr, 
-            decay=arglist.decay, polyak=arglist.polyak, grad_clip=arglist.grad_clip
+            gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
+            buffer_size=arglist.buffer_size, batch_size=arglist.batch_size, a_steps=arglist.a_steps, 
+            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     print(f"num parameters: {count_parameters(model)}")
     print(model)
@@ -147,7 +149,8 @@ def main(arglist):
     
     model, logger = train(
         env, model, arglist.epochs, arglist.steps_per_epoch, 
-        arglist.update_after, arglist.update_every, log_test_every=arglist.log_test_every
+        arglist.update_after, arglist.update_every, 
+        log_test_every=arglist.log_test_every
     )
     
     df_history = pd.DataFrame(logger.history)
