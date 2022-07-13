@@ -17,12 +17,14 @@ from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import Observer
 
 # model imports
-from src.distributions.hmm import ContinuousGaussianHMM, EmbeddedContinuousGaussianHMM
-from src.agents.vin_agents import VINAgent
+from src.agents.mlp_agents import MLPAgent
 
 # training imports
-from src.algo.airl import AIRL, train
+from src.algo.irl import BehaviorCloning
+from src.algo.airl import AIRL
+from src.algo.rl_utils import train
 from src.visualization.utils import plot_history
+from src.visualization.animation import animate, save_animation
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -40,43 +42,38 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
-    parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
-    parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
-    parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
-    parser.add_argument("--obs_cov", type=str, default="full", help="agent observation covariance, default=full")
-    parser.add_argument("--ctl_cov", type=str, default="full", help="agent control covariance, default=full")
-    parser.add_argument("--hmm_rank", type=int, default=0, help="agent hmm rank, 0 for full rank, default=0")
-    parser.add_argument("--state_embed_dim", type=int, default=30, help="agent hmm state embedding dimension, default=30")
-    parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
-    parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
-    parser.add_argument("--agent", type=str, choices=["vin"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
     parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
+    parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
     # trainer model args
-    parser.add_argument("--hidden_dim", type=int, default=32, help="trainer network hidden dims, default=32")
-    parser.add_argument("--gru_layers", type=int, default=2, help="trainer gru layers, default=2")
-    parser.add_argument("--mlp_layers", type=int, default=2, help="trainer mlp layers, default=2")
+    parser.add_argument("--algo", type=str, choices=["sac"], default="sac", help="training algorithm, default=sac")
+    parser.add_argument("--hidden_dim", type=int, default=64, help="neural network hidden dims, default=64")
+    parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
+    parser.add_argument("--activation", type=str, default="relu", help="neural network activation, default=relu")
     parser.add_argument("--gamma", type=float, default=0.9, help="trainer discount factor, default=0.9")
-    # training args
-    parser.add_argument("--algo", type=str, choices=["airl"], default="airl", help="training algorithm, default=airl")
-    parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
-    parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
-    parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
-    parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
-    parser.add_argument("--num_eps", type=int, default=3, help="number of episodes per epochs, default=10")
-    parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
-    parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
-    parser.add_argument("--buffer_size", type=int, default=1e5, help="agent replay buffer size, default=1e5")
-    parser.add_argument("--rnn_steps", type=int, default=10, help="rnn steps to store, default=10")
-    parser.add_argument("--d_steps", type=int, default=10, help="discriminator steps, default=10")
-    parser.add_argument("--ac_steps", type=int, default=10, help="actor critic steps, default=10")
-    parser.add_argument("--lr", type=float, default=0.01, help="agent learning rate, default=0.01")
-    parser.add_argument("--lr_q", type=float, default=0.005, help="value function learning rate, default=0.005")
-    parser.add_argument("--lr_d", type=float, default=0.005, help="discriminator learning rate, default=0.005")
-    parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
-    parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
+    parser.add_argument("--beta", type=float, default=0.2, help="softmax temperature, default=0.2")
     parser.add_argument("--polyak", type=float, default=0.995, help="polyak averaging factor, default=0.995")
+    # data args
+    parser.add_argument("--max_data_eps", type=int, default=5, help="max number of data episodes, default=10")
+    parser.add_argument("--create_svt", type=bool_, default=True, help="create svt to speed up rollout, default=True")
+    parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
+    parser.add_argument("--max_eps_len", type=int, default=500, help="max track length, default=200")
+    # training args
+    parser.add_argument("--batch_size", type=int, default=100, help="training batch size, default=100")
+    parser.add_argument("--buffer_size", type=int, default=1e5, help="agent replay buffer size, default=1e5")
+    parser.add_argument("--epochs", type=int, default=10, help="number of training epochs, default=10")
+    parser.add_argument("--steps_per_epoch", type=int, default=1000, help="number of env steps per epoch, default=1000")
+    parser.add_argument("--update_after", type=int, default=3000, help="burn-in env steps, default=3000")
+    parser.add_argument("--update_every", type=int, default=50, help="update every env steps, default=50")
+    parser.add_argument("--log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
+    parser.add_argument("--d_steps", type=int, default=10, help="discriminator steps, default=50")
+    parser.add_argument("--a_steps", type=int, default=10, help="actor critic steps, default=50")
+    parser.add_argument("--lr", type=float, default=0.001, help="model learning rate, default=0.001")
+    parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
+    parser.add_argument("--grad_clip", type=float, default=1000., help="gradient clipping, default=1000.")
+    parser.add_argument("--grad_penalty", type=float, default=10., help="discriminator gradient penalty, default=10.")
     parser.add_argument("--plot_history", type=bool_, default=True, help="plot learning curve, default=True")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
@@ -87,7 +84,7 @@ def main(arglist):
     np.random.seed(arglist.seed)
     torch.manual_seed(arglist.seed)
     
-    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename)
+    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, train=True)
 
     # filter episode length
     df_track["eps_id"], df_track["eps_len"] = filter_segment_by_length(
@@ -109,105 +106,96 @@ def main(arglist):
         action_set = ["ax_ego", "ay_ego"]
     assert set(action_set).issubset(set(ACTION_SET))
     
-    # compute obs and ctl mean and variance stats
-    obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
-    obs_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].var().values).to(torch.float32)
-    ctl_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].mean().values).to(torch.float32)
-    ctl_var = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).to(torch.float32)
-    
-    ego_dataset = EgoDataset(df_track, train_labels_col="is_train")
+    # compute ctl limits
+    ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
+    ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
+    ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.2
+
+    ego_dataset = EgoDataset(
+        df_track, train_labels_col="is_train", 
+        max_eps=arglist.max_data_eps, create_svt=arglist.create_svt, seed=arglist.seed
+    )
     rel_dataset = RelativeDataset(
-        df_track, feature_set, action_set, train_labels_col="is_train"
+        df_track, feature_set, action_set, train_labels_col="is_train", 
+        max_eps=arglist.max_data_eps, seed=arglist.seed
     )
     obs_dim, ctl_dim = len(feature_set), 2 
 
     print(f"feature set: {feature_set}")
     print(f"action set: {action_set}")
     print(f"data size: {len(ego_dataset)}")
-    
-    # init dynamics model
-    if arglist.dynamics_model == "cghmm":
-        dynamics_model = ContinuousGaussianHMM(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
-            arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
-        )
-    elif arglist.dynamics_model == "ecghmm":
-        dynamics_model = EmbeddedContinuousGaussianHMM(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
-            arglist.state_embed_dim, arglist.act_embed_dim,
-            arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
-        )
-    
-    # load dynamics
-    if arglist.dynamics_path != "none":
-        state_dict = torch.load(os.path.join(
-            arglist.exp_path, "dynamics", arglist.dynamics_path, "model.pt"
-        ))
-        dynamics_model.load_state_dict(state_dict)
-        for n, p in dynamics_model.named_parameters():
-            p.requires_grad = arglist.train_dynamics
 
-    # init agent
-    if arglist.agent == "vin":
-        agent = VINAgent(dynamics_model, arglist.horizon)
-        agent.hmm.obs_model.init_batch_norm(obs_mean, obs_var)
-        agent.hmm.ctl_model.init_batch_norm(ctl_mean, ctl_var)
-
-    # init trainer
-    model = AIRL(
-        agent, obs_mean, obs_var, ctl_mean, ctl_var,
-        hidden_dim=arglist.hidden_dim, gru_layers=arglist.gru_layers,
-        mlp_layers=arglist.mlp_layers, gamma=arglist.gamma,
-        buffer_size=arglist.buffer_size, rnn_steps=arglist.rnn_steps, 
-        batch_size=arglist.batch_size, d_steps=arglist.d_steps, ac_steps=arglist.ac_steps,
-        lr_agent=arglist.lr, lr_d=arglist.lr_d, lr_q=arglist.lr_q, 
-        decay=arglist.decay, grad_clip=arglist.grad_clip, polyak=arglist.polyak
+    agent = MLPAgent(
+        obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
+        activation=arglist.activation, use_tanh=arglist.use_tanh, ctl_limits=ctl_lim
     )
-    print(f"num parameters: {count_parameters(model)}")
-    print(model)
-
-    # load from check point
+    
+    # load agent from checkpoint
     if arglist.checkpoint_path != "none":
         cp_path = os.path.join(
             arglist.exp_path, "agents", 
             arglist.agent, arglist.checkpoint_path
         )
         # load state dict
-        state_dict = torch.load(os.path.join(cp_path, "model.pt"), map_location=torch.device("cpu"))
+        state_dict = torch.load(os.path.join(cp_path, "model.pt"))
 
         # load history
         df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
+        
+        model = BehaviorCloning(agent)
+        model.load_state_dict(state_dict, strict=False)
+        agent = model.agent
 
-        model.agent.load_state_dict(state_dict, strict=False)
         print(f"loaded checkpoint from {cp_path}")
 
+    # init trainer
+    if arglist.algo == "sac":
+        model = AIRL(
+            agent, arglist.hidden_dim, arglist.num_hidden, 
+            gamma=arglist.gamma, beta=arglist.beta, buffer_size=arglist.buffer_size,
+            batch_size=arglist.batch_size, d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
+            lr=arglist.lr, decay=arglist.decay, polyak=arglist.polyak, 
+            grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
+        )
+        model.fill_real_buffer(rel_dataset)
+
+    print(f"num parameters: {count_parameters(model)}")
+    print(model)
+    
     # load map
     map_data = MapReader()
     map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
     
     # init simulator
-    env = InteractionSimulator(ego_dataset, map_data)
     observer = Observer(
-        map_data, ego_features=ego_features, relative_features=relative_features
+        map_data, ego_features=ego_features, relative_features=relative_features,
+        action_set=action_set
     )
+    env = InteractionSimulator(ego_dataset, map_data, observer, max_eps_steps=arglist.max_eps_len)
 
-    model, df_history = train(
-        env, observer, model, rel_dataset, action_set, 
-        arglist.num_eps, arglist.epochs, arglist.max_eps_len
+    model, logger = train(
+        env, model, arglist.epochs, arglist.steps_per_epoch, 
+        arglist.update_after, arglist.update_every, log_test_every=arglist.log_test_every
     )
-
+    
+    df_history = pd.DataFrame(logger.history)
+    df_history = df_history.assign(train=1)
+    
     # save results
     if arglist.save:
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
         exp_path = os.path.join(arglist.exp_path, "agents")
         agent_path = os.path.join(exp_path, arglist.agent)
         save_path = os.path.join(agent_path, date_time)
+        test_eps_path = os.path.join(save_path, "test_episodes")
         if not os.path.exists(exp_path):
             os.mkdir(exp_path)
         if not os.path.exists(agent_path):
             os.mkdir(agent_path)
         if not os.path.exists(save_path):
             os.mkdir(save_path)
+        if not os.path.exists(test_eps_path):
+            os.mkdir(test_eps_path)
         
         # save args
         with open(os.path.join(save_path, "args.json"), "w") as f:
@@ -220,9 +208,14 @@ def main(arglist):
         df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ = plot_history(df_history, model.loss_keys)
+        fig_history, _ =plot_history(df_history, model.plot_keys)
         fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
+        # save test episode animations
+        for i, test_episode in enumerate(logger.test_episodes):
+            ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
+            save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
+
         print(f"\nmodel saved at: {save_path}")
 
 if __name__ == "__main__":
