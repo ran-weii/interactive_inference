@@ -196,11 +196,6 @@ class SAC(nn.Module):
         self.critic.train()
         self.agent.train()
         self.update_normalization_stats()
-        # print(self.agent.obs_mean)
-        # print(self.obs_mean)
-        # print(self.agent.obs_variance)
-        # print(self.obs_variance)
-        # exit()
         
         critic_loss_epoch = []
         actor_loss_epoch = []
