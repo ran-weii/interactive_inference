@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument("--steps_per_epoch", type=int, default=1000, help="number of env steps per epoch, default=1000")
     parser.add_argument("--update_after", type=int, default=3000, help="burn-in env steps, default=3000")
     parser.add_argument("--update_every", type=int, default=50, help="update every env steps, default=50")
-    parser.add_argument("log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
+    parser.add_argument("--log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
     parser.add_argument("--a_steps", type=int, default=10, help="actor critic steps, default=50")
     parser.add_argument("--lr", type=float, default=0.001, help="model learning rate, default=0.001")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
