@@ -1,5 +1,6 @@
 import math
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as torch_dist
 from torch.distributions.transforms import TanhTransform
@@ -12,13 +13,14 @@ class MLPAgent(AbstractAgent):
     """ Gaussian policy network """
     def __init__(
         self, obs_dim, ctl_dim, hidden_dim, num_hidden, activation="silu", 
-        use_tanh=True, ctl_limits=None,
+        use_tanh=True, ctl_limits=None, norm_obs=False
         ):
         super().__init__()
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.use_tanh = use_tanh
         self.ctl_limits = ctl_limits
+        self.norm_obs = norm_obs
 
         self.mlp = MLP(
             input_dim=obs_dim,
@@ -31,12 +33,29 @@ class MLPAgent(AbstractAgent):
         
         if self.use_tanh:
             self.tanh_transform = TanhTransform(ctl_limits)
+
+        self.obs_mean = nn.Parameter(torch.zeros(obs_dim), requires_grad=False)
+        self.obs_variance = nn.Parameter(torch.ones(obs_dim), requires_grad=False)
     
+    def __repr__(self):
+        s = "{}(obs_dim={}, ctl_dim={}, hidden_dim={}, num_hidden={}, activation={}, "\
+            "use_tanh={}, ctl_lim={}, norm_obs={})".format(
+            self.__class__.__name__, self.obs_dim, self.ctl_dim, 
+            self.mlp.hidden_dim, self.mlp.num_hidden, self.mlp.activation,
+            self.use_tanh, self.ctl_limits, self.norm_obs
+        )
+        return s
+
     def reset(self):
         self._b = None 
         self._prev_ctl = None
+    
+    def normalize_obs(self, obs):
+        obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
+        return obs_norm
 
     def forward(self, o, u):
+        o = self.normalize_obs(o)
         dist_params = self.mlp(o)
         mu, lv = torch.chunk(dist_params, 2, dim=-1)
         return mu, lv
