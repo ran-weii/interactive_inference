@@ -39,7 +39,7 @@ class ReplayBuffer:
         self.rwd_eps.append(np.array(rwd).reshape(1, 1))
         self.done_eps.append(np.array([int(done)]).reshape(1, 1))
 
-    def push(self, obs=None, ctl=None, done=None):
+    def push(self, obs=None, ctl=None, rwd=None, done=None):
         """ Store episode """
         if obs is None and ctl is None:
             obs = np.vstack(self.obs_eps)
