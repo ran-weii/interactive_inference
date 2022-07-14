@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.agents.core import AbstractAgent
+from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.planners import value_iteration
 from src.distributions.utils import kl_divergence, poisson_pdf, rectify
 
@@ -14,11 +15,8 @@ class EFEPlanner(nn.Module):
         
         self.c = nn.Parameter(torch.randn(1, state_dim))
         self.tau = nn.Parameter(torch.randn(1, 1))
-        nn.init.xavier_normal(self.c, gain=1.)
+        # nn.init.xavier_normal_(self.c, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
-
-        # self.gamma = nn.Parameter(torch.randn(1, 1))
-        # nn.init.uniform_(self.gamma, a=-1, b=1)
         
         self.reset()
     
@@ -29,6 +27,15 @@ class EFEPlanner(nn.Module):
     def reset(self):
         self._q = None
     
+    @property
+    def target_dist(self):
+        """ Target state distribution """
+        return torch.softmax(self.c, dim=-1)
+    
+    @property
+    def horizon_dist(self):
+        return poisson_pdf(rectify(self.tau), self.horizon)
+
     def compute_reward(self, s_next, entropy):
         """ Compute single stage reward
         
@@ -39,12 +46,54 @@ class EFEPlanner(nn.Module):
         Returns:
             r (torch.tensor): reward. size=[..., state_dim]
         """
-        c = torch.softmax(self.c + self.eps, dim=-1)
+        c = self.target_dist
         kl = kl_divergence(s_next, c)
         eh = torch.sum(s_next * entropy, dim=-1)
         r = -kl - eh
         return r
     
+    @staticmethod
+    def _value_iteration(reward, transition, horizon):
+        """
+        Args:
+            reward (torch.tensor): reward matrix [batch_size, act_dim, state_dim]
+            transition (torch.tensor): transition matrix [batch_size, act_dim, state_dim, state_dim]
+            horizon (int): planning horizon
+            
+        Returns:
+            q (torch.tensor): Q value [batch_size, H, act_dim, state_dim]
+        """
+        q = [torch.empty(0)] * horizon
+        q[0] = reward
+        for h in range(horizon-1):
+            v_next = torch.logsumexp(q[h], dim=-2, keepdim=True).unsqueeze(-2)
+            q_next = torch.sum(transition * v_next, dim=-1)
+            q[h+1] = reward + q_next
+        q = torch.stack(q).transpose(0, 1)
+        return q
+
+    @staticmethod
+    def _tensor_value_iteration(reward, transition_model, horizon):
+        """ Value iteration using tensor method 
+        slower than value iteration on small state space
+
+        Args:
+            reward (torch.tensor): reward matrix [batch_size, act_dim, state_dim]
+            transition_model (torch.tensor): transition model with _tensor_backward method
+            horizon (int): planning horizon
+            
+        Returns:
+            q (torch.tensor): Q value [batch_size, H, act_dim, state_dim]
+        """
+        q = [torch.empty(0)] * horizon
+        q[0] = reward
+        for h in range(horizon-1):
+            v_next = torch.logsumexp(q[h], dim=-2, keepdim=True)
+            q_next = transition_model._tensor_backward(v_next)
+            q[h+1] = reward + q_next
+        q = torch.stack(q).transpose(0, 1)
+        return q
+
     def plan(self, transition_matrix, entropy):
         """ Compute q value function 
         
@@ -58,7 +107,7 @@ class EFEPlanner(nn.Module):
             reward = self.compute_reward(s_next, entropy)
             self._q = value_iteration(reward, transition_matrix, self.horizon) # [batch_size, horizon, act_dim, state_dim]
     
-    def policy(self, b):
+    def policy(self, b, q):
         """ Compute belief action policy
         
         Args:
@@ -68,32 +117,36 @@ class EFEPlanner(nn.Module):
             policy (torch.tensor): action distribution. size=[batch_size, act_dim]
         """
         b_ = b.unsqueeze(-2).unsqueeze(-2)
-        q = torch.sum(self._q * b_, dim=-1)
+        q = torch.sum(b_ * q, dim=-1)
         policy = torch.softmax(q, dim=-1) # [batch_size, horizon, act_dim]
         
-        h = poisson_pdf(rectify(self.tau), self.horizon).unsqueeze(-1)
+        h = self.horizon_dist.unsqueeze(-1)
         policy = torch.sum(h * policy, dim=-2)
-        
-        # apply horizon first
-        # gamma = rectify(self.gamma)
-        # h = poisson_pdf(rectify(self.tau), self.horizon).unsqueeze(-1)
-        # b_ = b.unsqueeze(-2).unsqueeze(-2)
-        # q = torch.sum(self._q * b_, dim=-1) # [batch_size, horizon, act_dim]
-        # q = torch.sum(h * q, dim=-2)
-        # policy = torch.softmax(q, dim=-1) 
         return policy
 
 
 class VINAgent(AbstractAgent):
     """ Value iteraction network agent with ContinuousGaussianHMM dynamics model"""
-    def __init__(self, dynamics_model, horizon, rwd_model="efe"):
+    def __init__(
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
+        obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None
+        ):
         super().__init__()
-        self.state_dim = dynamics_model.state_dim
-        self.act_dim = dynamics_model.act_dim
-        self.obs_dim = dynamics_model.obs_dim
-        self.ctl_dim = dynamics_model.ctl_dim
+        # self.state_dim = dynamics_model.state_dim
+        # self.act_dim = dynamics_model.act_dim
+        # self.obs_dim = dynamics_model.obs_dim
+        # self.ctl_dim = dynamics_model.ctl_dim
+        self.state_dim = state_dim
+        self.act_dim = act_dim
+        self.obs_dim = obs_dim
+        self.ctl_dim = ctl_dim
+        self.horizon = horizon
         
-        self.hmm = dynamics_model
+        self.hmm = ContinuousGaussianHMM(
+            state_dim, act_dim, obs_dim, ctl_dim, rank, 
+            obs_cov=obs_cov, ctl_cov=ctl_cov, 
+            use_tanh=use_tanh, ctl_lim=ctl_lim
+        )
         self.planner = EFEPlanner(self.state_dim, horizon)
     
     def load_dynamics_model(self, state_dict, requires_grad):
@@ -112,7 +165,17 @@ class VINAgent(AbstractAgent):
         self._b = torch.ones(1, self.state_dim)
         self._a = None # previous action distribution
         self.planner.reset() # reset q value function
-    
+        self._prev_ctl = None
+
+    @property
+    def value(self):
+        """ Slow do not use during inference """
+        transition = self.hmm.transition_model.transition
+        entropy = self.hmm.obs_entropy()
+        r = self.planner.compute_reward(transition, entropy)
+        q = self.planner._value_iteration(r, transition, self.horizon)
+        return q
+
     def plan(self, b):
         """ Compute a single time step action distribution for belief b 
         
@@ -123,12 +186,11 @@ class VINAgent(AbstractAgent):
             a (torch.tensor): action distribution. size=[batch_size, act_dim]
         """
         if self.planner._q is None:
-            a = torch.eye(self.act_dim).unsqueeze(0).to(self.device)
-            transition_matrix = self.hmm.get_transition_matrix(a)
+            transition_matrix = self.hmm.transition_model.transition
             entropy = self.hmm.obs_entropy()         
             self.planner.plan(transition_matrix, entropy)
-        
-        a = self.planner.policy(b)
+       
+        a = self.planner.policy(b, self.planner._q)
         return a
     
     def alpha(self, b, o, u=None, a=None, logp_o=None, logp_u=None):
@@ -284,7 +346,8 @@ class VINAgent(AbstractAgent):
         stats = {"loss_o": logp_o_mean}
         return loss, stats
 
-    def choose_action(self, o, u, sample_method="ace", num_samples=1):
+    # def choose_action(self, o, u, sample_method="ace", num_samples=1):
+    def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
         
         Args:
@@ -297,7 +360,7 @@ class VINAgent(AbstractAgent):
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
         """
-        b_t, a_t = self.alpha(self._b, o, u, self._a)
+        b_t, a_t = self.alpha(self._b, o, self._prev_ctl, self._a)
         
         if sample_method == "bma":
             u_sample = self.hmm.ctl_model.bayesian_average(a_t)
@@ -306,9 +369,11 @@ class VINAgent(AbstractAgent):
             u_sample = self.hmm.ctl_model.ancestral_sample(
                 a_t.unsqueeze(0), num_samples, sample_mean
             ).squeeze(-3)
+            logp = self.hmm.ctl_mixture_log_prob(a_t, u_sample)
         
         self._b, self._a = b_t, a_t
-        return u_sample
+        self._prev_ctl = u_sample.sum(0)
+        return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1):
         """ Choose action offline for a batch of sequences 
@@ -332,4 +397,5 @@ class VINAgent(AbstractAgent):
             u_sample = self.hmm.ctl_model.ancestral_sample(
                 alpha_a, num_samples, sample_mean
             )
-        return u_sample
+            logp = self.hmm.ctl_mixture_log_prob(alpha_a, u_sample)
+        return u_sample, logp
