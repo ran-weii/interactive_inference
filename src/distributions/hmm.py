@@ -1,16 +1,18 @@
 import torch
 import torch.nn as nn
 from src.distributions.nn_models import Model
-from src.distributions.mixture_models import ConditionalGaussian, EmbeddedConditionalGaussian
-from src.distributions.transition_models import DiscreteMC, EmbeddedDiscreteMC
+from src.distributions.mixture_models import ConditionalGaussian
+from src.distributions.transition_models import DiscreteMC
+# from src.distributions.mixture_models import ConditionalGaussian, EmbeddedConditionalGaussian
+# from src.distributions.transition_models import DiscreteMC, EmbeddedDiscreteMC
 
 class ContinuousGaussianHMM(Model):
     """Input-output hidden markov model with:
         discrete transitions, continuous actions, gaussian observations
     """
     def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, 
-        rank=0, obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank,
+        obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None
         ):
         """
         Args:
@@ -18,8 +20,11 @@ class ContinuousGaussianHMM(Model):
             act_dim (int): discrete action dimension
             obs_dim (int): observation dimension
             ctl_dim (int): control dimension
+            rank (int): transition matrix rank
             obs_cov (str): observation covariance type. choices=["full", "diag], default="full"
             ctl_cov (str): control covariance type. choices=["full", "diag], default="full"
+            use_tanh (bool, optional):
+            ctl_lim (torch.tensor, optional):
         """
         super().__init__()
         self.state_dim = state_dim
@@ -29,31 +34,20 @@ class ContinuousGaussianHMM(Model):
         self.eps = 1e-6
         
         self.obs_model = ConditionalGaussian(
-            obs_dim, state_dim, cov=obs_cov, batch_norm=True
+            obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
+            use_tanh=False, limits=None
         )
         self.transition_model = DiscreteMC(state_dim, act_dim, rank)
         self.ctl_model = ConditionalGaussian(
-            ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, use_tanh=use_tanh, limits=ctl_lim
+            ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
+            use_tanh=use_tanh, limits=ctl_lim
         )
-        self.act_prior = nn.Parameter(torch.randn(state_dim, act_dim))
-        nn.init.xavier_normal_(self.act_prior, gain=1.)
+        self.pi0 = nn.Parameter(torch.randn(1, state_dim, act_dim))
+        nn.init.xavier_normal_(self.pi0, gain=1.)
     
-    def get_initial_state(self):
-        return self.transition_model.get_initial_state()
-
-    def get_transition_matrix(self, a):
-        """
-        Args:
-            a (torch.tensor): action vector. size=[batch_size, act_dim]
-
-        Returns:
-            transition_matrix (torch.tensor): action conditioned transition matrix.
-                size=[batch_size, state_dim, state_dim]
-        """
-        a_ = a.unsqueeze(-1).unsqueeze(-1)
-        transition_matrix = self.transition_model.get_transition_matrix()
-        transition_matrix = torch.sum(transition_matrix * a_, dim=-3)
-        return transition_matrix
+    @property
+    def prior_policy(self):
+        return torch.softmax(self.pi0 + self.eps, dim=-1)
     
     def obs_entropy(self):
         return self.obs_model.entropy()
@@ -98,16 +92,15 @@ class ContinuousGaussianHMM(Model):
         """
         # compute state likelihood
         if u is None:
-            logp_z = torch.log(self.get_initial_state() + self.eps)
+            logp_z = torch.log(self.transition_model.initial_state + self.eps)
             logp_z = logp_z * torch.ones_like(b).to(self.device)
             a_t = None
         else:
             if a is None:
-                a = torch.softmax(self.act_prior + self.eps, dim=-1).unsqueeze(0)
-                a = torch.sum(b.unsqueeze(-1) * a, dim=-2)
+                pi0 = self.prior_policy
+                a = torch.sum(b.unsqueeze(-1) * pi0, dim=-1)
             a_t = self.ctl_model.infer(a, u, logp_u)
-            transition = self.get_transition_matrix(a_t)
-            logp_z = torch.sum(transition * b.unsqueeze(-1) + self.eps, dim=-2).log()
+            logp_z = torch.log(self.transition_model._tensor_forward(b, a_t) + self.eps)
         
         if logp_x is None:
             logp_x = self.obs_model.log_prob(x)
@@ -171,7 +164,7 @@ class ContinuousGaussianHMM(Model):
         
         batch_size = x.shape[1]
         if prior:
-            z0 = self.transition_model.get_initial_state()
+            z0 = self.transition_model.initial_state
             z0 = z0 * torch.ones(batch_size, 1).to(self.device)
             z = torch.cat([z0.unsqueeze(0), alpha_b[:-1]], dim=0)
         else:
