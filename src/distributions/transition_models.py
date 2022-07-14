@@ -77,9 +77,9 @@ class DiscreteMC(nn.Module):
         self.s0 = nn.Parameter(torch.randn(1, state_dim)) # initial state
         self._u = nn.Parameter(torch.randn(1, act_dim, rank, state_dim)) # source tensor
         self._v = nn.Parameter(torch.randn(1, act_dim, rank, state_dim)) # sink tensor
-        nn.init.xavier_normal_(self.s0, gain=1.)
-        nn.init.xavier_normal_(self._u, gain=1.)
-        nn.init.xavier_normal_(self._v, gain=1.)
+        # nn.init.xavier_normal_(self.s0, gain=1.)
+        # nn.init.xavier_normal_(self._u, gain=1.)
+        # nn.init.xavier_normal_(self._v, gain=1.)
         
     def __repr__(self):
         s = "{}(rank={})".format(self.__class__.__name__, self.rank)
@@ -161,7 +161,8 @@ class DiscreteMC(nn.Module):
         """ Compute backward message using tensor method: \sum_{s'} P(s'|s, a)m(s') 
         
         Args:
-            m (torch.tensor): previous message. size=[batch_size, state_dim]
+            m (torch.tensor): previous message. size=[batch_size, state_dim] 
+                or [batch_size, act_dim, state_dim]
         
         Return:
             m_next (torch.tensor): next message. size=[batch_size, state_dim]
