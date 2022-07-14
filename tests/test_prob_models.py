@@ -1,9 +1,10 @@
 import torch
-from src.distributions.legacy.hmm import DiscreteGaussianHMM
+from src.distributions.transition_models import DiscreteMC
 from src.distributions.hmm import ContinuousGaussianHMM
+from src.distributions.legacy.hmm import DiscreteGaussianHMM
 from src.distributions.legacy.hmm import LogisticGaussianHMM
 # from src.distributions.mixture_models import EmbeddedConditionalGaussian
-from src.distributions.hmm import EmbeddedContinuousGaussianHMM
+# from src.distributions.hmm import EmbeddedContinuousGaussianHMM
 
 seed = 0
 
@@ -124,8 +125,41 @@ def test_logistic_gaussian_hmm():
 
 #     print("test_embedded_conditional_gaussian passed")
 
+def test_discrete_mc():
+    torch.manual_seed(seed)
+
+    state_dim = 10
+    act_dim = 5
+    rank = 32
+
+    cmc = DiscreteMC(state_dim, act_dim, rank)
+
+    b = torch.softmax(torch.randn(1, state_dim), dim=-1)
+    a = torch.softmax(torch.randn(1, act_dim), dim=-1)
+
+    transition = cmc.transition
+    assert torch.all(torch.abs(transition.sum(-1) - 1) < 1e-5)
+    
+    b_next = cmc._forward(b, a)
+    b_next_tensor = cmc._tensor_forward(b, a)
+
+    error = torch.abs(b_next - b_next_tensor).sum()
+    assert error < 1e-5
+
+    # test backward
+    m = torch.randn(state_dim)
+
+    m_next = cmc._backward(m)
+    m_next_tensor = cmc._tensor_backward(m)
+
+    error = torch.abs(m_next - m_next_tensor).sum()
+    assert error < 1e-5
+
+    print("test_discrete_mc passed")
+
 if __name__ == "__main__":
+    test_discrete_mc()
     # test_discrete_gaussian_hmm()
-    test_continuous_gaussian_hmm()
+    # test_continuous_gaussian_hmm()
     # test_logistic_gaussian_hmm()
     # test_embedded_conditional_gaussian()
