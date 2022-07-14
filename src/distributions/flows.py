@@ -18,6 +18,8 @@ class SimpleTransformedModule(TransformedDistribution):
         for transform in self.transforms:
             if transform.__class__.__name__ == "BatchNormTransform":
                 mean = transform._call(mean)
+            elif transform.__class__.__name__ == "TanhTransform":
+                mean = transform._call(mean)
             else:
                 raise NotImplementedError
         return mean
@@ -38,6 +40,8 @@ class SimpleTransformedModule(TransformedDistribution):
             if transform.__class__.__name__ == "BatchNormTransform":
                 scale = torch.sqrt(transform.moving_variance) / transform.constrained_gamma
                 entropy += torch.log(scale).sum()
+            elif transform.__class__.__name__ == "TanhTransform": # skip tanh transform
+                pass
             else:
                 raise NotImplementedError
         return entropy
