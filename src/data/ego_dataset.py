@@ -8,11 +8,13 @@ from torch.utils.data.dataset import Dataset
 from src.simulation.observers import AUGMENTATION_PARAMETERS
 
 def collate_fn(batch):
-    """ Collate batch to have the same sequence length """
-    pad_obs = pad_sequence([b["ego"] for b in batch])
-    pad_act = pad_sequence([b["act"] for b in batch])
-    mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
-    return pad_obs, pad_act, mask
+    """ Collate batch of dict to have the same sequence length """
+    assert isinstance(batch[0], dict)
+    keys = list(batch[0].keys())
+    pad_batch = {k: pad_sequence([b[k] for b in batch]) for k in keys}
+    mask = torch.all(pad_batch[keys[0]] != 0, dim=-1).to(torch.float32)
+    return pad_batch, mask
+    
 
 def sample_sequence(seq_len, max_seq_len, gamma=1.):
     """ Sample a segment of the sequence
@@ -220,9 +222,8 @@ class RelativeDataset(BaseDataset):
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
 
         out_dict = {
-            "meta": torch.from_numpy(obs_meta).to(torch.float32),
             "ego": torch.from_numpy(obs_ego).to(torch.float32),
-            "agents": None,
-            "act": torch.from_numpy(act_ego).to(torch.float32)
+            "act": torch.from_numpy(act_ego).to(torch.float32),
+            "meta": torch.from_numpy(obs_meta).to(torch.float32)
         }
         return out_dict
