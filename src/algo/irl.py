@@ -40,7 +40,10 @@ class BehaviorCloning(Model):
         
         epoch_stats = []
         for i, batch in enumerate(loader):
-            o, u, mask = batch
+            pad_batch, mask = batch
+            o = pad_batch["ego"]
+            u = pad_batch["act"]
+
             o = o.to(self.device)
             u = u.to(self.device)
             mask = mask.to(self.device)
