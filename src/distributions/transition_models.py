@@ -5,18 +5,18 @@ class CPDecomposition(nn.Module):
     """ 3D matrix created using CP tensor decomposition """
     def __init__(self, state_dim, act_dim, rank):
         super().__init__()
-        self.e = nn.Parameter(torch.randn(1, act_dim, 1, 1, rank)) # action embedding
-        self.w1 = nn.Parameter(torch.randn(1, 1, state_dim, 1, rank)) # source state embedding
-        self.w2 = nn.Parameter(torch.randn(1, 1, 1, state_dim, rank)) # sink state embedding
+        self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+        self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+        self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor
 
-        # nn.init.xavier_normal_(self.w1, gain=1.)
-        # nn.init.xavier_normal_(self.w2, gain=1.)
-        # nn.init.xavier_normal_(self.e, gain=1.)
+        nn.init.xavier_normal_(self.u, gain=1.)
+        nn.init.xavier_normal_(self.v, gain=1.)
+        nn.init.xavier_normal_(self.w, gain=1.)
     
     def forward(self):
         """ Return matrix size=[1, act_dim, state_dim, state_dim] """
-        w = torch.sum(self.w1 * self.w2 * self.e, dim=-1)
-        return w
+        w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
+        return torch.softmax(w, dim=-1)
 
 
 class TuckerDecomposition(nn.Module):
@@ -75,23 +75,17 @@ class DiscreteMC(nn.Module):
         self.rank = rank
         
         self.s0 = nn.Parameter(torch.randn(1, state_dim)) # initial state
-        self._u = nn.Parameter(torch.randn(1, act_dim, rank, state_dim)) # source tensor
-        self._v = nn.Parameter(torch.randn(1, act_dim, rank, state_dim)) # sink tensor
-        # nn.init.xavier_normal_(self.s0, gain=1.)
-        # nn.init.xavier_normal_(self._u, gain=1.)
-        # nn.init.xavier_normal_(self._v, gain=1.)
+        self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+        self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+        self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor
+
+        nn.init.xavier_normal_(self.u, gain=1.)
+        nn.init.xavier_normal_(self.v, gain=1.)
+        nn.init.xavier_normal_(self.w, gain=1.)
         
     def __repr__(self):
         s = "{}(rank={})".format(self.__class__.__name__, self.rank)
         return s
-    
-    @property
-    def u(self):
-        return torch.softmax(self._u, dim=-2)
-    
-    @property
-    def v(self):
-        return torch.softmax(self._v, dim=-1)
     
     @property
     def initial_state(self):
@@ -101,10 +95,8 @@ class DiscreteMC(nn.Module):
     @property
     def transition(self):
         """ Return transition matrix. size=[1, act_dim, state_dim, state_dim] """
-        u = self.u.unsqueeze(-1)
-        v = self.v.unsqueeze(-2)
-        transition = torch.sum(u * v, dim=-3)
-        return transition
+        w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
+        return torch.softmax(w, dim=-1)
     
     def _forward(self, b, a):
         """ Compute forward message: \sum_{s, a} P(s'|s, a)P(s)P(a) 
@@ -117,31 +109,7 @@ class DiscreteMC(nn.Module):
             b_next (torch.tensor): posterior belief. size=[batch_size, state_dim]
         """
         transition = self.transition
-        b_ = b.unsqueeze(-2).unsqueeze(-1)
-        a_ = a.unsqueeze(-1).unsqueeze(-1)
-
-        b_next = torch.sum(transition * b_ * a_, dim=[-3, -2])
-        return b_next
-    
-    def _tensor_forward(self, b, a):
-        """ Compute forward message using tensor method: \sum_{s, a} P(s'|s, a)P(s)P(a) 
-        
-        Args:
-            b (torch.tensor): prior belief. size=[batch_size, state_dim]
-            a (torch.tensor): prior action. size=[batch_size, act_dim]
-
-        Returns:
-            b_next (torch.tensor): posterior belief. size=[batch_size, state_dim]
-        """
-        u = self.u
-        v = self.v
-
-        b_ = b.unsqueeze(-2).unsqueeze(-2)
-        a_ = a.unsqueeze(-1)
-        
-        u_dot_b = torch.sum(u * b_, dim=-1, keepdim=True)
-        b_next = torch.sum(v * u_dot_b, dim=-2)
-        b_next = torch.sum(b_next * a_, dim=-2)
+        b_next = torch.einsum("nkij, ni, nk -> nj", transition, b, a)
         return b_next
 
     def _backward(self, m):
@@ -155,25 +123,7 @@ class DiscreteMC(nn.Module):
         """
         transition = self.transition
         m_next = torch.sum(transition * m.unsqueeze(-2), dim=-1)
-        return m_next
-    
-    def _tensor_backward(self, m):
-        """ Compute backward message using tensor method: \sum_{s'} P(s'|s, a)m(s') 
-        
-        Args:
-            m (torch.tensor): previous message. size=[batch_size, state_dim] 
-                or [batch_size, act_dim, state_dim]
-        
-        Return:
-            m_next (torch.tensor): next message. size=[batch_size, state_dim]
-        """
-        u = self.u
-        v = self.v
-
-        m_ = m.unsqueeze(-2)
-        v_dot_m = torch.sum(v * m_, dim=-1, keepdim=True)
-        m_next = torch.sum(u * v_dot_m, dim=-2)
-        return m_next
+        return m_next 
 
 
 # class EmbeddedDiscreteMC(nn.Module):
