@@ -8,7 +8,7 @@ from src.distributions.transition_models import DiscreteMC
 # from src.distributions.transition_models import DiscreteMC, EmbeddedDiscreteMC
 
 import math
-from typing import List, Tuple
+from typing import Union, List, Tuple
 from torch import Tensor
 
 class ContinuousGaussianHMM(Model):
@@ -200,11 +200,13 @@ class QMDPLayer(jit.ScriptModule):
         self.horizon = horizon
         self.eps = 1e-6
         
+        self.b0 = nn.Parameter(torch.randn(1, state_dim))
         self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
         self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
         self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor
         self.tau = nn.Parameter(torch.randn(1, 1))
-
+        
+        nn.init.xavier_normal_(self.b0, gain=1.)
         nn.init.xavier_normal_(self.u, gain=1.)
         nn.init.xavier_normal_(self.v, gain=1.)
         nn.init.xavier_normal_(self.w, gain=1.)
@@ -260,20 +262,49 @@ class QMDPLayer(jit.ScriptModule):
         return (b_post, a_next)
     
     @jit.script_method
+    def init_hidden(self, logp_o, value):
+        b0 = torch.softmax(self.b0, dim=-1)
+        logp_s = torch.log(b0 + self.eps)
+        b = torch.softmax(logp_s + logp_o, dim=-1)
+        a = self.plan(b, value)
+        return b, a
+    
     def forward(
-        self, logp_o: Tensor, logp_u: Tensor, b: Tensor, a: Tensor, reward: Tensor
+        self, logp_o: Tensor, logp_u: Union[Tensor, None], reward: Tensor,
+        b: Union[Tensor, None], a: Union[Tensor, None]
         ) -> Tuple[Tensor, Tensor]:
         transition = self.transition
         value = self.compute_value(transition, reward)
         T = len(logp_o)
+        t_offset = 1 if b is None else 0 # offset for offline prediction
         
         alpha_b = [b] + [torch.empty(0)] * (T)
         alpha_a = [a] + [torch.empty(0)] * (T)
         for t in range(T):
-            alpha_b[t+1], alpha_a[t+1] = self.update_cell(
-                logp_o[t], logp_u[t], alpha_b[t], alpha_a[t], transition, value
-            )
+            if alpha_b[t] is None:
+                alpha_b[t+1], alpha_a[t+1] = self.init_hidden(logp_o[t], value)
+            else:
+                alpha_b[t+1], alpha_a[t+1] = self.update_cell(
+                    logp_o[t], logp_u[t-t_offset], 
+                    alpha_b[t], alpha_a[t], transition, value
+                )
         return torch.stack(alpha_b[1:]), torch.stack(alpha_a[1:])
+
+    # @jit.script_method
+    # def forward(
+    #     self, logp_o: Tensor, logp_u: Tensor, b: Tensor, a: Tensor, reward: Tensor
+    #     ) -> Tuple[Tensor, Tensor]:
+    #     transition = self.transition
+    #     value = self.compute_value(transition, reward)
+    #     T = len(logp_o)
+        
+    #     alpha_b = [b] + [torch.empty(0)] * (T)
+    #     alpha_a = [a] + [torch.empty(0)] * (T)
+    #     for t in range(T):
+    #         alpha_b[t+1], alpha_a[t+1] = self.update_cell(
+    #             logp_o[t], logp_u[t], alpha_b[t], alpha_a[t], transition, value
+    #         )
+    #     return torch.stack(alpha_b[1:]), torch.stack(alpha_a[1:])
 
 
 def poisson_pdf(rate: Tensor, K: int) -> Tensor:
