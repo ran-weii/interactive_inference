@@ -168,8 +168,18 @@ def test_qmdp_layer():
 
     a_next = qmdp_layer.update_action(logp_u[t], a)
     assert torch.all(torch.isclose(a_next.sum(-1), torch.ones(batch_size)))
+    
+    # test initial forward
+    alpha_b, alpha_a = qmdp_layer(logp_o[:1], None, reward, None, None)
+    
+    # test next forward
+    alpha_b, alpha_a = qmdp_layer(logp_o[1:2], logp_u[:1], reward, b, a)
+    
+    # test offline batch forward
+    alpha_b, alpha_a = qmdp_layer(logp_o, logp_u, reward, None, None)
 
-    alpha_b, alpha_a = qmdp_layer(logp_o, logp_u, b, a, reward)
+    # test online batch forward
+    alpha_b, alpha_a = qmdp_layer(logp_o, logp_u, reward, b, a)
     assert torch.all(torch.isclose(alpha_b.sum(-1), torch.ones(T, batch_size)))
     assert torch.all(torch.isclose(alpha_a.sum(-1), torch.ones(T, batch_size)))
     
