@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.agents.models import MLP, PopArt
+from src.distributions.nn_models import MLP, PopArt
 from src.distributions.utils import poisson_pdf, rectify
 
 def value_iteration(R, B, H):
@@ -66,8 +66,12 @@ class QMDP(AbstractPlanner):
         self._Q = None
 
     def get_default_params(self):
+        # theta = {
+        #     "A": None, "B": self.hmm.B, "C": None, 
+        #     "D": None, "F": None, "tau": self.tau
+        # }
         theta = {
-            "A": None, "B": self.hmm.B, "C": None, 
+            "A": None, "B": self.hmm.get_default_parameters(), "C": None, 
             "D": None, "F": None, "tau": self.tau
         }
         return theta
@@ -79,12 +83,16 @@ class QMDP(AbstractPlanner):
     def forward(self, b):
         a = torch.softmax(torch.sum(b.unsqueeze(-2) * self._Q, dim=-1), dim=-1)
         return a
+    
+    def value(self, b):
+        return torch.sum(b.unsqueeze(-2) * self._Q, dim=-1)
 
     def plan(self, theta=None):        
         if theta is None:
             theta = self.get_default_params()
         
-        B = torch.softmax(self.hmm.transform_parameters(theta["B"]), dim=-1)
+        # B = torch.softmax(self.hmm.transform_parameters(theta["B"]), dim=-1)
+        B = torch.softmax(theta["B"], dim=-1)
         h = poisson_pdf(rectify(theta["tau"]), self.H)[..., None, None]
         
         R = self.rwd_model(B, B, A=theta["A"], C=theta["C"])
