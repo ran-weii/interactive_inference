@@ -167,7 +167,7 @@ class VINAgent(AbstractAgent):
         self._prev_ctl = u_sample.sum(0)
         return u_sample, logp
     
-    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1):
+    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True):
         """ Choose action offline for a batch of sequences 
         
         Args:
@@ -176,6 +176,8 @@ class VINAgent(AbstractAgent):
             sample_method (str, optional): sampling method. 
                 choices=["bma", "ace", "ace"]. Default="ace"
             num_samples (int, optional): number of samples to draw. Default=1
+            tau (float, optional): gumbel softmax temperature. Default=0.1
+            hard (bool, optional): if hard use straight-through gradient. Default=True
 
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
@@ -188,7 +190,7 @@ class VINAgent(AbstractAgent):
         else:
             sample_mean = True if sample_method == "acm" else False
             u_sample = self.ctl_model.ancestral_sample(
-                alpha_a, num_samples, sample_mean
+                alpha_a, num_samples, sample_mean, tau, hard
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         return u_sample, logp
