@@ -86,8 +86,10 @@ class BatchNormTransform(TransformModule):
         self.momentum = momentum
         self.epsilon = epsilon
         
-        self.register_buffer('moving_mean', torch.zeros(input_dim))
-        self.register_buffer('moving_variance', torch.ones(input_dim))
+        # self.register_buffer('moving_mean', torch.zeros(input_dim))
+        # self.register_buffer('moving_variance', torch.ones(input_dim))
+        self.moving_mean = nn.Parameter(torch.zeros(input_dim), requires_grad=False)
+        self.moving_variance = nn.Parameter(torch.ones(input_dim), requires_grad=False)
         
         self.gamma = nn.Parameter(torch.ones(input_dim), requires_grad=affine)
         self.beta = nn.Parameter(torch.zeros(input_dim), requires_grad=affine)
