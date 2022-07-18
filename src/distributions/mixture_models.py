@@ -44,8 +44,9 @@ class ConditionalGaussian(Model):
             self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, cov={})".format(
-            self.__class__.__name__, self.x_dim, self.z_dim, self.cov
+        s = "{}(x_dim={}, z_dim={}, cov={}, batch_norm={}, use_tanh={})".format(
+            self.__class__.__name__, self.x_dim, self.z_dim, self.cov, 
+            self.batch_norm, self.use_tanh
         )
         return s
     
