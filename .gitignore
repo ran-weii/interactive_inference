@@ -1,5 +1,6 @@
 *.pyc
 *.sh
+*.ipynb
 doc/fig/*
 examples/*
 exp/*
