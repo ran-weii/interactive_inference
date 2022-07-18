@@ -13,7 +13,6 @@ from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
-from src.distributions.hmm import ContinuousGaussianHMM, EmbeddedContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
@@ -39,30 +38,26 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
+    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
     parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
     parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
     parser.add_argument("--obs_cov", type=str, default="full", help="agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="agent control covariance, default=full")
-    parser.add_argument("--hmm_rank", type=int, default=0, help="agent hmm rank, 0 for full rank, default=0")
-    parser.add_argument("--state_embed_dim", type=int, default=30, help="agent hmm state embedding dimension, default=30")
-    parser.add_argument("--act_embed_dim", type=int, default=30, help="agent hmm action embedding dimension, default=30")
-    parser.add_argument("--dynamics_model", type=str, choices=["cghmm", "ecghmm"], help="agent dynamics model, default=cghmm")
-    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
-    parser.add_argument("--dynamics_path", type=str, default="none", help="pretrained dynamics path, default=none")
-    parser.add_argument("--train_dynamics", type=bool_, default=True, help="whether to train dynamics, default=True")
+    parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     # nn args
     parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
     parser.add_argument("--activation", type=str, default="relu", help="nn activation, default=relu")
-    parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     # training args
     parser.add_argument("--algo", type=str, choices=["bc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
     parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
+    parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
     parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
@@ -118,34 +113,17 @@ def main(arglist):
     print(f"feature set: {feature_set}")
     print(f"action set: {action_set}")
     print(f"train size: {len(train_loader.dataset)}, test size: {len(test_loader.dataset)}")
-    
-    # init dynamics model
-    if arglist.dynamics_model == "cghmm":
-        dynamics_model = ContinuousGaussianHMM(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
-            arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
-        )
-    elif arglist.dynamics_model == "ecghmm":
-        dynamics_model = EmbeddedContinuousGaussianHMM(
-            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 
-            arglist.state_embed_dim, arglist.act_embed_dim,
-            arglist.hmm_rank, arglist.obs_cov, arglist.ctl_cov
-        )
-    
-    # load dynamics
-    if arglist.dynamics_path != "none":
-        state_dict = torch.load(os.path.join(
-            arglist.exp_path, "dynamics", arglist.dynamics_path, "model.pt"
-        ))
-        dynamics_model.load_state_dict(state_dict)
-        for n, p in dynamics_model.named_parameters():
-            p.requires_grad = arglist.train_dynamics
 
     # init agent
     if arglist.agent == "vin":
-        agent = VINAgent(dynamics_model, arglist.horizon)
-        agent.hmm.obs_model.init_batch_norm(obs_mean, obs_var)
-        agent.hmm.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+        agent = VINAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
+            arglist.horizon, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
+        )
+        agent.obs_model.init_batch_norm(obs_mean, obs_var)
+        if not arglist.use_tanh:
+            agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
 
     if arglist.agent == "idm":
         agent = IDM(std=ctl_var)
@@ -159,7 +137,7 @@ def main(arglist):
     # init trainer
     if arglist.algo == "bc":
         model = BehaviorCloning(
-            agent, arglist.obs_penalty, lr=arglist.lr, 
+            agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
         
