@@ -145,6 +145,7 @@ def test_logistic_gaussian_hmm():
 
 def test_qmdp_layer():
     from src.distributions.hmm import QMDPLayer
+    from src.agents.planners import value_iteration
     state_dim = 10
     act_dim = 5
     rank = 7
@@ -162,13 +163,24 @@ def test_qmdp_layer():
     a = torch.softmax(torch.randn(batch_size, act_dim), dim=-1)
     reward = torch.randn(batch_size, act_dim, state_dim)
     
+    # test one step updates
     t = 0
+    s_next = torch.sum(transition * b.unsqueeze(-2).unsqueeze(-1) * a.unsqueeze(-1).unsqueeze(-1), dim=[-3, -2])
+    logp_s = torch.log(s_next + qmdp_layer.eps)
+    b_next_true = torch.softmax(logp_s + logp_o[t], dim=-1)
+
     b_next = qmdp_layer.update_belief(logp_o[t], transition, b, a)
     assert torch.all(torch.isclose(b_next.sum(-1), torch.ones(batch_size)))
+    assert torch.all(torch.isclose(b_next, b_next_true))
 
     a_next = qmdp_layer.update_action(logp_u[t], a)
     assert torch.all(torch.isclose(a_next.sum(-1), torch.ones(batch_size)))
     
+    # test value iteration
+    value_true = value_iteration(reward, transition, qmdp_layer.horizon).transpose(0, 1)
+    value = qmdp_layer.compute_value(transition, reward)
+    assert torch.all(torch.isclose(value, value_true, atol=1e-5))
+
     # test initial forward
     alpha_b, alpha_a = qmdp_layer(logp_o[:1], None, reward, None, None)
     
