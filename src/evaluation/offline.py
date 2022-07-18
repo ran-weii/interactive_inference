@@ -17,7 +17,7 @@ def eval_actions_epoch(agent, loader, sample_method="ace", num_samples=30):
         o, u, mask = batch
         agent.reset()
         with torch.no_grad():
-            u_sample = agent.choose_action_batch(
+            u_sample, _ = agent.choose_action_batch(
                 o, u, sample_method=sample_method, num_samples=num_samples
             )
             
@@ -49,11 +49,11 @@ def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
     agent.eval()
     
     with torch.no_grad():
-        u_sample = agent.choose_action_batch(
+        u_sample, _ = agent.choose_action_batch(
             obs.unsqueeze(-2), ctl.unsqueeze(-2), 
             sample_method=sample_method, num_samples=num_samples
-        ).squeeze(-2)
-    return u_sample
+        )
+    return u_sample.squeeze(-2)
 
 def eval_dynamics_episode(model, obs, ctl, sample_method="ace", num_samples=30):
     """ Evaluate dynamics model prediction for an episode
