@@ -235,12 +235,12 @@ class QMDPLayer(jit.ScriptModule):
         Returns:
             q (torch.tensor): state q value. size=[horizon, batch_size, act_dim, state_dim]
         """        
-        q = [torch.empty(0)] * (self.horizon + 1)
+        q = [torch.empty(0)] * (self.horizon)
         q[0] = reward
-        for t in range(self.horizon):
-            v_next = reward + torch.logsumexp(q[t], dim=-2, keepdim=True)
-            q[t+1] = torch.einsum("nkij, nkj -> nki", transition, v_next)
-        return torch.stack(q[1:])
+        for t in range(self.horizon - 1):
+            v_next = torch.logsumexp(q[t], dim=-2, keepdim=True)
+            q[t+1] = reward + torch.einsum("nkij, nkj -> nki", transition, v_next)
+        return torch.stack(q)
     
     @jit.script_method
     def plan(self, b: Tensor, value: Tensor) -> Tensor:
