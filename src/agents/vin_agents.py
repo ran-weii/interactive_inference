@@ -58,9 +58,9 @@ class VINAgent(AbstractAgent):
         entropy = self.obs_model.entropy()
         
         c = self.target_dist
-        log_pi0 = torch.log(self.pi0 + 1e-6)
         kl = kl_divergence(transition, c)
         eh = torch.sum(transition * entropy, dim=-1)
+        log_pi0 = torch.log(self.pi0 + 1e-6)
         r = -kl - eh + log_pi0
         return r
     
