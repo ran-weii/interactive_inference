@@ -53,7 +53,7 @@ class ConditionalGaussian(Model):
         self.bn.moving_mean.data = mean
         self.bn.moving_variance.data = variance
 
-    def get_distribution_class(self, transform=True, requires_grad=True):
+    def get_distribution_class(self, requires_grad=True):
         [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
@@ -68,8 +68,6 @@ class ConditionalGaussian(Model):
         if self.use_tanh:
             transforms.append(self.tanh_transform)
         distribution = SimpleTransformedModule(distribution, transforms)
-        # if self.batch_norm and transform:
-        #     distribution = SimpleTransformedModule(distribution, [self.bn])
         return distribution
     
     def mean(self, params=None):
