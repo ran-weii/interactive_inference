@@ -5,7 +5,7 @@ from src.distributions.hmm import QMDPLayer
 from src.distributions.mixture_models import ConditionalGaussian
 from src.distributions.utils import kl_divergence
 
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 from torch import Tensor
 
 class VINAgent(AbstractAgent):
@@ -65,7 +65,7 @@ class VINAgent(AbstractAgent):
         return r
     
     def forward(
-        self, o: Tensor, u: Tensor, hidden: Union[Tuple[Tensor, Tensor], None]
+        self, o: Tensor, u: Union[Tensor, None], hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
@@ -82,7 +82,7 @@ class VINAgent(AbstractAgent):
             b, a = hidden
 
         logp_o = self.obs_model.log_prob(o)
-        logp_u = self.ctl_model.log_prob(u)
+        logp_u = None if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward()
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, b, a)
         return [alpha_b, alpha_a], [alpha_b, alpha_a] # second tuple used in bptt
@@ -147,8 +147,12 @@ class VINAgent(AbstractAgent):
         
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
+            logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
-        b_t, a_t = self.alpha(self._b, o, self._prev_ctl, self._a)
+        [alpha_b, alpha_a], _ = self.forward(
+            o.unsqueeze(0), self._prev_ctl, [self._b, self._a]
+        )
+        b_t, a_t = alpha_b[0], alpha_a[0]
         
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(a_t)
@@ -157,7 +161,7 @@ class VINAgent(AbstractAgent):
             u_sample = self.ctl_model.ancestral_sample(
                 a_t.unsqueeze(0), num_samples, sample_mean
             ).squeeze(-3)
-            logp = self.ctl_mixture_log_prob(a_t, u_sample)
+            logp = self.ctl_model.mixture_log_prob(a_t, u_sample)
         
         self._b, self._a = b_t, a_t
         self._prev_ctl = u_sample.sum(0)
@@ -175,8 +179,9 @@ class VINAgent(AbstractAgent):
 
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
+            logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
-        alpha_b, alpha_a = self.forward(o, u)
+        [alpha_b, alpha_a], _ = self.forward(o, u)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_a)
@@ -185,5 +190,5 @@ class VINAgent(AbstractAgent):
             u_sample = self.ctl_model.ancestral_sample(
                 alpha_a, num_samples, sample_mean
             )
-            logp = self.ctl_mixture_log_prob(alpha_a, u_sample)
+            logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         return u_sample, logp
