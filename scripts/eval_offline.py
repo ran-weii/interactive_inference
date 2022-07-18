@@ -13,14 +13,13 @@ from src.data.train_utils import load_data
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
-from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning
 
 # eval imports
-from src.evaluation.offline import eval_actions_episode
-from src.visualization.utils import set_plotting_style, plot_time_series
+from src.evaluation.offline import eval_actions_episode, sample_action_components
+from src.visualization.utils import set_plotting_style, plot_time_series, plot_scatter
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -79,6 +78,11 @@ def main(arglist):
     else:
         action_set = ["ax_ego", "ay_ego"]
     assert set(action_set).issubset(set(ACTION_SET))
+    
+    # compute empirical control limits
+    ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
+    ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
+    ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.5
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
@@ -89,17 +93,14 @@ def main(arglist):
 
     print(f"feature set: {feature_set}")
     print(f"test size: {len(loader.dataset)}")
-    
-    # init dynamics model 
-    if config["dynamics_model"] == "cghmm":
-        dynamics_model = ContinuousGaussianHMM(
-            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, 
-            config["hmm_rank"], config["obs_cov"], config["ctl_cov"]
-        )
 
     # init agent
     if arglist.agent == "vin":
-        agent = VINAgent(dynamics_model, config["horizon"])
+        agent = VINAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
+            config["horizon"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
+            use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+        )
     elif arglist.agent == "mlp":
         agent = MLPAgent(
             obs_dim, ctl_dim, config["hidden_dim"], config["num_hidden"],
@@ -112,7 +113,7 @@ def main(arglist):
     
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
-    model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(state_dict, strict=True)
     agent = model.agent
     print(agent)
 
@@ -143,6 +144,12 @@ def main(arglist):
         
         for i, f in enumerate(figs_u):
             f.savefig(os.path.join(save_path, f"test_scene_{i}_action.png"), dpi=100)
+        
+        # plot action components
+        if arglist.agent == "vin":
+            u_sample_components = sample_action_components(agent.ctl_model, num_samples=50)
+            fig_cmp, ax = plot_scatter(u_sample_components, action_set[0], action_set[1])
+            fig_cmp.savefig(os.path.join(save_path, f"action_components.png"), dpi=100)
 
         print("\nonline evaluation results saved at {}".format(save_path))
 
