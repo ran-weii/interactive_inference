@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
-from src.agents.active_inference import ActiveInference
+from src.agents.legacy.active_inference import ActiveInference
 from src.agents.planners import value_iteration, MCVI
-from src.agents.models import MLP, PopArt
-from src.agents.baseline import FullyRecurrentAgent
-from src.evaluation.offline_metrics import (
+from src.distributions.nn_models import MLP, PopArt
+from src.agents.legacy.baseline import FullyRecurrentAgent
+from src.evaluation.metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import get_active_inference_parameters
+
+seed = 0
 
 def test_value_iteration():
     torch.manual_seed(0)
@@ -505,6 +507,53 @@ def test_embedded_agent():
     assert list(u_ace.shape) == [10, T, batch_size, ctl_dim]
     print("test_embedded_agent")
 
+def test_vin_agent():
+    torch.manual_seed(seed)
+    from src.agents.vin_agents import VINAgent
+
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    rank = 32
+    horizon = 7
+
+    agent = VINAgent(
+        state_dim, act_dim, obs_dim, ctl_dim, rank, horizon
+    )
+    agent.obs_model.batch_norm = False
+    agent.ctl_model.batch_norm = False
+
+    # synthetic data
+    T = 30
+    batch_size = 32
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.softmax(torch.randn(T, batch_size, ctl_dim), dim=-1)
+    mask = (torch.randn(T, batch_size) < 1) * 1.
+    
+    # test static
+    [alpha_b, alpha_a], _ = agent(o, u)
+
+    # test sequential
+    prev_u = None
+    hidden = None
+    alpha_b_seq = []
+    alpha_a_seq = []
+    for t in range(T):
+        hidden, _ = agent(o[t].unsqueeze(0), prev_u, hidden)
+        hidden = [h[-1].detach() for h in hidden]
+        prev_u = u[t].unsqueeze(0)
+
+        alpha_b_seq.append(hidden[0])
+        alpha_a_seq.append(hidden[1])
+
+    alpha_b_seq = torch.stack(alpha_b_seq)
+    alpha_a_seq = torch.stack(alpha_a_seq)
+
+    assert torch.all(torch.isclose(alpha_b, alpha_b_seq, atol=1e-5))
+    assert torch.all(torch.isclose(alpha_a, alpha_a_seq, atol=1e-5))
+    print("test_qdmp_agent passed")
+
 if __name__ == "__main__":
     """ TODO: organize simple tests and complex tests """
     # test_value_iteration()
@@ -519,4 +568,5 @@ if __name__ == "__main__":
     # test_generalized_free_energy()
     # test_factored_value_iteration()
     # test_factored_agent()
-    test_embedded_agent()
+    # test_embedded_agent()
+    test_vin_agent()
