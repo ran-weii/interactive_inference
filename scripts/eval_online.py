@@ -11,18 +11,20 @@ from src.simulation.observers import FEATURE_SET, ACTION_SET
 from src.data.train_utils import load_data
 from src.data.data_filter import filter_segment_by_length
 from src.map_api.lanelet import MapReader
-from src.data.ego_dataset import EgoDataset, aug_flip_lr, collate_fn
+from src.data.ego_dataset import EgoDataset
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import Observer
-from src.simulation.controllers import AgentWrapper
 from src.evaluation.online import eval_episode
 
 # model imports
-from src.distributions.hmm import ContinuousGaussianHMM
 from src.agents.vin_agents import VINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
+
 from src.algo.irl import BehaviorCloning
+from src.algo.rl import SAC
+from src.algo.airl import DAC
+from src.algo.recurrent_airl import RecurrentDAC
 
 # plotting imports
 from src.visualization.utils import set_plotting_style
@@ -47,7 +49,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp", "rdac"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--min_eps_len", type=int, default=100,
@@ -99,38 +101,49 @@ def main(arglist):
         action_set = ["ax_ego", "ay_ego"]
     assert set(action_set).issubset(set(ACTION_SET))
     
-    dataset = EgoDataset(df_track, train_labels_col="is_train")
+    # compute ctl limits
+    ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
+    ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
+    ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.2
+
+    dataset = EgoDataset(
+        df_track, train_labels_col="is_train",
+        create_svt=False, seed=arglist.seed
+    )
     obs_dim, ctl_dim = len(feature_set), 2 
 
     print(f"feature set: {feature_set}")
     print(f"action set: {action_set}")
     print(f"test size: {len(dataset)}")
-    
-    # init dynamics model
-    if config["dynamics_model"] == "cghmm":
-        dynamics_model = ContinuousGaussianHMM(
-            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, 
-            config["hmm_rank"], config["obs_cov"], config["ctl_cov"]
-        )
 
     # init agent
     if arglist.agent == "vin":
-        agent = VINAgent(dynamics_model, config["horizon"])
+        agent = VINAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
+            config["horizon"], obs_cov="full", ctl_cov="full",            
+            use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+        )
     elif arglist.agent == "idm":
         agent = IDM()
     elif arglist.agent == "mlp":
         agent = MLPAgent(
             obs_dim, ctl_dim, config["hidden_dim"], config["num_hidden"],
-            use_tanh=True, ctl_limits=torch.tensor([5.5124, 0.0833])
+            activation=config["activation"], use_tanh=config["use_tanh"], ctl_limits=ctl_lim
         )
 
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
-    
+    if config["algo"] == "sac":
+        model = SAC(agent, config["hidden_dim"], config["num_hidden"])
+    if config["algo"] == "airl":
+        model = DAC(agent, config["hidden_dim"], config["num_hidden"])
+    if config["algo"] == "rdac":
+        model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
+
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
-    model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(state_dict, strict=True)
     agent = model.agent
     print(agent)
     
@@ -139,11 +152,11 @@ def main(arglist):
     map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
 
     # init simulation
-    env = InteractionSimulator(dataset, map_data)
     observer = Observer(
-        map_data, ego_features=ego_features, relative_features=relative_features
+        map_data, ego_features=ego_features, relative_features=relative_features,
+        action_set=action_set
     )
-    controller = AgentWrapper(observer, agent, action_set, sample_method="ace")
+    env = InteractionSimulator(dataset, map_data, observer)
     
     # sample eval episodes
     test_eps_id = np.random.choice(np.arange(len(dataset)), arglist.num_eps)
@@ -152,10 +165,10 @@ def main(arglist):
     for i, eps_id in enumerate(test_eps_id):
         title = f"eps {eps_id}"
 
-        sim_states, sim_acts, track_data = eval_episode(env, controller, eps_id)
+        sim_states, sim_acts, track_data, rewards = eval_episode(env, agent, eps_id)
+        print(f"test eps: {i}, mean reward: {np.mean(rewards)}")
         
         ani = animate(map_data, sim_states, track_data, title=title)
-
         animations.append(ani)
     
     # save results
