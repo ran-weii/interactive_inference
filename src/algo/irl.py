@@ -7,7 +7,7 @@ class BehaviorCloning(Model):
     """ Supervised behavior cloning algorithm 
     with truncated backpropagation through time
     """
-    def __init__(self, agent, bptt_steps, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(self, agent, bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.bptt_steps = bptt_steps
         self.obs_penalty = obs_penalty
