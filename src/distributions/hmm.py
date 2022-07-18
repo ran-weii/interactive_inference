@@ -212,6 +212,12 @@ class QMDPLayer(jit.ScriptModule):
         nn.init.xavier_normal_(self.w, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
     
+    def __repr__(self):
+        s = "{}(state_dim={}, act_dim={}, rank={}, horizon={})".format(
+            self.__class__.__name__, self.state_dim, self.act_dim, self.rank, self.horizon
+        )
+        return s
+
     @property
     def transition(self):
         """ Return transition matrix. size=[1, act_dim, state_dim, state_dim] """
