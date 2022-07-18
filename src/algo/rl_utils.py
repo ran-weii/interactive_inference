@@ -39,7 +39,8 @@ class Logger():
 
 def train(
     env, model, epochs, steps_per_epoch=1000, 
-    update_after=3000, update_every=50, log_test_every=10
+    update_after=3000, update_every=50, log_test_every=10,
+    verbose=False
     ):
     """
     Args:
@@ -50,7 +51,9 @@ def train(
         update_after (int, optional): initial burn-in steps before training. Default=3000
         update_every (int, optional): number of environment steps between training. Default=50
         log_test_every (int, optional): epochs between logging test episode. Default=10
+        verbose (bool, optional): whether to print instantaneous loss. Default=False
     """
+    model.eval()
     logger = Logger()
 
     total_steps = epochs * steps_per_epoch
@@ -84,6 +87,10 @@ def train(
         # train model
         if t >= update_after and t % update_every == 0:
             train_stats = model.take_gradient_step(logger)
+
+            if verbose:
+                round_loss_dict = {k: round(v, 4) for k, v in train_stats.items()}
+                print(f"e: {epoch}, t: {t}, {round_loss_dict}")
 
         # end of epoch handeling
         if (t + 1) % steps_per_epoch == 0:
