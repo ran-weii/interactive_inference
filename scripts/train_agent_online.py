@@ -158,24 +158,6 @@ def main(arglist):
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
-    
-    # load agent from checkpoint
-    if arglist.checkpoint_path != "none":
-        cp_path = os.path.join(
-            arglist.exp_path, "agents", 
-            arglist.agent, arglist.checkpoint_path
-        )
-        # load state dict
-        state_dict = torch.load(os.path.join(cp_path, "model.pt"))
-
-        # load history
-        df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
-        
-        model = BehaviorCloning(agent)
-        model.load_state_dict(state_dict, strict=False)
-        agent = model.agent
-
-        print(f"loaded checkpoint from {cp_path}")
 
     # init trainer
     if arglist.algo == "dac":
@@ -198,6 +180,22 @@ def main(arglist):
             grad_penalty=arglist.grad_penalty, bc_penalty=arglist.bc_penalty, obs_penalty=arglist.obs_penalty
         )
         model.fill_real_buffer(rel_dataset)
+    
+    # load model from checkpoint
+    if arglist.checkpoint_path != "none":
+        cp_path = os.path.join(
+            arglist.exp_path, "agents", 
+            arglist.agent, arglist.checkpoint_path
+        )
+        # load state dict
+        state_dict = torch.load(os.path.join(cp_path, "model.pt"))
+        
+        # load history
+        df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
+        
+        model.load_state_dict(state_dict, strict=True)
+
+        print(f"loaded checkpoint from {cp_path}")
 
     print(f"num parameters: {count_parameters(model)}")
     print(model)
@@ -223,6 +221,11 @@ def main(arglist):
     df_history = pd.DataFrame(logger.history)
     df_history = df_history.assign(train=1)
     
+    if arglist.checkpoint_path != "none":
+        df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
+        df_history["time"] += df_history_cp["time"].values[-1]
+        df_history = pd.concat([df_history_cp, df_history], axis=0)
+
     # save results
     if arglist.save:
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
@@ -257,6 +260,8 @@ def main(arglist):
         for i, test_episode in enumerate(logger.test_episodes):
             ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
             save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
+            plt.clf()
+            plt.close()
 
         print(f"\nmodel saved at: {save_path}")
 
