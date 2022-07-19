@@ -52,6 +52,28 @@ class VINAgent(AbstractAgent):
     def pi0(self):
         """ Prior policy """
         return torch.softmax(self._pi0, dim=-1)
+    
+    @property
+    def transition(self):
+        return self.rnn.transition
+    
+    @property
+    def value(self):
+        reward = self.compute_reward()
+        value = self.rnn.compute_value(self.transition, reward)
+        return value
+    
+    @property
+    def policy(self):
+        b = torch.eye(self.state_dim)
+        pi = self.rnn.plan(b, self.value)
+        return pi
+    
+    @property
+    def passive_dynamics(self):
+        policy = self.policy.T.unsqueeze(-1)
+        transition = self.transition.squeeze(0)
+        return torch.sum(transition * policy, dim=-3)
 
     def compute_reward(self):
         transition = self.rnn.transition
@@ -194,3 +216,21 @@ class VINAgent(AbstractAgent):
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         return u_sample, logp
+
+    def predict(self, o, u, sample_method="ace", num_samples=1):
+        """ Offline prediction observations and control """
+        [alpha_b, alpha_a], _ = self.forward(o, u)
+
+        if sample_method == "bma":
+            o_sample = self.obs_model.bayesian_average(alpha_b)
+            u_sample = self.ctl_model.bayesian_average(alpha_a)
+
+        else:
+            sample_mean = True if sample_method == "acm" else False
+            o_sample = self.obs_model.ancestral_sample(
+                alpha_b, num_samples, sample_mean, tau=0.1, hard=True
+            )
+            u_sample = self.ctl_model.ancestral_sample(
+                alpha_a, num_samples, sample_mean, tau=0.1, hard=True
+            )
+        return o_sample, u_sample
