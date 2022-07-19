@@ -59,23 +59,34 @@ class VINAgent(AbstractAgent):
     
     @property
     def value(self):
-        reward = self.compute_reward()
-        value = self.rnn.compute_value(self.transition, reward)
+        value = self.rnn.compute_value(self.transition, self.reward)
         return value
     
     @property
     def policy(self):
+        """ Optimal planned policy """
         b = torch.eye(self.state_dim)
         pi = self.rnn.plan(b, self.value)
         return pi
     
     @property
     def passive_dynamics(self):
+        """ Optimal controlled dynamics """
         policy = self.policy.T.unsqueeze(-1)
         transition = self.transition.squeeze(0)
         return torch.sum(transition * policy, dim=-3)
-
-    def compute_reward(self):
+    
+    @property
+    def efe(self):
+        """ Negative expected free energy """
+        entropy = self.obs_model.entropy()
+        c = self.target_dist
+        kl = kl_divergence(torch.eye(self.state_dim), c)
+        return -kl - entropy
+    
+    @property
+    def reward(self):
+        """ State action reward """
         transition = self.rnn.transition
         entropy = self.obs_model.entropy()
         
@@ -105,7 +116,7 @@ class VINAgent(AbstractAgent):
 
         logp_o = self.obs_model.log_prob(o)
         logp_u = None if u is None else self.ctl_model.log_prob(u)
-        reward = self.compute_reward()
+        reward = self.reward
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, b, a)
         return [alpha_b, alpha_a], [alpha_b, alpha_a] # second tuple used in bptt
     
