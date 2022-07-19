@@ -17,7 +17,13 @@ def get_active_inference_parameters(agent):
     """
     A_mu = agent.obs_model.mean().data.squeeze(0)
     A_sd = torch.sqrt(agent.obs_model.variance()).data.squeeze(0)
-    B = torch.softmax(agent.hmm.B, dim=-1).data.squeeze(0)
+
+    """ TODO: temporary handle """
+    if agent.hmm.rank == 0:
+        B = torch.softmax(agent.hmm.B, dim=-1).data.squeeze(0)
+    else:
+        B = torch.softmax(agent.hmm.B.transition, dim=-1).data.squeeze(0)
+
     C = torch.softmax(agent.rwd_model.C, dim=-1).data.squeeze(0)
     D = torch.softmax(agent.hmm.D, dim=-1).data.squeeze(0)
     F_mu = agent.ctl_model.mean().data.squeeze(0)
@@ -77,7 +83,12 @@ class ModelExplainer:
         self.r, self.ekl, self.ent = self.get_reward()
     
     def get_reward(self):
-        B = torch.softmax(self.agent.hmm.B, dim=-1)
+        """ TODO: temporary handle """
+        if self.agent.hmm.rank == 0:
+            B = torch.softmax(self.agent.hmm.B, dim=-1).data
+        else:
+            B = torch.softmax(self.agent.hmm.B.transition, dim=-1).data
+        # B = torch.softmax(self.agent.hmm.B, dim=-1)
         r = self.agent.rwd_model(B, B).data.squeeze(0)
         ent = -self.agent.obs_model.entropy().data.squeeze(0)
         ekl = (r - ent).squeeze(0)
