@@ -72,9 +72,8 @@ def eval_dynamics_episode(model, obs, ctl, sample_method="ace", num_samples=30):
     model.eval()
 
     with torch.no_grad():
-        o_sample, _, _, _ =model.predict(
-            obs.unsqueeze(-2), ctl.unsqueeze(-2), prior=False, inference=True, 
-            sample_method=sample_method, num_samples=num_samples
+        o_sample, _ =model.predict(
+            obs.unsqueeze(-2), ctl.unsqueeze(-2), sample_method=sample_method, num_samples=num_samples
         )
         o_sample = o_sample.squeeze(-2)
     return o_sample
