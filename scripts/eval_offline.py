@@ -16,6 +16,7 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 from src.agents.vin_agents import VINAgent
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning
+from src.algo.recurrent_airl import RecurrentDAC
 
 # eval imports
 from src.evaluation.offline import eval_actions_episode, sample_action_components
@@ -110,7 +111,9 @@ def main(arglist):
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
-    
+    if config["algo"] == "rdac":
+        model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
+
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
     model.load_state_dict(state_dict, strict=True)
@@ -147,7 +150,7 @@ def main(arglist):
         
         # plot action components
         if arglist.agent == "vin":
-            u_sample_components = sample_action_components(agent.ctl_model, num_samples=50)
+            u_sample_components = sample_action_components(agent.ctl_model, num_samples=500)
             fig_cmp, ax = plot_scatter(u_sample_components, action_set[0], action_set[1])
             fig_cmp.savefig(os.path.join(save_path, f"action_components.png"), dpi=100)
 
