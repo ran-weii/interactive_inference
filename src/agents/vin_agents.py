@@ -200,7 +200,7 @@ class VINAgent(AbstractAgent):
         self._prev_ctl = u_sample.sum(0)
         return u_sample, logp
     
-    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True):
+    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False):
         """ Choose action offline for a batch of sequences 
         
         Args:
@@ -211,6 +211,7 @@ class VINAgent(AbstractAgent):
             num_samples (int, optional): number of samples to draw. Default=1
             tau (float, optional): gumbel softmax temperature. Default=0.1
             hard (bool, optional): if hard use straight-through gradient. Default=True
+            return_hidden (bool, optional): if true return agent hidden state. Default=False
 
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
@@ -226,7 +227,10 @@ class VINAgent(AbstractAgent):
                 alpha_a, num_samples, sample_mean, tau, hard
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
-        return u_sample, logp
+        if return_hidden:
+            return u_sample, logp, [alpha_b, alpha_a]
+        else:
+            return u_sample, logp
 
     def predict(self, o, u, sample_method="ace", num_samples=1):
         """ Offline prediction observations and control """
