@@ -124,9 +124,12 @@ class RecurrentDAC(Model):
     
     def on_epoch_end(self):
         """ Update real buffer hidden states on epoch end """
-        num_eps = min(self.a_batch_size, self.real_buffer.num_eps)
-        eps_ids = np.random.choice(np.arange(self.real_buffer.num_eps), num_eps, replace=False)
+        num_samples = min(self.a_batch_size, self.real_buffer.num_eps)
+        eps_ids = np.random.choice(np.arange(self.real_buffer.num_eps), num_samples, replace=False)
         for i in eps_ids:
+            # buffer size trim handle
+            if (i + 1) >= self.real_buffer.num_eps:
+                break
             obs = torch.from_numpy(self.real_buffer.episodes[i]["obs"]).to(torch.float32).to(self.device)
             ctl = torch.from_numpy(self.real_buffer.episodes[i]["ctl"]).to(torch.float32).to(self.device)
             next_obs = torch.from_numpy(self.real_buffer.episodes[i]["next_obs"]).to(torch.float32).to(self.device)
