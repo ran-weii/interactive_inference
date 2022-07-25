@@ -43,7 +43,8 @@ class RecurrentDAC(Model):
         self.beta = beta
         self.polyak = polyak
         self.norm_obs = norm_obs
-
+    
+        self.buffer_size = buffer_size
         self.d_batch_size = d_batch_size
         self.a_batch_size = a_batch_size
         self.rnn_len = rnn_len
@@ -84,8 +85,8 @@ class RecurrentDAC(Model):
             self.agent.parameters(), lr=lr * 5, weight_decay=decay
         )
 
-        self.real_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
-        self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
+        self.real_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, agent.state_dim, buffer_size)
+        self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, agent.state_dim, buffer_size)
 
         self.obs_mean = nn.Parameter(torch.zeros(agent.obs_dim), requires_grad=False)
         self.obs_variance = nn.Parameter(torch.ones(agent.obs_dim), requires_grad=False)
@@ -112,11 +113,33 @@ class RecurrentDAC(Model):
     def fill_real_buffer(self, dataset):
         for i in range(len(dataset)):
             batch = dataset[i]
-            obs = batch["ego"].numpy()
-            ctl = batch["act"].numpy()
+            obs = batch["ego"].to(self.device)
+            ctl = batch["act"].to(self.device)
             rwd = np.zeros((len(obs), 1))
             done = np.zeros((len(obs), 1))
-            self.real_buffer.push(obs, ctl, rwd, done)
+            with torch.no_grad():
+                [state, _], _ = self.agent(obs.unsqueeze(1), ctl.unsqueeze(1))
+                state = state.squeeze(1).cpu()
+            self.real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
+    
+    def on_epoch_end(self):
+        """ Update real buffer hidden states on epoch end """
+        new_real_buffer = ReplayBuffer(self.agent.obs_dim, self.agent.ctl_dim, self.agent.state_dim, self.buffer_size)
+        for i in range(self.real_buffer.num_eps):
+            obs = torch.from_numpy(self.real_buffer.episodes[i]["obs"]).to(torch.float32).to(self.device)
+            ctl = torch.from_numpy(self.real_buffer.episodes[i]["ctl"]).to(torch.float32).to(self.device)
+            next_obs = torch.from_numpy(self.real_buffer.episodes[i]["next_obs"]).to(torch.float32).to(self.device)
+            next_ctl = torch.from_numpy(self.real_buffer.episodes[i]["next_ctl"]).to(torch.float32).to(self.device)
+
+            obs = torch.cat([obs, next_obs[-1:]], dim=0)
+            ctl = torch.cat([ctl, next_ctl[-1:]], dim=0)
+            rwd = np.zeros((len(obs), 1))
+            done = np.zeros((len(obs), 1))
+            with torch.no_grad():
+                [state, _], _ = self.agent(obs.unsqueeze(1), ctl.unsqueeze(1))
+                state = state.squeeze(1).cpu()
+            new_real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
+        self.real_buffer = new_real_buffer
 
     def normalize_obs(self, obs):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
