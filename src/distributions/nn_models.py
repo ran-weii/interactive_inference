@@ -62,9 +62,11 @@ class GRUMLP(Model):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.gru_layers = gru_layers
-
+        
+        self.h0 = nn.Parameter(torch.randn(gru_layers, hidden_dim))
         self.gru = nn.GRU(input_dim, hidden_dim, gru_layers)
         self.mlp = MLP(gru_layers * hidden_dim, output_dim, hidden_dim, mlp_layers, activation)
+        nn.init.xavier_normal_(self.h0, gain=1.)
 
     def forward(self, x):
         h0 = self.init_hidden(x.shape[1])
@@ -74,7 +76,7 @@ class GRUMLP(Model):
         return out
     
     def init_hidden(self, batch_size):
-        h0 = torch.zeros(self.gru_layers, batch_size, self.hidden_dim)
+        h0 = torch.repeat_interleave(self.h0.unsqueeze(-2), batch_size, -2)
         return h0
 
 
