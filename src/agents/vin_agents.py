@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 from src.agents.core import AbstractAgent
@@ -15,7 +16,8 @@ class VINAgent(AbstractAgent):
     """
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
-        obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None
+        obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, 
+        place_holder=False
         ):
         super().__init__()
         self.state_dim = state_dim
@@ -24,19 +26,33 @@ class VINAgent(AbstractAgent):
         self.ctl_dim = ctl_dim
         self.horizon = horizon
         
-        self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon)
+        self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, place_holder=place_holder)
         self.obs_model = ConditionalGaussian(
             obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
-            use_tanh=False, limits=None
+            use_tanh=False, limits=None, place_holder=place_holder
         )
         self.ctl_model = ConditionalGaussian(
             ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
-            use_tanh=use_tanh, limits=ctl_lim
+            use_tanh=use_tanh, limits=ctl_lim, place_holder=place_holder
         )
-        self.c = nn.Parameter(torch.randn(1, state_dim))
-        self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
-        nn.init.xavier_normal_(self.c, gain=1.)
-        nn.init.xavier_normal_(self._pi0, gain=1.)
+
+        self.c = torch.randn(1, state_dim)
+        self._pi0 = torch.randn(1, act_dim, state_dim)
+        if not place_holder:
+            self.c = nn.Parameter(self.c)
+            self._pi0 = nn.Parameter(self._pi0)
+            # self.c = nn.Parameter(torch.randn(1, state_dim))
+            # self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
+            
+            nn.init.xavier_normal_(self.c, gain=1.)
+            nn.init.xavier_normal_(self._pi0, gain=1.)
+
+        self.parameter_size = [
+            self.c.shape, self._pi0.shape,
+            self.rnn.b0.shape, self.rnn.u.shape, self.rnn.v.shape, self.rnn.w.shape, self.rnn.tau.shape,
+            self.obs_model.mu.shape, self.obs_model.lv.shape, self.obs_model.tl.shape,
+            self.ctl_model.mu.shape, self.ctl_model.lv.shape, self.ctl_model.tl.shape
+        ]
     
     def reset(self):
         """ Reset internal states for online inference """
@@ -91,14 +107,33 @@ class VINAgent(AbstractAgent):
         entropy = self.obs_model.entropy()
         
         c = self.target_dist
-        kl = kl_divergence(transition, c)
-        eh = torch.sum(transition * entropy, dim=-1)
+        kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
+        eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
         log_pi0 = torch.log(self.pi0 + 1e-6)
         r = -kl - eh + log_pi0
         return r
     
+    def transform_params(self, theta):
+        theta_ = torch.split(theta, [np.prod(s) for s in self.parameter_size], dim=-1)
+        
+        self.c = theta_[0].view([-1] + list(self.parameter_size[0])[1:])
+        self._pi0 = theta_[1].view([-1] + list(self.parameter_size[1])[1:])
+        self.rnn.b0 = theta_[2].view([-1] + list(self.parameter_size[2])[1:])
+        self.rnn.u = theta_[3].view([-1] + list(self.parameter_size[3])[1:])
+        self.rnn.v = theta_[4].view([-1] + list(self.parameter_size[4])[1:])
+        self.rnn.w = theta_[5].view([-1] + list(self.parameter_size[5])[1:])
+        self.rnn.tau = theta_[6].view([-1] + list(self.parameter_size[6])[1:])
+        self.obs_model.mu = theta_[7].view([-1] + list(self.parameter_size[7])[1:])
+        self.obs_model.lv = theta_[8].view([-1] + list(self.parameter_size[8])[1:])
+        self.obs_model.tl = theta_[9].view([-1] + list(self.parameter_size[9])[1:])
+        self.ctl_model.mu = theta_[10].view([-1] + list(self.parameter_size[10])[1:])
+        self.ctl_model.lv = theta_[11].view([-1] + list(self.parameter_size[11])[1:])
+        self.ctl_model.tl = theta_[12].view([-1] + list(self.parameter_size[12])[1:])
+
     def forward(
-        self, o: Tensor, u: Union[Tensor, None], hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None
+        self, o: Tensor, u: Union[Tensor, None], 
+        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None,
+        theta: Optional[Union[Tensor, None]]=None,
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
@@ -110,6 +145,9 @@ class VINAgent(AbstractAgent):
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
         """
+        if theta is not None:
+            self.transform_params(theta)
+
         b, a = None, None
         if hidden is not None:
             b, a = hidden
