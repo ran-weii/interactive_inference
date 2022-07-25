@@ -138,8 +138,8 @@ class RecurrentDAC(Model):
             done = np.zeros((len(obs), 1))
             with torch.no_grad():
                 [state, _], _ = self.agent(obs.unsqueeze(1), ctl.unsqueeze(1))
-                state = state.squeeze(1).cpu()
-            self.real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
+                state = state.squeeze(1)
+            self.real_buffer.push(obs.cpu().numpy(), ctl.cpu().numpy(), state.cpu().numpy(), rwd, done)
 
     def normalize_obs(self, obs):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
