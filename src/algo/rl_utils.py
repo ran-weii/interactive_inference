@@ -71,7 +71,8 @@ def train(
         # env done handeling
         done = True if info["terminated"] == True else done
         
-        model.replay_buffer(obs, ctl, reward, done)
+        state = model.agent._b.cpu()
+        model.replay_buffer(obs, ctl, state, reward, done)
         obs = next_obs
 
         # end of trajectory handeling
@@ -101,11 +102,12 @@ def train(
             logger.log()
             print()
             
+            model.on_epoch_end()
             if t > update_after and epoch % log_test_every == 0:
                 eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
                 sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
                 logger.log_test_episode(sim_states, track_data)
-                print(f"test mean reward: {np.mean(rewards)}\n")
+                print(f"test id: {eval_eps_id}, mean reward: {np.mean(rewards)}\n")
     
     # final test episode
     eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
