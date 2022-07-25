@@ -99,10 +99,7 @@ class BehaviorCloning(Model):
         
 class LFBehaviorCloning(Model):
     """ Latent factor behavior cloning """
-    def __init__(
-        self, agent, num_factors, hidden_dim, gru_layers, mlp_layers, activation, 
-        bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None
-        ):
+    def __init__(self, agent, bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.bptt_steps = bptt_steps
         self.obs_penalty = obs_penalty
@@ -112,31 +109,19 @@ class LFBehaviorCloning(Model):
 
         self.agent = agent
         
-        self.encoder = GRUMLP(
-            input_dim=agent.obs_dim + agent.ctl_dim,
-            output_dim=num_factors * 2,
-            hidden_dim=hidden_dim,
-            gru_layers=gru_layers,
-            mlp_layers=mlp_layers,
-            activation=activation
-        )
-        self.decoder = nn.Linear(num_factors, sum([np.prod(s) for s in agent.parameter_size]))
-        
-        for p in self.agent.parameters():
-            p.requires_grad = False
-
         self.optimizer = torch.optim.Adam(
-            list(self.encoder.parameters()) + \
-            list(self.decoder.parameters()), 
-            lr=lr, weight_decay=decay
+            self.agent.parameters(), lr=lr, weight_decay=decay
         )
         self.loss_keys = ["loss_u", "loss_o"]
+
+        for n, p in self.agent.named_parameters():
+            print(n, p.shape)
     
     def __repr__(self):
         s_agent = self.agent.__repr__()
-        s = "{}(bptt_steps={}, obs_penalty={}, lr={}, decay={}, grad_clip={},\nagent={},\nencoder={},\ndecoder={})".format(
+        s = "{}(bptt_steps={}, obs_penalty={}, lr={}, decay={}, grad_clip={},\nagent={})".format(
             self.__class__.__name__, self.bptt_steps, self.obs_penalty, self.lr, 
-            self.decay, self.grad_clip, s_agent, self.encoder.__repr__(), self.decoder.__repr__()
+            self.decay, self.grad_clip, s_agent
         )
         return s
     
@@ -149,13 +134,13 @@ class LFBehaviorCloning(Model):
 
     def encode(self, o, u):
         """ Compute latent factors """
-        z_params = self.encoder(torch.cat([o, u], dim=-1))
+        z_params = self.agent.encoder(torch.cat([o, u], dim=-1))
         mu, lv = torch.chunk(z_params, 2, dim=-1)
         z_dist = torch_dist.Normal(mu, rectify(lv))
         z = z_dist.rsample()
         ent = z_dist.entropy().sum(-1, keepdim=True)
 
-        theta = self.decoder(z)
+        theta = self.agent.decoder(z)
         return theta, ent
 
     def run_epoch(self, loader, train=True):
