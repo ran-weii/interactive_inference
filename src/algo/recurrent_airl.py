@@ -59,7 +59,7 @@ class RecurrentDAC(Model):
 
         self.agent = agent
         self.discriminator = MLP(
-            input_dim=agent.obs_dim + agent.ctl_dim,
+            input_dim=agent.state_dim + agent.obs_dim + agent.ctl_dim,
             output_dim=1,
             hidden_dim=hidden_dim,
             num_hidden=num_hidden,
@@ -67,7 +67,7 @@ class RecurrentDAC(Model):
             batch_norm=False
         )
         self.critic = DoubleQNetwork(
-            agent.obs_dim, agent.ctl_dim, hidden_dim, num_hidden, "relu"
+            agent.state_dim + agent.obs_dim, agent.ctl_dim, hidden_dim, num_hidden, "relu"
         )
         self.critic_target = deepcopy(self.critic)
 
@@ -124,8 +124,9 @@ class RecurrentDAC(Model):
     
     def on_epoch_end(self):
         """ Update real buffer hidden states on epoch end """
-        new_real_buffer = ReplayBuffer(self.agent.obs_dim, self.agent.ctl_dim, self.agent.state_dim, self.buffer_size)
-        for i in range(self.real_buffer.num_eps):
+        num_eps = min(self.a_batch_size, self.real_buffer.num_eps)
+        eps_ids = np.random.choice(np.arange(self.real_buffer.num_eps), num_eps, replace=False)
+        for i in eps_ids:
             obs = torch.from_numpy(self.real_buffer.episodes[i]["obs"]).to(torch.float32).to(self.device)
             ctl = torch.from_numpy(self.real_buffer.episodes[i]["ctl"]).to(torch.float32).to(self.device)
             next_obs = torch.from_numpy(self.real_buffer.episodes[i]["next_obs"]).to(torch.float32).to(self.device)
@@ -138,8 +139,7 @@ class RecurrentDAC(Model):
             with torch.no_grad():
                 [state, _], _ = self.agent(obs.unsqueeze(1), ctl.unsqueeze(1))
                 state = state.squeeze(1).cpu()
-            new_real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
-        self.real_buffer = new_real_buffer
+            self.real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
 
     def normalize_obs(self, obs):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
@@ -185,11 +185,13 @@ class RecurrentDAC(Model):
         return grad_norm
 
     def compute_discriminator_loss(self): 
-        real_batch = self.real_buffer.sample_random(self.d_batch_size)
-        fake_batch = self.replay_buffer.sample_random(self.d_batch_size)
+        real_batch = self.real_buffer.sample_random(self.d_batch_size, prioritize=False)
+        fake_batch = self.replay_buffer.sample_random(self.d_batch_size, prioritize=True)
         
+        real_state = real_batch["state"].to(self.device)
         real_obs = real_batch["obs"].to(self.device)
         real_ctl = real_batch["ctl"].to(self.device)
+        fake_state = fake_batch["state"].to(self.device)
         fake_obs = fake_batch["obs"].to(self.device)
         fake_ctl = fake_batch["ctl"].to(self.device)
         
@@ -197,8 +199,8 @@ class RecurrentDAC(Model):
         real_obs_norm = self.normalize_obs(real_obs)
         fake_obs_norm = self.normalize_obs(fake_obs)
 
-        real_inputs = torch.cat([real_obs_norm, real_ctl], dim=-1)
-        fake_inputs = torch.cat([fake_obs_norm, fake_ctl], dim=-1)
+        real_inputs = torch.cat([real_state, real_obs_norm, real_ctl], dim=-1)
+        fake_inputs = torch.cat([fake_state, fake_obs_norm, fake_ctl], dim=-1)
         inputs = torch.cat([real_inputs, fake_inputs], dim=0)
 
         real_labels = torch.zeros(self.d_batch_size, 1)
@@ -213,10 +215,12 @@ class RecurrentDAC(Model):
         return loss
 
     def compute_critic_loss(self):
-        batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len)
+        batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len, prioritize=True)
         pad_batch, mask = batch
+        state = pad_batch["state"].to(self.device)
         obs = pad_batch["obs"].to(self.device)
         ctl = pad_batch["ctl"].to(self.device)
+        next_state = pad_batch["next_state"].to(self.device)
         next_obs = pad_batch["next_obs"].to(self.device)
         next_ctl = pad_batch["next_ctl"].to(self.device)
         done = pad_batch["done"].to(self.device)
@@ -233,14 +237,16 @@ class RecurrentDAC(Model):
 
         with torch.no_grad():
             # compute reward
-            r = self.compute_reward(obs_norm, ctl)
+            r = self.compute_reward(torch.cat([state, obs_norm], dim=-1), ctl)
 
             # compute value target
-            q1_next, q2_next = self.critic_target(next_obs_norm, next_ctl)
+            q1_next, q2_next = self.critic_target(
+                torch.cat([next_state, next_obs_norm], dim=-1), next_ctl
+            )
             q_next = torch.min(q1_next, q2_next)
             q_target = r + (1 - done) * self.gamma * (q_next - self.beta * logp)
 
-        q1, q2 = self.critic(obs_norm, ctl)
+        q1, q2 = self.critic(torch.cat([state, obs_norm], dim=-1), ctl)
         q1_loss = torch.pow(q1 - q_target, 2) * mask
         q2_loss = torch.pow(q2 - q_target, 2) * mask
         q1_loss = q1_loss.sum() / mask.sum()
@@ -249,37 +255,22 @@ class RecurrentDAC(Model):
         return q_loss
 
     def compute_actor_loss(self):
-        batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len)
+        batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len, prioritize=False)
         pad_batch, mask = batch
         obs = pad_batch["obs"].to(self.device)
         ctl = pad_batch["ctl"].to(self.device)
         mask = mask.to(self.device)
-
+        
         # normalize observation
         obs_norm = self.normalize_obs(obs)
         
-        ctl_sample, _ = self.agent.choose_action_batch(obs, ctl, tau=0.1, hard=True)
+        ctl_sample, _, [state, _] = self.agent.choose_action_batch(obs, ctl, tau=0.1, hard=True, return_hidden=True)
         ctl_sample = ctl_sample.squeeze(0)
-
-        q1, q2 = self.critic(obs_norm, ctl_sample)
+        
+        q1, q2 = self.critic(torch.cat([state, obs_norm], dim=-1), ctl_sample)
         q = torch.min(q1, q2).squeeze(-1)
         ent = self.agent.ctl_model.entropy().mean()
         
-        # # stratified sampling
-        # _, [alpha_b, alpha_a] = self.agent.forward(obs, ctl)
-        # ctl_sample = self.agent.ctl_model.sample((len(obs), self.a_batch_size)).squeeze(-3)
-        
-        # q = [torch.empty(0)] * self.agent.act_dim
-        # for i in range(self.agent.act_dim):
-        #     ctl_sample_i = ctl_sample[:, :, i]
-        #     q1_i, q2_i = self.critic(obs_norm, ctl_sample_i)
-        #     q[i] = torch.min(q1_i, q2_i)
-        # q = torch.cat(q, dim=-1)
-        # ent = self.agent.ctl_model.entropy()
-        
-        # q = torch.sum(alpha_a * q, dim=-1)
-        # ent = torch.sum(alpha_a * ent.unsqueeze(-3), dim=-1)
-
         a_loss = (-self.beta * ent - q) * mask
         a_loss = a_loss.sum() / (mask.sum() + 1e-6)
         return a_loss
