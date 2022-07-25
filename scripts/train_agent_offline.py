@@ -14,6 +14,7 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
 from src.agents.vin_agents import VINAgent
+from src.agents.lf_agents import LFVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning, LFBehaviorCloning
@@ -38,7 +39,7 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
-    parser.add_argument("--agent", type=str, choices=["vin", "idm", "mlp"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "lfvin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
     parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
     parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
@@ -118,20 +119,31 @@ def main(arglist):
 
     # init agent
     if arglist.agent == "vin":
-        place_holder = True if arglist.algo == "lfbc" else False
         agent = VINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
-            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, place_holder=place_holder
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
         )
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
 
-    if arglist.agent == "idm":
+    elif arglist.agent == "lfvin":
+        agent = LFVINAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
+            arglist.horizon, arglist.num_factors, arglist.hidden_dim, arglist.num_hidden, 
+            arglist.gru_layers, arglist.activation,
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
+        )
+        agent.obs_model.init_batch_norm(obs_mean, obs_var)
+        if not arglist.use_tanh:
+            agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+
+    elif arglist.agent == "idm":
         agent = IDM(std=ctl_var)
 
-    if arglist.agent == "mlp":
+    elif arglist.agent == "mlp":
         agent = MLPAgent(
             obs_dim, ctl_dim, arglist.hidden_dim, arglist.num_hidden, 
             activation=arglist.activation, use_tanh=arglist.use_tanh, ctl_limits=ctl_lim
@@ -144,9 +156,8 @@ def main(arglist):
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     if arglist.algo == "lfbc":
-        num_factors = 4
         model = LFBehaviorCloning(
-            agent, num_factors, arglist.hidden_dim, arglist.gru_layers, 
+            agent, arglist.num_factors, arglist.hidden_dim, arglist.gru_layers, 
             arglist.num_hidden, arglist.activation,
             arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
