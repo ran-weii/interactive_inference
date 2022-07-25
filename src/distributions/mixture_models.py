@@ -9,7 +9,10 @@ from src.distributions.nn_models import Model
 
 class ConditionalGaussian(Model):
     """ Conditional gaussian distribution used to create mixture distributions """
-    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True, use_tanh=False, limits=None):
+    def __init__(
+        self, x_dim, z_dim, cov="full", batch_norm=True, 
+        use_tanh=False, limits=None, place_holder=False
+        ):
         """
         Args:
             x_dim (int): observed output dimension
@@ -26,13 +29,20 @@ class ConditionalGaussian(Model):
         self.use_tanh = use_tanh
         self.eps = 1e-6
         
-        self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-        self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-        self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
-        
-        nn.init.normal_(self.mu, mean=0, std=1)
-        nn.init.normal_(self.lv, mean=0, std=0.01)
-        nn.init.normal_(self.tl, mean=0, std=0.01)
+        self.mu = torch.randn(1, z_dim, x_dim)
+        self.lv = torch.randn(1, z_dim, x_dim)
+        self.tl = torch.randn(1, z_dim, x_dim, x_dim)
+        if not place_holder:
+            self.mu = nn.Parameter(self.mu)
+            self.lv = nn.Parameter(self.lv)
+            self.tl = nn.Parameter(self.tl)
+            # self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+            # self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+            # self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
+            
+            nn.init.normal_(self.mu, mean=0, std=1)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+            nn.init.normal_(self.tl, mean=0, std=0.01)
         
         if cov == "diag":
             del self.tl

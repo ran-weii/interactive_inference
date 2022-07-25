@@ -192,25 +192,37 @@ class ContinuousGaussianHMM(Model):
 
 
 class QMDPLayer(jit.ScriptModule):
-    def __init__(self, state_dim, act_dim, rank, horizon):
+    def __init__(self, state_dim, act_dim, rank, horizon, place_holder=False):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.rank = rank
         self.horizon = horizon
         self.eps = 1e-6
-        
-        self.b0 = nn.Parameter(torch.randn(1, state_dim))
-        self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
-        self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
-        self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
-        self.tau = nn.Parameter(torch.randn(1, 1))
-        
-        nn.init.xavier_normal_(self.b0, gain=1.)
-        nn.init.xavier_normal_(self.u, gain=1.)
-        nn.init.xavier_normal_(self.v, gain=1.)
-        nn.init.xavier_normal_(self.w, gain=1.)
-        nn.init.uniform_(self.tau, a=-1, b=1)
+
+        self.b0 = torch.randn(1, state_dim)
+        self.u = torch.randn(1, rank, state_dim) # source tensor
+        self.v = torch.randn(1, rank, state_dim) # sink tensor
+        self.w = torch.randn(1, rank, act_dim) # action tensor 
+        self.tau = torch.randn(1, 1)
+
+        if not place_holder:
+            self.b0 = nn.Parameter(self.b0)
+            self.u = nn.Parameter(self.u) # source tensor
+            self.v = nn.Parameter(self.v) # sink tensor
+            self.w = nn.Parameter(self.w) # action tensor 
+            self.tau = nn.Parameter(self.tau)
+            # self.b0 = nn.Parameter(torch.randn(1, state_dim))
+            # self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+            # self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+            # self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+            # self.tau = nn.Parameter(torch.randn(1, 1))
+
+            nn.init.xavier_normal_(self.b0, gain=1.)
+            nn.init.xavier_normal_(self.u, gain=1.)
+            nn.init.xavier_normal_(self.v, gain=1.)
+            nn.init.xavier_normal_(self.w, gain=1.)
+            nn.init.uniform_(self.tau, a=-1, b=1)
     
     def __repr__(self):
         s = "{}(state_dim={}, act_dim={}, rank={}, horizon={})".format(
