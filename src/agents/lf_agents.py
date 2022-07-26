@@ -1,11 +1,13 @@
+from random import sample
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.distributions as torch_dist
 from src.agents.core import AbstractAgent
 from src.distributions.hmm import QMDPLayer
 from src.distributions.mixture_models import ConditionalGaussian
 from src.distributions.nn_models import GRUMLP
-from src.distributions.utils import kl_divergence
+from src.distributions.utils import kl_divergence, rectify
 
 from typing import Union, Tuple, Optional
 from torch import Tensor
@@ -26,6 +28,7 @@ class LFVINAgent(AbstractAgent):
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.horizon = horizon
+        self.num_factors = num_factors
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, place_holder=True)
         self.obs_model = ConditionalGaussian(
@@ -61,6 +64,8 @@ class LFVINAgent(AbstractAgent):
         self._b = None # torch.ones(1, self.state_dim)
         self._a = None # previous action distribution
         self._prev_ctl = None
+        self._theta = None # parameter vecot
+        self._ent = None # posterior entropy
 
     @property
     def target_dist(self):
@@ -131,34 +136,58 @@ class LFVINAgent(AbstractAgent):
         self.ctl_model.mu = theta_[10].view([-1] + list(self.parameter_size[10])[1:])
         self.ctl_model.lv = theta_[11].view([-1] + list(self.parameter_size[11])[1:])
         self.ctl_model.tl = theta_[12].view([-1] + list(self.parameter_size[12])[1:])
+    
+    def encode(self, o, u):
+        """ Sample from variational posterior """
+        z_params = self.encoder(torch.cat([o, u], dim=-1))
+        mu, lv = torch.chunk(z_params, 2, dim=-1)
+        z_dist = torch_dist.Normal(mu, rectify(lv))
+        z = z_dist.rsample()
+        ent = z_dist.entropy().sum(-1, keepdim=True)
+        theta = self.decoder(z)
+        return theta, ent
+    
+    def sample_theta(self):
+        z = torch_dist.Normal(
+            torch.zeros(1, self.num_factors), torch.ones(1, self.num_factors)
+        ).sample()
+        theta = self.decoder(z)
+        return theta
 
     def forward(
         self, o: Tensor, u: Union[Tensor, None], 
-        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None,
-        theta: Optional[Union[Tensor, None]]=None,
+        hidden: Optional[Union[Tuple[Tensor, Tensor, Tensor, Tensor], None]]=None,
+        sample_theta: Optional[bool]=False
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-            hidden ([tuple[torch.tensor, torch.tensor], None], optional). initial hidden state.
+            hidden ([tuple[torch.tensor] * 4, None], optional). initial hidden state.
+            sample_theta (bool, optional): whether to sample theta from prior. If not encode observations. 
         
         Returns:
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
+            theta (torch.tensor): agent parameter vector. size=[batch_size, num_params]
+            ent (torch.tensor): variational distribution entropy. size=[batch_size, 1]
         """
-        if theta is not None:
-            self.transform_params(theta)
-
-        b, a = None, None
+        b, a, theta, ent = None, None, None, None
         if hidden is not None:
-            b, a = hidden
+            b, a, theta, ent = hidden
+        
+        if theta is None:
+            if sample_theta:
+                theta = self.sample_theta()
+            else:
+                theta, ent = self.encode(o, u)
+        self.transform_params(theta)
 
         logp_o = self.obs_model.log_prob(o)
         logp_u = None if u is None else self.ctl_model.log_prob(u)
         reward = self.reward
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, b, a)
-        return [alpha_b, alpha_a], [alpha_b, alpha_a] # second tuple used in bptt
+        return [alpha_b, alpha_a], [alpha_b, alpha_a, theta, ent] # second tuple used in bptt
     
     def act_loss(self, o, u, mask, forward_out):
         """ Compute action loss 
@@ -173,9 +202,9 @@ class LFVINAgent(AbstractAgent):
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        _, alpha_a = forward_out
+        _, alpha_a, _, ent = forward_out[1]
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) - torch.mean(ent)/len(o)
 
         # compute stats
         nan_mask = mask.clone()
@@ -197,7 +226,7 @@ class LFVINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _ = forward_out
+        alpha_b, _, _, _ = forward_out[1]
         logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
 
@@ -222,8 +251,9 @@ class LFVINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
-        [alpha_b, alpha_a], _ = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [self._b, self._a]
+        [alpha_b, alpha_a], [_, _, theta, _] = self.forward(
+            o.unsqueeze(0), self._prev_ctl, [self._b, self._a, self._theta, self._ent], 
+            sample_theta=True
         )
         b_t, a_t = alpha_b[0], alpha_a[0]
         
@@ -238,6 +268,7 @@ class LFVINAgent(AbstractAgent):
         
         self._b, self._a = b_t, a_t
         self._prev_ctl = u_sample.sum(0)
+        self._theta = theta
         return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False):
