@@ -137,24 +137,9 @@ class HyperVINAgent(AbstractAgent):
         z_params = self.encoder(torch.cat([o_norm, u], dim=-1))
         mu, lv = torch.chunk(z_params, 2, dim=-1)
         
-        # std = rectify(lv)
-        # if torch.isnan(std).sum() > 0 or torch.isinf(mu).sum() > 0:
-        #     print("std", torch.isnan(std).sum(), std.shape)
-        #     print("mu", torch.isnan(mu).sum(), torch.isinf(mu).sum(), mu.shape)
-        #     print("lv", torch.isnan(lv).sum(), torch.isinf(lv).sum(), lv.shape)
-        #     print("o", torch.isnan(o).sum(), torch.isinf(o).sum(), o.shape)
-        #     print("u", torch.isnan(u).sum(), torch.isinf(u).sum(), u.shape)
-        #     print(mu)
-        #     print(lv)
-        #     raise ValueError
-
         z_dist = torch_dist.Normal(mu, rectify(lv))
         z = z_dist.rsample()
         ent = z_dist.entropy().sum(-1, keepdim=True)
-        
-        # if torch.isnan(z).sum() > 0 or torch.isinf(z).sum() > 0:
-        #     print("z nan")
-        #     raise ValueError
         return z, ent
     
     def sample_z(self):
@@ -195,13 +180,6 @@ class HyperVINAgent(AbstractAgent):
         logp_u = None if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward(z)
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, z, b, a)
-
-        # if torch.isnan(alpha_b).sum() > 0 or torch.isinf(alpha_b).sum() > 0:
-        #     print("alpha_b nan")
-        #     raise ValueError
-        # if torch.isnan(alpha_a).sum() > 0 or torch.isinf(alpha_a).sum() > 0:
-        #     print("alpha_a nan")
-        #     raise ValueError
         return [alpha_b, alpha_a], [alpha_b, alpha_a, z, ent] # second tuple used in bptt
     
     def act_loss(self, o, u, mask, forward_out):
@@ -221,10 +199,6 @@ class HyperVINAgent(AbstractAgent):
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) - torch.mean(ent)/len(o)
         
-        # if torch.isnan(logp_u).sum() > 0 or torch.isinf(logp_u).sum() > 0:
-        #     print("logp_u nan")
-        #     raise ValueError
-
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask == 0] = torch.nan
@@ -249,10 +223,6 @@ class HyperVINAgent(AbstractAgent):
         logp_o = self.obs_model.mixture_log_prob(alpha_b, o, z)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
         
-        # if torch.isnan(logp_o).sum() > 0 or torch.isinf(logp_o).sum() > 0:
-        #     print("logp_o nan")
-        #     raise ValueError
-
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask == 0] = torch.nan
@@ -322,29 +292,25 @@ class HyperVINAgent(AbstractAgent):
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         
-        # if torch.isnan(u_sample).sum() > 0 or torch.isinf(u_sample).sum() > 0:
-        #     print("u_sample nan")
-        #     raise ValueError
-
         if return_hidden:
             return u_sample, logp, [alpha_b, alpha_a]
         else:
             return u_sample, logp
 
-    def predict(self, o, u, sample_method="ace", num_samples=1):
-        """ Offline prediction observations and control """
-        [alpha_b, alpha_a], _ = self.forward(o, u)
+    # def predict(self, o, u, sample_method="ace", num_samples=1):
+    #     """ Offline prediction observations and control """
+    #     [alpha_b, alpha_a], _ = self.forward(o, u)
 
-        if sample_method == "bma":
-            o_sample = self.obs_model.bayesian_average(alpha_b)
-            u_sample = self.ctl_model.bayesian_average(alpha_a)
+    #     if sample_method == "bma":
+    #         o_sample = self.obs_model.bayesian_average(alpha_b)
+    #         u_sample = self.ctl_model.bayesian_average(alpha_a)
 
-        else:
-            sample_mean = True if sample_method == "acm" else False
-            o_sample = self.obs_model.ancestral_sample(
-                alpha_b, num_samples, sample_mean, tau=0.1, hard=True
-            )
-            u_sample = self.ctl_model.ancestral_sample(
-                alpha_a, num_samples, sample_mean, tau=0.1, hard=True
-            )
-        return o_sample, u_sample
+    #     else:
+    #         sample_mean = True if sample_method == "acm" else False
+    #         o_sample = self.obs_model.ancestral_sample(
+    #             alpha_b, num_samples, sample_mean, tau=0.1, hard=True
+    #         )
+    #         u_sample = self.ctl_model.ancestral_sample(
+    #             alpha_a, num_samples, sample_mean, tau=0.1, hard=True
+    #         )
+    #     return o_sample, u_sample
