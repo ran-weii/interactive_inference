@@ -169,7 +169,7 @@ class ConditionalGaussian(Model):
 class HyperConditionalGaussian(Model):
     """ Hypernet version of conditional gaussian distribution
     
-    Hyper vector parameterizes mu and lv, tl is shared
+    Hyper vector parameterizes mu, lv and tl are shared
     """
     def __init__(
         self, x_dim, z_dim, hyper_dim, cov="full", batch_norm=True, 
@@ -194,8 +194,9 @@ class HyperConditionalGaussian(Model):
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
-        self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+        self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
         self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
+        nn.init.normal_(self.lv, mean=0, std=0.01)
         nn.init.normal_(self.tl, mean=0, std=0.01)
     
         if cov == "diag":
@@ -223,16 +224,14 @@ class HyperConditionalGaussian(Model):
     def mu(self, z):
         return self._mu(z).view(-1, self.z_dim, self.x_dim)
 
-    def lv(self, z):
-        return self._lv(z).view(-1, self.z_dim, self.x_dim)
-
     def get_distribution_class(self, z, requires_grad=True):
-        [mu, lv, tl] = self.mu(z), self.lv(z), self.tl
+        [mu, lv, tl] = self.mu(z), self.lv, self.tl
+        lv = torch.repeat_interleave(lv, len(mu), dim=0)
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
         if requires_grad is False:
             mu, L = mu.data, L.data
-
+        
         distribution = torch_dist.MultivariateNormal(mu, scale_tril=L)
         
         transforms = []
