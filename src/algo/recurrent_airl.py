@@ -16,7 +16,7 @@ class RecurrentDAC(Model):
     def __init__(
         self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, polyak=0.995, norm_obs=False,
         buffer_size=int(1e6), d_batch_size=100, a_batch_size=32, rnn_len=50, d_steps=50, a_steps=50, 
-        lr=1e-3, decay=0, grad_clip=None, grad_penalty=1., bc_penalty=1., obs_penalty=1.
+        lr_d=1e-3, lr_a=1e-3, lr_c=1e-3, decay=0, grad_clip=None, grad_penalty=1., bc_penalty=1., obs_penalty=1.
         ):
         """
         Args:
@@ -33,10 +33,14 @@ class RecurrentDAC(Model):
             rnn_len (int, optional): number of recurrent steps to sample. Default=50
             d_steps (int, optional): discriminator update steps per training step. Default=50
             a_steps (int, optional): actor critic update steps per training step. Default=50
-            lr (float, optional): learning rate. Default=1e-3
+            lr_d (float, optional): discriminator learning rate. Default=1e-3
+            lr_a (float, optional): actor learning rate. Default=1e-3
+            lr_c (float, optional): critic learning rate. Default=1e-3
             decay (float, optional): weight decay. Default=0
             grad_clip (float, optional): gradient clipping. Default=None
             grad_penalty (float, optional): discriminator gradient penalty. Default=1.
+            bc_penalty (float, optional): behavior cloning penalty. Default=1.
+            obs_penalty (float, optional): observation penalty. Default=1.
         """
         super().__init__()
         self.gamma = gamma
@@ -50,7 +54,9 @@ class RecurrentDAC(Model):
         self.rnn_len = rnn_len
         self.d_steps = d_steps
         self.a_steps = a_steps
-        self.lr = lr
+        self.lr_d = lr_d
+        self.lr_a = lr_a
+        self.lr_c = lr_c
         self.decay = decay
         self.grad_clip = grad_clip
         self.grad_penalty = grad_penalty
@@ -76,13 +82,13 @@ class RecurrentDAC(Model):
             param.requires_grad = False
         
         self.d_optimizer = torch.optim.Adam(
-            self.discriminator.parameters(), lr=lr, weight_decay=decay
+            self.discriminator.parameters(), lr=lr_d, weight_decay=decay
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=lr, weight_decay=decay
+            self.critic.parameters(), lr=lr_c, weight_decay=decay
         )
         self.actor_optimizer = torch.optim.Adam(
-            self.agent.parameters(), lr=lr * 5, weight_decay=decay
+            self.agent.parameters(), lr=lr_a, weight_decay=decay
         )
 
         self.real_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, agent.state_dim, buffer_size)
@@ -102,11 +108,12 @@ class RecurrentDAC(Model):
         s_discriminator = self.discriminator.__repr__()
         s = "{}(gamma={}, beta={}, polyak={}, norm_obs={}, "\
             "buffer_size={}, d_batch_size={}, a_steps={}, d_steps={}, "\
-            "lr={}, decay={}, grad_clip={}, grad_penalty={}"\
+            "lr_d={}, lr_a={}, lr_c={}, decay={}, grad_clip={}, grad_penalty={}"\
             "\n    discriminator={}\n    agent={}, \n    critic={}\n)".format(
             self.__class__.__name__, self.gamma, self.beta, self.polyak, self.norm_obs,
             self.replay_buffer.max_size, self.d_batch_size, self.a_steps, self.d_steps,
-            self.lr, self.decay, self.grad_clip, self.grad_penalty, s_discriminator, s_agent, s_critic
+            self.lr_d, self.lr_a, self.lr_c, self.decay, self.grad_clip, 
+            self.grad_penalty, s_discriminator, s_agent, s_critic
         )
         return s
     
@@ -155,6 +162,10 @@ class RecurrentDAC(Model):
 
             self.obs_mean.data = mean
             self.obs_variance.data = variance
+            
+            if hasattr(self.agent, "obs_mean"):
+                self.agent.obs_mean.data = mean
+                self.agent.obs_variance.data = variance
     
     def reset(self):
         self.agent.reset()
@@ -285,8 +296,8 @@ class RecurrentDAC(Model):
         obs = pad_batch["obs"].to(self.device)
         ctl = pad_batch["ctl"].to(self.device)
         mask = mask.to(self.device)
-
-        out, _ = self.agent(obs, ctl)
+        
+        out = self.agent(obs, ctl)
         bc_loss, _ = self.agent.act_loss(obs, ctl, mask, out)
         bc_loss = bc_loss.mean()
         return bc_loss
@@ -298,8 +309,8 @@ class RecurrentDAC(Model):
         obs = pad_batch["obs"].to(self.device)
         ctl = pad_batch["ctl"].to(self.device)
         mask = mask.to(self.device)
-
-        out, _ = self.agent(obs, ctl)
+        
+        out = self.agent(obs, ctl)
         obs_loss, _ = self.agent.obs_loss(obs, ctl, mask, out)
         obs_loss = obs_loss.mean()
         return obs_loss
@@ -333,7 +344,6 @@ class RecurrentDAC(Model):
             # train critic
             critic_loss = self.compute_critic_loss()
             critic_loss.backward()
-
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
             self.critic_optimizer.step()
@@ -350,7 +360,6 @@ class RecurrentDAC(Model):
                 actor_loss + self.bc_penalty * bc_loss + self.obs_penalty * obs_loss
             )
             actor_total_loss.backward()
-                    
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.agent.parameters(), self.grad_clip)
             self.actor_optimizer.step()
