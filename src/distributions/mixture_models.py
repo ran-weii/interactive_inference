@@ -76,16 +76,16 @@ class ConditionalGaussian(Model):
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
-    def mean(self, params=None):
-        distribution = self.get_distribution_class(params)
+    def mean(self):
+        distribution = self.get_distribution_class()
         return distribution.mean
     
-    def variance(self, params=None):
-        distribution = self.get_distribution_class(params)
+    def variance(self):
+        distribution = self.get_distribution_class()
         return distribution.variance
     
-    def entropy(self, params=None):
-        distribution = self.get_distribution_class(params)
+    def entropy(self):
+        distribution = self.get_distribution_class()
         return distribution.entropy()
     
     def log_prob(self, x):
