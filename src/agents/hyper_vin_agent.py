@@ -1,10 +1,8 @@
-from random import sample
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.distributions as torch_dist
 from src.agents.core import AbstractAgent
-from src.distributions.hmm import QMDPLayer
+from src.agents.qmdp_layer import HyperQMDPLayer
 from src.distributions.mixture_models import ConditionalGaussian
 from src.distributions.nn_models import GRUMLP
 from src.distributions.utils import kl_divergence, rectify
@@ -12,14 +10,14 @@ from src.distributions.utils import kl_divergence, rectify
 from typing import Union, Tuple, Optional
 from torch import Tensor
 
-class LFVINAgent(AbstractAgent):
-    """ Latent factor value iteraction network agent with 
+class HyperVINAgent(AbstractAgent):
+    """ Hyper value iteraction network agent with 
     conditinal gaussian observation and control models and 
     QMDP hidden layer
     """
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
-        num_factors, hidden_dim, num_hidden, gru_layers, activation,
+        hyper_dim, hidden_dim, num_hidden, gru_layers, activation,
         obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, 
         ):
         super().__init__()
@@ -28,57 +26,55 @@ class LFVINAgent(AbstractAgent):
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.horizon = horizon
-        self.num_factors = num_factors
+        self.hyper_dim = hyper_dim
         
-        self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, place_holder=True)
+        self.rnn = HyperQMDPLayer(state_dim, act_dim, rank, horizon, hyper_dim)
         self.obs_model = ConditionalGaussian(
             obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
-            use_tanh=False, limits=None, place_holder=True
+            use_tanh=False, limits=None
         )
         self.ctl_model = ConditionalGaussian(
             ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
-            use_tanh=use_tanh, limits=ctl_lim, place_holder=True
+            use_tanh=use_tanh, limits=ctl_lim
         )
-        self.c = torch.randn(1, state_dim)
-        self._pi0 = torch.randn(1, act_dim, state_dim)
-        
-        self.parameter_size = [
-            self.c.shape, self._pi0.shape,
-            self.rnn.b0.shape, self.rnn.u.shape, self.rnn.v.shape, self.rnn.w.shape, self.rnn.tau.shape,
-            self.obs_model.mu.shape, self.obs_model.lv.shape, self.obs_model.tl.shape,
-            self.ctl_model.mu.shape, self.ctl_model.lv.shape, self.ctl_model.tl.shape
-        ]
-        
+        self._c = nn.Linear(hyper_dim, state_dim)
+        self._pi0 = nn.Linear(hyper_dim, act_dim * state_dim)
+
         self.encoder = GRUMLP(
             input_dim=obs_dim + ctl_dim,
-            output_dim=num_factors * 2,
+            output_dim=hyper_dim * 2,
             hidden_dim=hidden_dim,
             gru_layers=gru_layers,
             mlp_layers=num_hidden,
             activation=activation
         )
-        self.decoder = nn.Linear(num_factors, sum([np.prod(s) for s in self.parameter_size]))
+
+        self.obs_mean = nn.Parameter(torch.zeros(obs_dim), requires_grad=False)
+        self.obs_variance = nn.Parameter(torch.ones(obs_dim), requires_grad=False)
     
     def reset(self):
         """ Reset internal states for online inference """
         self._b = None # torch.ones(1, self.state_dim)
         self._a = None # previous action distribution
-        self._prev_ctl = None
-        self._theta = None # parameter vecot
-        self._ent = None # posterior entropy
+        self._prev_ctl = None # previous control
+        self._z = None # hyper vector
+        self._ent = None # hyper posterior entropy
 
     @property
     def target_dist(self):
-        return torch.softmax(self.c, dim=-1)
+        z = torch.ones(1, self.hyper_dim)
+        return self.compute_target_dist(z)
     
     @property
     def pi0(self):
         """ Prior policy """
-        return torch.softmax(self._pi0, dim=-1)
+        z = torch.ones(1, self.hyper_dim)
+        return self.compute_prior_policy(z)
     
     @property
     def transition(self):
-        return self.rnn.transition
+        z = torch.ones(1, self.hyper_dim)
+        return self.rnn.compute_transition(z)
     
     @property
     def value(self):
@@ -88,8 +84,9 @@ class LFVINAgent(AbstractAgent):
     @property
     def policy(self):
         """ Optimal planned policy """
+        z = torch.ones(1, self.hyper_dim)
         b = torch.eye(self.state_dim)
-        pi = self.rnn.plan(b, self.value)
+        pi = self.rnn.plan(b, z, self.value)
         return pi
     
     @property
@@ -109,85 +106,101 @@ class LFVINAgent(AbstractAgent):
     
     @property
     def reward(self):
+        z = torch.ones(1, self.hyper_dim)
+        return self.compute_reward(z)
+    
+    def compute_target_dist(self, z):
+        return torch.softmax(self._c(z), dim=-1)
+    
+    def compute_prior_policy(self, z):
+        pi0 = self._pi0(z).view(-1, self.act_dim, self.state_dim)
+        return torch.softmax(pi0, dim=-2)
+
+    def compute_reward(self, z):
         """ State action reward """
-        transition = self.rnn.transition
+        transition = self.rnn.compute_transition(z)
         entropy = self.obs_model.entropy()
-        
-        c = self.target_dist
+
+        c = self.compute_target_dist(z)
+        pi0 = self.compute_prior_policy(z)
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
-        log_pi0 = torch.log(self.pi0 + 1e-6)
+        log_pi0 = torch.log(pi0 + 1e-6)
         r = -kl - eh + log_pi0
         return r
-    
-    def transform_params(self, theta):
-        theta_ = torch.split(theta, [np.prod(s) for s in self.parameter_size], dim=-1)
-        
-        self.c = theta_[0].view([-1] + list(self.parameter_size[0])[1:])
-        self._pi0 = theta_[1].view([-1] + list(self.parameter_size[1])[1:])
-        self.rnn.b0 = theta_[2].view([-1] + list(self.parameter_size[2])[1:])
-        self.rnn.u = theta_[3].view([-1] + list(self.parameter_size[3])[1:])
-        self.rnn.v = theta_[4].view([-1] + list(self.parameter_size[4])[1:])
-        self.rnn.w = theta_[5].view([-1] + list(self.parameter_size[5])[1:])
-        self.rnn.tau = theta_[6].view([-1] + list(self.parameter_size[6])[1:])
-        self.obs_model.mu = theta_[7].view([-1] + list(self.parameter_size[7])[1:])
-        self.obs_model.lv = theta_[8].view([-1] + list(self.parameter_size[8])[1:])
-        self.obs_model.tl = theta_[9].view([-1] + list(self.parameter_size[9])[1:])
-        self.ctl_model.mu = theta_[10].view([-1] + list(self.parameter_size[10])[1:])
-        self.ctl_model.lv = theta_[11].view([-1] + list(self.parameter_size[11])[1:])
-        self.ctl_model.tl = theta_[12].view([-1] + list(self.parameter_size[12])[1:])
-    
+
     def encode(self, o, u):
         """ Sample from variational posterior """
-        z_params = self.encoder(torch.cat([o, u], dim=-1))
+        o_norm = (o - self.obs_mean) / self.obs_variance**0.5
+        z_params = self.encoder(torch.cat([o_norm, u], dim=-1))
         mu, lv = torch.chunk(z_params, 2, dim=-1)
+        
+        # std = rectify(lv)
+        # if torch.isnan(std).sum() > 0 or torch.isinf(mu).sum() > 0:
+        #     print("std", torch.isnan(std).sum(), std.shape)
+        #     print("mu", torch.isnan(mu).sum(), torch.isinf(mu).sum(), mu.shape)
+        #     print("lv", torch.isnan(lv).sum(), torch.isinf(lv).sum(), lv.shape)
+        #     print("o", torch.isnan(o).sum(), torch.isinf(o).sum(), o.shape)
+        #     print("u", torch.isnan(u).sum(), torch.isinf(u).sum(), u.shape)
+        #     print(mu)
+        #     print(lv)
+        #     raise ValueError
+
         z_dist = torch_dist.Normal(mu, rectify(lv))
         z = z_dist.rsample()
         ent = z_dist.entropy().sum(-1, keepdim=True)
-        theta = self.decoder(z)
-        return theta, ent
+        
+        # if torch.isnan(z).sum() > 0 or torch.isinf(z).sum() > 0:
+        #     print("z nan")
+        #     raise ValueError
+        return z, ent
     
-    def sample_theta(self):
+    def sample_z(self):
         z = torch_dist.Normal(
-            torch.zeros(1, self.num_factors), torch.ones(1, self.num_factors)
+            torch.zeros(1, self.hyper_dim), torch.ones(1, self.hyper_dim)
         ).sample()
-        theta = self.decoder(z)
-        return theta
+        return z
 
     def forward(
         self, o: Tensor, u: Union[Tensor, None], 
         hidden: Optional[Union[Tuple[Tensor, Tensor, Tensor, Tensor], None]]=None,
-        sample_theta: Optional[bool]=False
+        sample_z: Optional[bool]=False
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             hidden ([tuple[torch.tensor] * 4, None], optional). initial hidden state.
-            sample_theta (bool, optional): whether to sample theta from prior. If not encode observations. 
+            sample_z (bool, optional): whether to sample z from prior. If not encode observations. 
         
         Returns:
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
-            theta (torch.tensor): agent parameter vector. size=[batch_size, num_params]
+            z (torch.tensor): agent parameter vector. size=[batch_size, num_params]
             ent (torch.tensor): variational distribution entropy. size=[batch_size, 1]
         """
-        b, a, theta, ent = None, None, None, None
+        b, a, z, ent = None, None, None, None
         if hidden is not None:
-            b, a, theta, ent = hidden
+            b, a, z, ent = hidden
         
-        if theta is None:
-            if sample_theta:
-                theta = self.sample_theta()
+        if z is None:
+            if sample_z:
+                z = self.sample_z()
             else:
-                theta, ent = self.encode(o, u)
-        self.transform_params(theta)
+                z, ent = self.encode(o, u)
 
         logp_o = self.obs_model.log_prob(o)
         logp_u = None if u is None else self.ctl_model.log_prob(u)
-        reward = self.reward
-        alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, b, a)
-        return [alpha_b, alpha_a], [alpha_b, alpha_a, theta, ent] # second tuple used in bptt
+        reward = self.compute_reward(z)
+        alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, z, b, a)
+
+        # if torch.isnan(alpha_b).sum() > 0 or torch.isinf(alpha_b).sum() > 0:
+        #     print("alpha_b nan")
+        #     raise ValueError
+        # if torch.isnan(alpha_a).sum() > 0 or torch.isinf(alpha_a).sum() > 0:
+        #     print("alpha_a nan")
+        #     raise ValueError
+        return [alpha_b, alpha_a], [alpha_b, alpha_a, z, ent] # second tuple used in bptt
     
     def act_loss(self, o, u, mask, forward_out):
         """ Compute action loss 
@@ -205,6 +218,10 @@ class LFVINAgent(AbstractAgent):
         _, alpha_a, _, ent = forward_out[1]
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) - torch.mean(ent)/len(o)
+        
+        # if torch.isnan(logp_u).sum() > 0 or torch.isinf(logp_u).sum() > 0:
+        #     print("logp_u nan")
+        #     raise ValueError
 
         # compute stats
         nan_mask = mask.clone()
@@ -229,6 +246,10 @@ class LFVINAgent(AbstractAgent):
         alpha_b, _, _, _ = forward_out[1]
         logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
+        
+        # if torch.isnan(logp_o).sum() > 0 or torch.isinf(logp_o).sum() > 0:
+        #     print("logp_o nan")
+        #     raise ValueError
 
         # compute stats
         nan_mask = mask.clone()
@@ -251,9 +272,9 @@ class LFVINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
-        [alpha_b, alpha_a], [_, _, theta, _] = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [self._b, self._a, self._theta, self._ent], 
-            sample_theta=True
+        [alpha_b, alpha_a], [_, _, z, _] = self.forward(
+            o.unsqueeze(0), self._prev_ctl, [self._b, self._a, self._z, self._ent], 
+            sample_z=True
         )
         b_t, a_t = alpha_b[0], alpha_a[0]
         
@@ -268,7 +289,7 @@ class LFVINAgent(AbstractAgent):
         
         self._b, self._a = b_t, a_t
         self._prev_ctl = u_sample.sum(0)
-        self._theta = theta
+        self._z = z
         return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False):
@@ -298,6 +319,11 @@ class LFVINAgent(AbstractAgent):
                 alpha_a, num_samples, sample_mean, tau, hard
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
+        
+        # if torch.isnan(u_sample).sum() > 0 or torch.isinf(u_sample).sum() > 0:
+        #     print("u_sample nan")
+        #     raise ValueError
+
         if return_hidden:
             return u_sample, logp, [alpha_b, alpha_a]
         else:
