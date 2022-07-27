@@ -59,7 +59,7 @@ class VINAgent(AbstractAgent):
     @property
     def pi0(self):
         """ Prior policy """
-        return torch.softmax(self._pi0, dim=-1)
+        return torch.softmax(self._pi0, dim=-2)
     
     @property
     def transition(self):
