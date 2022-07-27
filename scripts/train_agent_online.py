@@ -17,11 +17,11 @@ from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import Observer
 
 # model imports
-from src.agents.vin_agents import VINAgent
+from src.agents.vin_agent import VINAgent
+from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.mlp_agents import MLPAgent
 
 # training imports
-from src.algo.irl import BehaviorCloning
 from src.algo.airl import DAC
 from src.algo.recurrent_airl import RecurrentDAC
 from src.algo.rl_utils import train
@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
-    parser.add_argument("--agent", type=str, choices=["vin", "mlp"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--state_dim", type=int, default=30, help="vin agent hidden state dim, default=30")
     parser.add_argument("--act_dim", type=int, default=60, help="vin agent action dim, default=60")
@@ -54,10 +54,12 @@ def parse_args():
     parser.add_argument("--ctl_cov", type=str, default="full", help="vin agent control covariance, default=full")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
     parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observations for agent and algo, default=False")
+    parser.add_argument("--hyper_dim", type=int, default=4, help="number of hyper factor, default=4")
     # trainer model args
     parser.add_argument("--algo", type=str, choices=["dac", "rdac"], default="dac", help="training algorithm, default=dac")
     parser.add_argument("--hidden_dim", type=int, default=64, help="neural network hidden dims, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
+    parser.add_argument("--gru_layers", type=int, default=1, help="number of gru layers, defualt=1")
     parser.add_argument("--activation", type=str, default="relu", help="neural network activation, default=relu")
     parser.add_argument("--gamma", type=float, default=0.9, help="trainer discount factor, default=0.9")
     parser.add_argument("--beta", type=float, default=0.2, help="softmax temperature, default=0.2")
@@ -80,7 +82,9 @@ def parse_args():
     parser.add_argument("--rnn_len", type=int, default=10, help="number of recurrent steps to sample, default=10")
     parser.add_argument("--d_steps", type=int, default=30, help="discriminator steps, default=30")
     parser.add_argument("--a_steps", type=int, default=30, help="actor critic steps, default=30")
-    parser.add_argument("--lr", type=float, default=0.001, help="model learning rate, default=0.001")
+    parser.add_argument("--lr_d", type=float, default=0.001, help="discriminator learning rate, default=0.001")
+    parser.add_argument("--lr_a", type=float, default=0.001, help="actor learning rate, default=0.001")
+    parser.add_argument("--lr_c", type=float, default=0.001, help="critic learning rate, default=0.001")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=1000., help="gradient clipping, default=1000.")
     parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
@@ -158,6 +162,17 @@ def main(arglist):
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+    elif arglist.agent == "hvin":
+        agent = HyperVINAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
+            arglist.horizon, arglist.hyper_dim, arglist.hidden_dim, arglist.num_hidden, 
+            arglist.gru_layers, arglist.activation,
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
+        )
+        agent.obs_model.init_batch_norm(obs_mean, obs_var)
+        if not arglist.use_tanh:
+            agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
 
     # init trainer
     if arglist.algo == "dac":
@@ -170,13 +185,13 @@ def main(arglist):
         )
         model.fill_real_buffer(rel_dataset)
     elif arglist.algo == "rdac":
-        assert arglist.agent == "vin"
+        assert "vin" in arglist.agent
         model = RecurrentDAC(
             agent, arglist.hidden_dim, arglist.num_hidden, 
             gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
             buffer_size=arglist.buffer_size, d_batch_size=arglist.d_batch_size, a_batch_size=arglist.a_batch_size,
             rnn_len=arglist.rnn_len, d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
-            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip, 
+            lr_d=arglist.lr_d, lr_a=arglist.lr_a, lr_c=arglist.lr_c, decay=arglist.decay, grad_clip=arglist.grad_clip, 
             grad_penalty=arglist.grad_penalty, bc_penalty=arglist.bc_penalty, obs_penalty=arglist.obs_penalty
         )
         model.fill_real_buffer(rel_dataset)
