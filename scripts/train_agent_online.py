@@ -181,7 +181,7 @@ def main(arglist):
             gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
             buffer_size=arglist.buffer_size, batch_size=arglist.batch_size, 
             d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
-            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
+            lr=arglist.lr_d, decay=arglist.decay, grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
         )
         model.fill_real_buffer(rel_dataset)
     elif arglist.algo == "rdac":
