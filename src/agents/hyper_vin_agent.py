@@ -55,7 +55,7 @@ class HyperVINAgent(AbstractAgent):
     
     def reset(self):
         """ Reset internal states for online inference """
-        self._b = None # torch.ones(1, self.state_dim)
+        self._b = None # prior belief
         self._a = None # previous action distribution
         self._prev_ctl = None # previous control
         self._z = None # hyper vector
@@ -63,18 +63,18 @@ class HyperVINAgent(AbstractAgent):
 
     @property
     def target_dist(self):
-        z = torch.ones(1, self.hyper_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
         return self.compute_target_dist(z)
     
     @property
     def pi0(self):
         """ Prior policy """
-        z = torch.ones(1, self.hyper_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
         return self.compute_prior_policy(z)
     
     @property
     def transition(self):
-        z = torch.ones(1, self.hyper_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
         return self.rnn.compute_transition(z)
     
     @property
@@ -85,8 +85,8 @@ class HyperVINAgent(AbstractAgent):
     @property
     def policy(self):
         """ Optimal planned policy """
-        z = torch.ones(1, self.hyper_dim)
-        b = torch.eye(self.state_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
+        b = torch.eye(self.state_dim).to(self.device)
         pi = self.rnn.plan(b, z, self.value)
         return pi
     
@@ -100,7 +100,7 @@ class HyperVINAgent(AbstractAgent):
     @property
     def efe(self):
         """ Negative expected free energy """
-        z = torch.ones(1, self.hyper_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
         entropy = self.obs_model.entropy(z)
         c = self.target_dist
         kl = kl_divergence(torch.eye(self.state_dim), c)
@@ -108,7 +108,7 @@ class HyperVINAgent(AbstractAgent):
     
     @property
     def reward(self):
-        z = torch.ones(1, self.hyper_dim)
+        z = torch.ones(1, self.hyper_dim).to(self.device)
         return self.compute_reward(z)
     
     def compute_target_dist(self, z):
@@ -144,7 +144,8 @@ class HyperVINAgent(AbstractAgent):
     
     def sample_z(self):
         z = torch_dist.Normal(
-            torch.zeros(1, self.hyper_dim), torch.ones(1, self.hyper_dim)
+            torch.zeros(1, self.hyper_dim).to(self.device), 
+            torch.ones(1, self.hyper_dim).to(self.device)
         ).sample()
         return z
 
