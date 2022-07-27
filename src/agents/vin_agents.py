@@ -142,7 +142,7 @@ class VINAgent(AbstractAgent):
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        _, alpha_a = forward_out
+        _, alpha_a = forward_out[0]
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
 
@@ -166,7 +166,7 @@ class VINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _ = forward_out
+        alpha_b, _ = forward_out[0]
         logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
 
