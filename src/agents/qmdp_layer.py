@@ -6,8 +6,24 @@ import math
 from typing import Union, Tuple
 from torch import Tensor
 
+def poisson_pdf(rate: Tensor, K: int) -> Tensor:
+    """ jit compatible version of poisson pdf
+    
+    Args:
+        rate (torch.tensor): poission arrival rate [batch_size, 1]
+        K (int): number of bins
+
+    Returns:
+        pdf (torch.tensor): truncated poisson pdf [batch_size, K]
+    """
+    Ks = 1 + torch.arange(K).to(rate.device)
+    poisson_logp = Ks.xlogy(rate) - rate - (Ks + 1).lgamma()
+    pdf = torch.softmax(poisson_logp, dim=-1)
+    return pdf
+
+
 class QMDPLayer(jit.ScriptModule):
-    def __init__(self, state_dim, act_dim, rank, horizon, place_holder=False):
+    def __init__(self, state_dim, act_dim, rank, horizon):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
@@ -15,29 +31,17 @@ class QMDPLayer(jit.ScriptModule):
         self.horizon = horizon
         self.eps = 1e-6
 
-        self.b0 = torch.randn(1, state_dim)
-        self.u = torch.randn(1, rank, state_dim) # source tensor
-        self.v = torch.randn(1, rank, state_dim) # sink tensor
-        self.w = torch.randn(1, rank, act_dim) # action tensor 
-        self.tau = torch.randn(1, 1)
+        self.b0 = nn.Parameter(torch.randn(1, state_dim))
+        self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+        self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+        self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+        self.tau = nn.Parameter(torch.randn(1, 1))
 
-        if not place_holder:
-            self.b0 = nn.Parameter(self.b0)
-            self.u = nn.Parameter(self.u) # source tensor
-            self.v = nn.Parameter(self.v) # sink tensor
-            self.w = nn.Parameter(self.w) # action tensor 
-            self.tau = nn.Parameter(self.tau)
-            # self.b0 = nn.Parameter(torch.randn(1, state_dim))
-            # self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
-            # self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
-            # self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
-            # self.tau = nn.Parameter(torch.randn(1, 1))
-
-            nn.init.xavier_normal_(self.b0, gain=1.)
-            nn.init.xavier_normal_(self.u, gain=1.)
-            nn.init.xavier_normal_(self.v, gain=1.)
-            nn.init.xavier_normal_(self.w, gain=1.)
-            nn.init.uniform_(self.tau, a=-1, b=1)
+        nn.init.xavier_normal_(self.b0, gain=1.)
+        nn.init.xavier_normal_(self.u, gain=1.)
+        nn.init.xavier_normal_(self.v, gain=1.)
+        nn.init.xavier_normal_(self.w, gain=1.)
+        nn.init.uniform_(self.tau, a=-1, b=1)
     
     def __repr__(self):
         s = "{}(state_dim={}, act_dim={}, rank={}, horizon={})".format(
@@ -174,19 +178,3 @@ class QMDPLayer(jit.ScriptModule):
                     alpha_b[t], alpha_a[t], transition, value
                 )
         return torch.stack(alpha_b[1:]), torch.stack(alpha_a[1:])
-
-
-def poisson_pdf(rate: Tensor, K: int) -> Tensor:
-    """ jit compatible version of poisson pdf
-    
-    Args:
-        rate (torch.tensor): poission arrival rate [batch_size, 1]
-        K (int): number of bins
-
-    Returns:
-        pdf (torch.tensor): truncated poisson pdf [batch_size, K]
-    """
-    Ks = 1 + torch.arange(K).to(rate.device)
-    poisson_logp = Ks.xlogy(rate) - rate - (Ks + 1).lgamma()
-    pdf = torch.softmax(poisson_logp, dim=-1)
-    return pdf
