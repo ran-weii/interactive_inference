@@ -1,8 +1,7 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from src.agents.core import AbstractAgent
-from src.distributions.hmm import QMDPLayer
+from src.agents.qmdp_layer import QMDPLayer
 from src.distributions.mixture_models import ConditionalGaussian
 from src.distributions.utils import kl_divergence
 
