@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.distributions as torch_dist
 from src.agents.core import AbstractAgent
-from src.agents.qmdp_layer import HyperQMDPLayer
+from src.agents.qmdp_layers import HyperQMDPLayer
 from src.distributions.mixture_models import ConditionalGaussian
+from src.distributions.mixture_models import HyperConditionalGaussian
 from src.distributions.nn_models import GRUMLP
 from src.distributions.utils import kl_divergence, rectify
 
@@ -29,8 +30,8 @@ class HyperVINAgent(AbstractAgent):
         self.hyper_dim = hyper_dim
         
         self.rnn = HyperQMDPLayer(state_dim, act_dim, rank, horizon, hyper_dim)
-        self.obs_model = ConditionalGaussian(
-            obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
+        self.obs_model = HyperConditionalGaussian(
+            obs_dim, state_dim, hyper_dim, cov=obs_cov, batch_norm=True, 
             use_tanh=False, limits=None
         )
         self.ctl_model = ConditionalGaussian(
@@ -99,7 +100,8 @@ class HyperVINAgent(AbstractAgent):
     @property
     def efe(self):
         """ Negative expected free energy """
-        entropy = self.obs_model.entropy()
+        z = torch.ones(1, self.hyper_dim)
+        entropy = self.obs_model.entropy(z)
         c = self.target_dist
         kl = kl_divergence(torch.eye(self.state_dim), c)
         return -kl - entropy
@@ -119,7 +121,7 @@ class HyperVINAgent(AbstractAgent):
     def compute_reward(self, z):
         """ State action reward """
         transition = self.rnn.compute_transition(z)
-        entropy = self.obs_model.entropy()
+        entropy = self.obs_model.entropy(z)
 
         c = self.compute_target_dist(z)
         pi0 = self.compute_prior_policy(z)
@@ -189,7 +191,7 @@ class HyperVINAgent(AbstractAgent):
             else:
                 z, ent = self.encode(o, u)
 
-        logp_o = self.obs_model.log_prob(o)
+        logp_o = self.obs_model.log_prob(o, z)
         logp_u = None if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward(z)
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, z, b, a)
@@ -243,8 +245,8 @@ class HyperVINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _, _, _ = forward_out[1]
-        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
+        alpha_b, _, z, _ = forward_out[1]
+        logp_o = self.obs_model.mixture_log_prob(alpha_b, o, z)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
         
         # if torch.isnan(logp_o).sum() > 0 or torch.isinf(logp_o).sum() > 0:
