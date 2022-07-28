@@ -13,9 +13,10 @@ from src.data.train_utils import load_data
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
-from src.agents.vin_agents import VINAgent
+from src.agents.vin_agent import VINAgent
+from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.mlp_agents import MLPAgent
-from src.algo.irl import BehaviorCloning
+from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
 from src.algo.recurrent_airl import RecurrentDAC
 
 # eval imports
@@ -37,7 +38,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin", "mlp"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "mlp"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--max_eps_len", type=int, default=200, 
@@ -102,6 +103,14 @@ def main(arglist):
             config["horizon"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
             use_tanh=config["use_tanh"], ctl_lim=ctl_lim
         )
+    if arglist.agent == "hvin":
+        agent = HyperVINAgent(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
+            config["horizon"], config["hyper_dim"], config["hidden_dim"], config["num_hidden"], 
+            config["gru_layers"], config["activation"],
+            obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
+            use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+        )
     elif arglist.agent == "mlp":
         agent = MLPAgent(
             obs_dim, ctl_dim, config["hidden_dim"], config["num_hidden"],
@@ -111,6 +120,8 @@ def main(arglist):
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
+    if config["algo"] == "hbc":
+        model = HyperBehaviorCloning(agent)
     if config["algo"] == "rdac":
         model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
 
