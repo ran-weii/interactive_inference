@@ -13,11 +13,11 @@ from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
-from src.agents.vin_agents import VINAgent
-from src.agents.lf_agents import LFVINAgent
+from src.agents.vin_agent import VINAgent
+from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
-from src.algo.irl import BehaviorCloning, LFBehaviorCloning
+from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
 
 # training imports
 from src.algo.utils import train
@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
-    parser.add_argument("--agent", type=str, choices=["vin", "lfvin", "idm", "mlp"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
     parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
     parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
@@ -48,14 +48,14 @@ def parse_args():
     parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
-    parser.add_argument("--num_factors", type=int, default=4, help="number of latent factor, default=4")
+    parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     # nn args
     parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
     parser.add_argument("--gru_layers", type=int, default=1, help="number of gru layers, default=1")
     parser.add_argument("--activation", type=str, default="relu", help="nn activation, default=relu")
     # training args
-    parser.add_argument("--algo", type=str, choices=["bc", "lfbc"], default="bc", help="training algorithm, default=bc")
+    parser.add_argument("--algo", type=str, choices=["bc", "hbc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
     parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
@@ -128,10 +128,10 @@ def main(arglist):
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
 
-    elif arglist.agent == "lfvin":
-        agent = LFVINAgent(
+    elif arglist.agent == "hvin":
+        agent = HyperVINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-            arglist.horizon, arglist.num_factors, arglist.hidden_dim, arglist.num_hidden, 
+            arglist.horizon, arglist.hyper_dim, arglist.hidden_dim, arglist.num_hidden, 
             arglist.gru_layers, arglist.activation,
             obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
             use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
@@ -155,11 +155,9 @@ def main(arglist):
             agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
-    if arglist.algo == "lfbc":
-        model = LFBehaviorCloning(
-            agent, arglist.num_factors, arglist.hidden_dim, arglist.gru_layers, 
-            arglist.num_hidden, arglist.activation,
-            arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
+    if arglist.algo == "hbc":
+        model = HyperBehaviorCloning(
+            agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
         
