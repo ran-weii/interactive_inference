@@ -96,6 +96,62 @@ def parse_args():
     arglist = parser.parse_args()
     return arglist
 
+class SaveCallback:
+    def __init__(self, arglist, map_data, cp_history=None):
+        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+        exp_path = os.path.join(arglist.exp_path, "agents")
+        agent_path = os.path.join(exp_path, arglist.agent)
+        save_path = os.path.join(agent_path, date_time)
+        test_eps_path = os.path.join(save_path, "test_episodes")
+        if not os.path.exists(exp_path):
+            os.mkdir(exp_path)
+        if not os.path.exists(agent_path):
+            os.mkdir(agent_path)
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        if not os.path.exists(test_eps_path):
+            os.mkdir(test_eps_path)
+        
+        # save args
+        with open(os.path.join(save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+
+        self.save_path = save_path
+        self.test_eps_path = test_eps_path
+        self.cp_history = cp_history
+        self.map_data = map_data
+
+        self.num_test_eps = 0
+
+    def __call__(self, model, logger):
+        # save model
+        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
+        
+        # save history
+        df_history = pd.DataFrame(logger.history)
+        df_history = df_history.assign(train=1)
+        if self.cp_history is not None:
+            df_history["epoch"] += self.cp_history["epoch"].values[-1] + 1
+            df_history["time"] += self.cp_history["time"].values[-1]
+            df_history = pd.concat([self.cp_history, df_history], axis=0)
+        df_history.to_csv(os.path.join(self.save_path, "history.csv"), index=False)
+        
+        # save history plot
+        fig_history, _ =plot_history(df_history, model.plot_keys)
+        fig_history.savefig(os.path.join(self.save_path, "history.png"), dpi=100)
+        
+        # save test episode
+        if len(logger.test_episodes) > self.num_test_eps:
+            ani = animate(self.map_data, logger.test_episodes[-1]["sim_states"], logger.test_episodes[-1]["track_data"])
+            save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.num_test_eps+1}_ani.mp4"))
+            self.num_test_eps += 1
+        
+        plt.clf(fig_history)
+        plt.close()
+    
+        print(f"\ncheckpoint saved at: {self.save_path}\n")
+        
 def main(arglist):
     np.random.seed(arglist.seed)
     torch.manual_seed(arglist.seed)
@@ -197,6 +253,7 @@ def main(arglist):
         model.fill_real_buffer(rel_dataset)
     
     # load model from checkpoint
+    cp_history = None
     if arglist.checkpoint_path != "none":
         cp_path = os.path.join(
             arglist.exp_path, "agents", 
@@ -206,12 +263,12 @@ def main(arglist):
         state_dict = torch.load(os.path.join(cp_path, "model.pt"))
         
         # load history
-        df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
+        cp_history = pd.read_csv(os.path.join(cp_path, "history.csv"))
         
         model.load_state_dict(state_dict, strict=True)
 
         print(f"loaded checkpoint from {cp_path}")
-
+    
     print(f"num parameters: {count_parameters(model)}")
     print(model)
     
@@ -225,60 +282,65 @@ def main(arglist):
         action_set=action_set
     )
     env = InteractionSimulator(ego_dataset, map_data, observer, max_eps_steps=arglist.max_eps_len)
+    
+    callback = None
+    if arglist.save:
+        callback = SaveCallback(arglist, map_data, cp_history=cp_history)
 
     model, logger = train(
         env, model, arglist.epochs, arglist.steps_per_epoch, 
         arglist.update_after, arglist.update_every, 
-        log_test_every=arglist.log_test_every, verbose=arglist.verbose
+        log_test_every=arglist.log_test_every, verbose=arglist.verbose,
+        callback=callback
     )
-    model.to(torch.device("cpu"))
+    # model.to(torch.device("cpu"))
     
-    df_history = pd.DataFrame(logger.history)
-    df_history = df_history.assign(train=1)
+    # df_history = pd.DataFrame(logger.history)
+    # df_history = df_history.assign(train=1)
     
-    if arglist.checkpoint_path != "none":
-        df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
-        df_history["time"] += df_history_cp["time"].values[-1]
-        df_history = pd.concat([df_history_cp, df_history], axis=0)
+    # if arglist.checkpoint_path != "none":
+    #     df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
+    #     df_history["time"] += df_history_cp["time"].values[-1]
+    #     df_history = pd.concat([df_history_cp, df_history], axis=0)
 
     # save results
-    if arglist.save:
-        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
-        exp_path = os.path.join(arglist.exp_path, "agents")
-        agent_path = os.path.join(exp_path, arglist.agent)
-        save_path = os.path.join(agent_path, date_time)
-        test_eps_path = os.path.join(save_path, "test_episodes")
-        if not os.path.exists(exp_path):
-            os.mkdir(exp_path)
-        if not os.path.exists(agent_path):
-            os.mkdir(agent_path)
-        if not os.path.exists(save_path):
-            os.mkdir(save_path)
-        if not os.path.exists(test_eps_path):
-            os.mkdir(test_eps_path)
+    # if arglist.save:
+    #     date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+    #     exp_path = os.path.join(arglist.exp_path, "agents")
+    #     agent_path = os.path.join(exp_path, arglist.agent)
+    #     save_path = os.path.join(agent_path, date_time)
+    #     test_eps_path = os.path.join(save_path, "test_episodes")
+    #     if not os.path.exists(exp_path):
+    #         os.mkdir(exp_path)
+    #     if not os.path.exists(agent_path):
+    #         os.mkdir(agent_path)
+    #     if not os.path.exists(save_path):
+    #         os.mkdir(save_path)
+    #     if not os.path.exists(test_eps_path):
+    #         os.mkdir(test_eps_path)
         
-        # save args
-        with open(os.path.join(save_path, "args.json"), "w") as f:
-            json.dump(vars(arglist), f)
+    #     # save args
+    #     with open(os.path.join(save_path, "args.json"), "w") as f:
+    #         json.dump(vars(arglist), f)
         
-        # save model
-        torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
+    #     # save model
+    #     torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
         
-        # save history
-        df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
+    #     # save history
+    #     df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
         
-        # save history plot
-        fig_history, _ =plot_history(df_history, model.plot_keys)
-        fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
+    #     # save history plot
+    #     fig_history, _ =plot_history(df_history, model.plot_keys)
+    #     fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
         
-        # save test episode animations
-        for i, test_episode in enumerate(logger.test_episodes):
-            ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
-            save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
-            plt.clf()
-            plt.close()
+    #     # save test episode animations
+    #     for i, test_episode in enumerate(logger.test_episodes):
+    #         ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
+    #         save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
+    #         plt.clf()
+    #         plt.close()
 
-        print(f"\nmodel saved at: {save_path}")
+    #     print(f"\nmodel saved at: {save_path}")
 
 if __name__ == "__main__":
     arglist = parse_args()
