@@ -74,8 +74,8 @@ class BehaviorCloning(Model):
                     out, hidden = self.agent(o_t, u_t_cat, hidden)
                 u_t_prev = u_t.clone()
                 
-                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, out)
-                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, out)
+                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, [out, hidden])
+                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, [out, hidden])
 
                 loss = torch.mean(loss_u + self.obs_penalty * loss_o)
                     
@@ -97,8 +97,7 @@ class BehaviorCloning(Model):
         return stats
 
         
-class LFBehaviorCloning(Model):
-    """ Latent factor behavior cloning """
+class HyperBehaviorCloning(Model):
     def __init__(self, agent, bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.bptt_steps = bptt_steps
@@ -113,9 +112,6 @@ class LFBehaviorCloning(Model):
             self.agent.parameters(), lr=lr, weight_decay=decay
         )
         self.loss_keys = ["loss_u", "loss_o"]
-
-        for n, p in self.agent.named_parameters():
-            print(n, p.shape)
     
     def __repr__(self):
         s_agent = self.agent.__repr__()
@@ -131,17 +127,6 @@ class LFBehaviorCloning(Model):
             train_stats["loss_o"], test_stats["loss_o"]
         )
         return s
-
-    def encode(self, o, u):
-        """ Compute latent factors """
-        z_params = self.agent.encoder(torch.cat([o, u], dim=-1))
-        mu, lv = torch.chunk(z_params, 2, dim=-1)
-        z_dist = torch_dist.Normal(mu, rectify(lv))
-        z = z_dist.rsample()
-        ent = z_dist.entropy().sum(-1, keepdim=True)
-
-        theta = self.agent.decoder(z)
-        return theta, ent
 
     def run_epoch(self, loader, train=True):
         if train:
@@ -168,22 +153,25 @@ class LFBehaviorCloning(Model):
                 o_t, u_t, mask_t = batch_t
                 
                 # compute latent factors
-                theta, ent = self.encode(o, u)
+                theta, ent = self.agent.encode(o, u)
 
                 if hidden is None:
-                    out, hidden = self.agent(o_t, u_t, hidden, theta)
+                    out, hidden = self.agent(o_t, u_t)
                 else:
                     # concat previous ctl
                     u_t_cat = torch.cat([u_t_prev[-1:], u_t[1:]], dim=0)
 
-                    hidden = [h[-1].detach() for h in hidden]
+                    hidden = [
+                        hidden[0][-1].detach(), hidden[1][-1].detach(),
+                        theta, ent
+                    ]
                     out, hidden = self.agent(o_t, u_t_cat, hidden, theta)
                 u_t_prev = u_t.clone()
                 
-                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, out)
-                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, out)
+                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, [out, hidden])
+                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, [out, hidden])
 
-                loss = len(o) * torch.mean(loss_u + self.obs_penalty * loss_o) - torch.mean(ent)
+                loss = torch.mean(loss_u + self.obs_penalty * loss_o)
                     
                 if train:
                     loss.backward()
