@@ -40,7 +40,7 @@ class Logger():
 def train(
     env, model, epochs, steps_per_epoch=1000, 
     update_after=3000, update_every=50, log_test_every=10,
-    verbose=False
+    verbose=False, callback=None
     ):
     """
     Args:
@@ -108,9 +108,15 @@ def train(
                 sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
                 logger.log_test_episode(sim_states, track_data)
                 print(f"test id: {eval_eps_id}, mean reward: {np.mean(rewards)}\n")
+            
+            if t > update_after and callback is not None:
+                callback(model, logger)
     
     # final test episode
     eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
     sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
     logger.log_test_episode(sim_states, track_data)
+
+    # final callback
+    callback(model, logger)
     return model, logger
