@@ -129,20 +129,20 @@ class VINAgent(AbstractAgent):
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, b, a)
         return [alpha_b, alpha_a], [alpha_b, alpha_a] # second tuple used in bptt
     
-    def act_loss(self, o, u, mask, forward_out):
+    def act_loss(self, o, u, mask, hidden):
         """ Compute action loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-            forward_out (list): outputs of forward method
+            hidden (list): hidden outputs of forward method
 
         Returns:
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        _, alpha_a = forward_out[0]
+        _, alpha_a = hidden
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
 
@@ -153,20 +153,20 @@ class VINAgent(AbstractAgent):
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
-    def obs_loss(self, o, u, mask, forward_out):
+    def obs_loss(self, o, u, mask, hidden):
         """ Compute observation loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-            forward_out (list): outputs of forward method
+            hidden (list): hidden outputs of forward method
 
         Returns:
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _ = forward_out[0]
+        alpha_b, _ = hidden
         logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
 
@@ -226,7 +226,7 @@ class VINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
-        [alpha_b, alpha_a], _ = self.forward(o, u)
+        [alpha_b, alpha_a], hidden = self.forward(o, u)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_a)
@@ -237,7 +237,7 @@ class VINAgent(AbstractAgent):
             )
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         if return_hidden:
-            return u_sample, logp, [alpha_b, alpha_a]
+            return u_sample, logp, hidden
         else:
             return u_sample, logp
 
