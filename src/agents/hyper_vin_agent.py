@@ -30,8 +30,14 @@ class HyperVINAgent(AbstractAgent):
         self.hyper_dim = hyper_dim
         
         self.rnn = HyperQMDPLayer(state_dim, act_dim, rank, horizon, hyper_dim)
-        self.obs_model = HyperConditionalGaussian(
-            obs_dim, state_dim, hyper_dim, cov=obs_cov, batch_norm=True, 
+        # self.obs_model = HyperConditionalGaussian(
+        #     obs_dim, state_dim, hyper_dim, cov=obs_cov, batch_norm=True, 
+        #     use_tanh=False, limits=None
+        # )
+        
+        # use shared obs model for now
+        self.obs_model = ConditionalGaussian(
+            obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
             use_tanh=False, limits=None
         )
         self.ctl_model = ConditionalGaussian(
@@ -40,6 +46,10 @@ class HyperVINAgent(AbstractAgent):
         )
         self._c = nn.Linear(hyper_dim, state_dim)
         self._pi0 = nn.Linear(hyper_dim, act_dim * state_dim)
+        
+        # hyper prior
+        self.mu = nn.Parameter(torch.randn(1, hyper_dim))
+        self.lv = nn.Parameter(torch.randn(1, hyper_dim))
 
         self.encoder = GRUMLP(
             input_dim=obs_dim + ctl_dim,
@@ -101,7 +111,8 @@ class HyperVINAgent(AbstractAgent):
     def efe(self):
         """ Negative expected free energy """
         z = torch.ones(1, self.hyper_dim).to(self.device)
-        entropy = self.obs_model.entropy(z)
+        # entropy = self.obs_model.entropy(z)
+        entropy = self.obs_model.entropy()
         c = self.target_dist
         kl = kl_divergence(torch.eye(self.state_dim), c)
         return -kl - entropy
@@ -121,7 +132,8 @@ class HyperVINAgent(AbstractAgent):
     def compute_reward(self, z):
         """ State action reward """
         transition = self.rnn.compute_transition(z)
-        entropy = self.obs_model.entropy(z)
+        # entropy = self.obs_model.entropy(z)
+        entropy = self.obs_model.entropy()
 
         c = self.compute_target_dist(z)
         pi0 = self.compute_prior_policy(z)
@@ -139,14 +151,15 @@ class HyperVINAgent(AbstractAgent):
         
         z_dist = torch_dist.Normal(mu, rectify(lv))
         z = z_dist.rsample()
-        ent = z_dist.entropy().sum(-1, keepdim=True)
-        return z, ent
+        
+        prior_dist = torch_dist.Normal(self.mu, rectify(self.lv))
+        kl = torch_dist.kl.kl_divergence(z_dist, prior_dist).sum(-1, keepdim=True)
+        return z, kl
     
     def sample_z(self):
         z = torch_dist.Normal(
-            torch.zeros(1, self.hyper_dim).to(self.device), 
-            torch.ones(1, self.hyper_dim).to(self.device)
-        ).sample()
+            self.mu, rectify(self.lv)
+        ).rsample()
         return z
 
     def forward(
@@ -177,28 +190,29 @@ class HyperVINAgent(AbstractAgent):
             else:
                 z, ent = self.encode(o, u)
 
-        logp_o = self.obs_model.log_prob(o, z)
+        # logp_o = self.obs_model.log_prob(o, z)
+        logp_o = self.obs_model.log_prob(o)
         logp_u = None if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward(z)
         alpha_b, alpha_a = self.rnn(logp_o, logp_u, reward, z, b, a)
         return [alpha_b, alpha_a], [alpha_b, alpha_a, z, ent] # second tuple used in bptt
     
-    def act_loss(self, o, u, mask, forward_out):
+    def act_loss(self, o, u, mask, hidden):
         """ Compute action loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-            forward_out (list): outputs of forward method
+            hidden (list): outputs of forward method
 
         Returns:
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        _, alpha_a, _, ent = forward_out[1]
+        _, alpha_a, _, kl = hidden
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) - torch.mean(ent)/len(o)
+        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) + torch.mean(kl)/len(o)
         
         # compute stats
         nan_mask = mask.clone()
@@ -207,7 +221,7 @@ class HyperVINAgent(AbstractAgent):
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
-    def obs_loss(self, o, u, mask, forward_out):
+    def obs_loss(self, o, u, mask, hidden):
         """ Compute observation loss 
         
         Args:
@@ -220,8 +234,9 @@ class HyperVINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _, z, _ = forward_out[1]
-        logp_o = self.obs_model.mixture_log_prob(alpha_b, o, z)
+        alpha_b, _, z, _ = hidden
+        # logp_o = self.obs_model.mixture_log_prob(alpha_b, o, z)
+        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
         loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
         
         # compute stats
@@ -282,7 +297,7 @@ class HyperVINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
-        [alpha_b, alpha_a], _ = self.forward(o, u)
+        [alpha_b, alpha_a], hidden = self.forward(o, u)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_a)
@@ -294,7 +309,7 @@ class HyperVINAgent(AbstractAgent):
             logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         
         if return_hidden:
-            return u_sample, logp, [alpha_b, alpha_a]
+            return u_sample, logp, hidden
         else:
             return u_sample, logp
 
