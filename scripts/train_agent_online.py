@@ -53,7 +53,6 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="full", help="vin agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="vin agent control covariance, default=full")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
-    parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observations for agent and algo, default=False")
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of hyper factor, default=4")
     # trainer model args
     parser.add_argument("--algo", type=str, choices=["dac", "rdac"], default="dac", help="training algorithm, default=dac")
@@ -64,6 +63,8 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=0.9, help="trainer discount factor, default=0.9")
     parser.add_argument("--beta", type=float, default=0.2, help="softmax temperature, default=0.2")
     parser.add_argument("--polyak", type=float, default=0.995, help="polyak averaging factor, default=0.995")
+    parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observations for agent and algo, default=False")
+    parser.add_argument("--use_state", type=bool_, default=False, help="whether to use state in discriminator and critic, default=False")
     # data args
     parser.add_argument("--max_data_eps", type=int, default=5, help="max number of data episodes, default=10")
     parser.add_argument("--create_svt", type=bool_, default=True, help="create svt to speed up rollout, default=True")
@@ -91,6 +92,7 @@ def parse_args():
     parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=1., help="observation penalty, default=1.")
     parser.add_argument("--verbose", type=bool_, default=False, help="whether to verbose during training, default=False")
+    parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -103,6 +105,7 @@ class SaveCallback:
         agent_path = os.path.join(exp_path, arglist.agent)
         save_path = os.path.join(agent_path, date_time)
         test_eps_path = os.path.join(save_path, "test_episodes")
+        model_path = os.path.join(save_path, "models") # used to save model checkpoint
         if not os.path.exists(exp_path):
             os.mkdir(exp_path)
         if not os.path.exists(agent_path):
@@ -111,6 +114,8 @@ class SaveCallback:
             os.mkdir(save_path)
         if not os.path.exists(test_eps_path):
             os.mkdir(test_eps_path)
+        if not os.path.exists(model_path):
+            os.mkdir(model_path)
         
         # save args
         with open(os.path.join(save_path, "args.json"), "w") as f:
@@ -118,16 +123,15 @@ class SaveCallback:
 
         self.save_path = save_path
         self.test_eps_path = test_eps_path
+        self.model_path = model_path
         self.cp_history = cp_history
+        self.cp_every = arglist.cp_every
         self.map_data = map_data
 
         self.num_test_eps = 0
+        self.iter = 0
 
-    def __call__(self, model, logger):
-        # save model
-        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
-        torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
-        
+    def __call__(self, model, logger):        
         # save history
         df_history = pd.DataFrame(logger.history)
         df_history = df_history.assign(train=1)
@@ -147,10 +151,19 @@ class SaveCallback:
             save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.num_test_eps+1}_ani.mp4"))
             self.num_test_eps += 1
         
-        plt.clf(fig_history)
+        plt.clf()
         plt.close()
+        
+        if (self.iter + 1) % self.cp_every == 0:
+            # save model
+            cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+            torch.save(cpu_state_dict, os.path.join(self.model_path, f"model_{self.iter}.pt"))
+            print(f"\ncheckpoint saved at: {self.save_path}\n")
+        self.iter += 1
     
-        print(f"\ncheckpoint saved at: {self.save_path}\n")
+    def save_model(self, model):
+        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
         
 def main(arglist):
     np.random.seed(arglist.seed)
@@ -243,8 +256,9 @@ def main(arglist):
     elif arglist.algo == "rdac":
         assert "vin" in arglist.agent
         model = RecurrentDAC(
-            agent, arglist.hidden_dim, arglist.num_hidden, 
-            gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
+            agent, arglist.hidden_dim, arglist.num_hidden, arglist.activation,
+            gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, 
+            norm_obs=arglist.norm_obs, use_state=arglist.use_state,
             buffer_size=arglist.buffer_size, d_batch_size=arglist.d_batch_size, a_batch_size=arglist.a_batch_size,
             rnn_len=arglist.rnn_len, d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
             lr_d=arglist.lr_d, lr_a=arglist.lr_a, lr_c=arglist.lr_c, decay=arglist.decay, grad_clip=arglist.grad_clip, 
@@ -293,54 +307,7 @@ def main(arglist):
         log_test_every=arglist.log_test_every, verbose=arglist.verbose,
         callback=callback
     )
-    # model.to(torch.device("cpu"))
-    
-    # df_history = pd.DataFrame(logger.history)
-    # df_history = df_history.assign(train=1)
-    
-    # if arglist.checkpoint_path != "none":
-    #     df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
-    #     df_history["time"] += df_history_cp["time"].values[-1]
-    #     df_history = pd.concat([df_history_cp, df_history], axis=0)
-
-    # save results
-    # if arglist.save:
-    #     date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
-    #     exp_path = os.path.join(arglist.exp_path, "agents")
-    #     agent_path = os.path.join(exp_path, arglist.agent)
-    #     save_path = os.path.join(agent_path, date_time)
-    #     test_eps_path = os.path.join(save_path, "test_episodes")
-    #     if not os.path.exists(exp_path):
-    #         os.mkdir(exp_path)
-    #     if not os.path.exists(agent_path):
-    #         os.mkdir(agent_path)
-    #     if not os.path.exists(save_path):
-    #         os.mkdir(save_path)
-    #     if not os.path.exists(test_eps_path):
-    #         os.mkdir(test_eps_path)
-        
-    #     # save args
-    #     with open(os.path.join(save_path, "args.json"), "w") as f:
-    #         json.dump(vars(arglist), f)
-        
-    #     # save model
-    #     torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
-        
-    #     # save history
-    #     df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
-        
-    #     # save history plot
-    #     fig_history, _ =plot_history(df_history, model.plot_keys)
-    #     fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
-        
-    #     # save test episode animations
-    #     for i, test_episode in enumerate(logger.test_episodes):
-    #         ani = animate(map_data, test_episode["sim_states"], test_episode["track_data"])
-    #         save_animation(ani, os.path.join(test_eps_path, f"epoch_{i+1}_ani.mp4"))
-    #         plt.clf()
-    #         plt.close()
-
-    #     print(f"\nmodel saved at: {save_path}")
+    callback.save_model(model)
 
 if __name__ == "__main__":
     arglist = parse_args()
