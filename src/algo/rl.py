@@ -32,7 +32,7 @@ class DoubleQNetwork(Model):
     
     def __repr__(self):
         s = "{}(input_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
-            self.__class__.__name__, self.obs_dim, self.q1.hidden_dim, 
+            self.__class__.__name__, self.obs_dim + self.ctl_dim, self.q1.hidden_dim, 
             self.q1.num_hidden, self.q1.activation
         )
         return s
