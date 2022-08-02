@@ -298,9 +298,11 @@ class RecurrentDAC(Model):
         # normalize observation
         obs_norm = self.normalize_obs(obs)
         
-        ctl_sample, _, [state, _] = self.agent.choose_action_batch(obs, ctl, tau=0.1, hard=True, return_hidden=True)
+        ctl_sample, _, hidden = self.agent.choose_action_batch(obs, ctl, tau=0.1, hard=True, return_hidden=True)
         ctl_sample = ctl_sample.squeeze(0)
+        state = hidden[0]
         
+        # compute actor loss 
         critic_inputs = self.concat_inputs(state, obs_norm)
         q1, q2 = self.critic(critic_inputs, ctl_sample)
         q = torch.min(q1, q2).squeeze(-1)
@@ -308,33 +310,15 @@ class RecurrentDAC(Model):
         
         a_loss = (-self.beta * ent - q) * mask
         a_loss = a_loss.sum() / (mask.sum() + 1e-6)
-        return a_loss
-    
-    def compute_bc_loss(self):
-        batch_size = min(self.real_buffer.num_eps, self.a_batch_size)
-        batch = self.real_buffer.sample_episodes(batch_size, self.rnn_len)
-        pad_batch, mask = batch
-        obs = pad_batch["obs"].to(self.device)
-        ctl = pad_batch["ctl"].to(self.device)
-        mask = mask.to(self.device)
-        
-        out = self.agent(obs, ctl)
-        bc_loss, _ = self.agent.act_loss(obs, ctl, mask, out)
-        bc_loss = bc_loss.mean()
-        return bc_loss
 
-    def compute_obs_loss(self):
-        batch_size = min(self.replay_buffer.num_eps, self.a_batch_size)
-        batch = self.real_buffer.sample_episodes(batch_size, self.rnn_len)
-        pad_batch, mask = batch
-        obs = pad_batch["obs"].to(self.device)
-        ctl = pad_batch["ctl"].to(self.device)
-        mask = mask.to(self.device)
+        # compute bc loss
+        bc_loss, _ = self.agent.act_loss(obs, ctl, mask, hidden)
+        bc_loss = bc_loss.mean()
         
-        out = self.agent(obs, ctl)
-        obs_loss, _ = self.agent.obs_loss(obs, ctl, mask, out)
+        # compute obs loss
+        obs_loss, _ = self.agent.obs_loss(obs, ctl, mask, hidden)
         obs_loss = obs_loss.mean()
-        return obs_loss
+        return a_loss, bc_loss, obs_loss
 
     def take_gradient_step(self, logger=None):
         self.discriminator.train()
@@ -375,9 +359,7 @@ class RecurrentDAC(Model):
             critic_loss_epoch.append(critic_loss.data.item())
 
             # train actor
-            actor_loss = self.compute_actor_loss()
-            bc_loss = self.compute_bc_loss()
-            obs_loss = self.compute_obs_loss()
+            actor_loss, bc_loss, obs_loss = self.compute_actor_loss()
             actor_total_loss = (
                 actor_loss + self.bc_penalty * bc_loss + self.obs_penalty * obs_loss
             )
