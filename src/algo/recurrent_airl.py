@@ -196,7 +196,8 @@ class RecurrentDAC(Model):
         )[0]
 
         grad_norm = torch.linalg.norm(grad, dim=-1)
-        return grad_norm
+        grad_pen = torch.pow(grad_norm - 1, 2).mean()
+        return grad_pen
 
     def compute_discriminator_loss(self): 
         real_batch = self.real_buffer.sample_random(self.d_batch_size, prioritize=False)
@@ -222,11 +223,10 @@ class RecurrentDAC(Model):
         labels = torch.cat([real_labels, fake_labels], dim=0).to(self.device)
 
         out = torch.sigmoid(self.discriminator(inputs))
-        loss = F.binary_cross_entropy(out, labels)
+        d_loss = F.binary_cross_entropy(out, labels)
 
         gp = self.gradient_penalty(real_inputs, fake_inputs)
-        loss += self.grad_penalty * gp.mean()
-        return loss
+        return d_loss, gp
 
     def compute_critic_loss(self):
         batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len, prioritize=True)
@@ -324,8 +324,9 @@ class RecurrentDAC(Model):
         d_loss_epoch = []
         for i in range(self.d_steps):
             # train discriminator
-            d_loss = self.compute_discriminator_loss()
-            d_loss.backward()
+            d_loss, gp = self.compute_discriminator_loss()
+            d_total_loss = d_loss + self.grad_penalty * gp
+            d_total_loss.backward()
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.grad_clip)
             self.d_optimizer.step()
