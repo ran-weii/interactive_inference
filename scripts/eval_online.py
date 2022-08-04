@@ -17,11 +17,12 @@ from src.simulation.observers import Observer
 from src.evaluation.online import eval_episode
 
 # model imports
-from src.agents.vin_agents import VINAgent
+from src.agents.vin_agent import VINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
 
 from src.algo.irl import BehaviorCloning
+from src.algo.irl import ReverseBehaviorCloning
 from src.algo.rl import SAC
 from src.algo.airl import DAC
 from src.algo.recurrent_airl import RecurrentDAC
@@ -120,7 +121,7 @@ def main(arglist):
     if arglist.agent == "vin":
         agent = VINAgent(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
-            config["horizon"], obs_cov="full", ctl_cov="full",            
+            config["horizon"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"],            
             use_tanh=config["use_tanh"], ctl_lim=ctl_lim
         )
     elif arglist.agent == "idm":
@@ -134,12 +135,19 @@ def main(arglist):
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
-    if config["algo"] == "sac":
+    elif config["algo"] == "rbc":
+        model = ReverseBehaviorCloning(
+            agent, config["hidden_dim"], config["num_hidden"], config["activation"],
+            use_state=config["use_state"]
+        )
+    elif config["algo"] == "sac":
         model = SAC(agent, config["hidden_dim"], config["num_hidden"])
-    if config["algo"] == "airl":
+    elif config["algo"] == "airl":
         model = DAC(agent, config["hidden_dim"], config["num_hidden"])
-    if config["algo"] == "rdac":
-        model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
+    elif config["algo"] == "rdac":
+        model = RecurrentDAC(
+            agent, config["hidden_dim"], config["num_hidden"], config["activation"]
+        )
 
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
