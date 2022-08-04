@@ -18,6 +18,7 @@ from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
+from src.algo.irl import ReverseBehaviorCloning
 
 # training imports
 from src.algo.utils import train
@@ -54,15 +55,23 @@ def parse_args():
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
     parser.add_argument("--gru_layers", type=int, default=1, help="number of gru layers, default=1")
     parser.add_argument("--activation", type=str, default="relu", help="nn activation, default=relu")
+    parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observation for discriminator, default=False")
+    parser.add_argument("--use_state", type=bool_, default=False, help="whether to use state for discriminator, default=False")
+    # algo args
+    parser.add_argument("--algo", type=str, choices=["bc", "hbc", "rbc"], default="bc", help="training algorithm, default=bc")
+    parser.add_argument("--d_batch_size", type=int, default=200, help="discriminator batch size, default=200")
+    parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
+    parser.add_argument("--d_steps", type=int, default=50, help="discriminator steps, default=50")
+    parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
+    parser.add_argument("--bc_penalty", type=float, default=0., help="behavior cloning penalty, default=0.")
+    parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
     # training args
-    parser.add_argument("--algo", type=str, choices=["bc", "hbc"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
     parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
-    parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
-    parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
+    parser.add_argument("--lr_d", type=float, default=0.001, help="discriminator learning rate, default0.001")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
@@ -155,11 +164,24 @@ def main(arglist):
             agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
-    if arglist.algo == "hbc":
+    elif arglist.algo == "hbc":
         model = HyperBehaviorCloning(
             agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
             decay=arglist.decay, grad_clip=arglist.grad_clip
         )
+    elif arglist.algo == "rbc":
+        model = ReverseBehaviorCloning(
+            agent, arglist.hidden_dim, arglist.num_hidden, arglist.activation,
+            norm_obs=arglist.norm_obs, use_state=arglist.use_state, 
+            d_batch_size=arglist.d_batch_size, bptt_steps=arglist.bptt_steps, 
+            d_steps=arglist.d_steps, grad_target=0., grad_penalty=arglist.grad_penalty,
+            bc_penalty=arglist.bc_penalty, obs_penalty=arglist.obs_penalty,
+            lr_d=arglist.lr_d, lr_a=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
+        )
+        if arglist.norm_obs:
+            model.obs_mean.data = obs_mean
+            model.obs_variance.data = obs_var
+        model.fill_buffer(train_loader.dataset)
         
     print(f"num parameters: {count_parameters(model)}")
     print(model)
