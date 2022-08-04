@@ -107,7 +107,7 @@ class VINAgent(AbstractAgent):
 
     def forward(
         self, o: Tensor, u: Union[Tensor, None], 
-        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None
+        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None, **kwargs
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
@@ -209,7 +209,7 @@ class VINAgent(AbstractAgent):
         self._prev_ctl = u_sample.sum(0)
         return u_sample, logp
     
-    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False):
+    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
         """ Choose action offline for a batch of sequences 
         
         Args:
