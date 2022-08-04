@@ -17,11 +17,11 @@ class ConditionalGaussian(Model):
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
-            cov (str): covariance type ["diag", "full"]
+            cov (str): covariance type. choices=["diag", "full", "tied"]
             batch_norm (bool, optional): whether to use input batch normalization. default=True
         """
         super().__init__()
-        assert cov in ["diag", "full"]
+        assert cov in ["diag", "full", "tied"]
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.cov = cov
@@ -30,18 +30,22 @@ class ConditionalGaussian(Model):
         self.eps = 1e-6
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-        self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-        self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
-        
         nn.init.normal_(self.mu, mean=0, std=1)
-        nn.init.normal_(self.lv, mean=0, std=0.01)
-        nn.init.normal_(self.tl, mean=0, std=0.01)
     
-        if cov == "diag":
-            del self.tl
-            self.parameter_size = self.parameter_size[:-1]
+        if cov == "full":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+            nn.init.normal_(self.tl, mean=0, std=0.01)
+        elif cov == "diag":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
             self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
-        
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "tied":
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim), requires_grad=True)
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
 
