@@ -17,6 +17,7 @@ from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
+from src.algo.irl import ReverseBehaviorCloning
 from src.algo.recurrent_airl import RecurrentDAC
 
 # eval imports
@@ -120,11 +121,17 @@ def main(arglist):
     # init model
     if config["algo"] == "bc":
         model = BehaviorCloning(agent)
-    if config["algo"] == "hbc":
+    elif config["algo"] == "hbc":
         model = HyperBehaviorCloning(agent)
-    if config["algo"] == "rdac":
-        model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
-
+    elif config["algo"] == "rbc":
+        model = ReverseBehaviorCloning(
+            agent, config["hidden_dim"], config["num_hidden"], config["activation"],
+            use_state=config["use_state"]
+        )
+    elif config["algo"] == "rdac":
+        model = RecurrentDAC(
+            agent, config["hidden_dim"], config["num_hidden"], config["activation"]
+        )
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
     model.load_state_dict(state_dict, strict=True)
