@@ -74,8 +74,8 @@ class BehaviorCloning(Model):
                     out, hidden = self.agent(o_t, u_t_cat, hidden)
                 u_t_prev = u_t.clone()
                 
-                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, [out, hidden])
-                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, [out, hidden])
+                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
+                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
 
                 loss = torch.mean(loss_u + self.obs_penalty * loss_o)
                     
@@ -168,8 +168,8 @@ class HyperBehaviorCloning(Model):
                     out, hidden = self.agent(o_t, u_t_cat, hidden, theta)
                 u_t_prev = u_t.clone()
                 
-                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, [out, hidden])
-                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, [out, hidden])
+                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
+                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
 
                 loss = torch.mean(loss_u + self.obs_penalty * loss_o)
                     
