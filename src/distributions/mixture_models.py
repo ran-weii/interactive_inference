@@ -39,11 +39,11 @@ class ConditionalGaussian(Model):
             nn.init.normal_(self.tl, mean=0, std=0.01)
         elif cov == "diag":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
             nn.init.normal_(self.lv, mean=0, std=0.01)
         elif cov == "tied":
             self.lv = nn.Parameter(torch.randn(1, 1, x_dim), requires_grad=True)
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
             nn.init.normal_(self.lv, mean=0, std=0.01)
 
         if batch_norm:
