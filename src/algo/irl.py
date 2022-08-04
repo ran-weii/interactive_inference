@@ -257,9 +257,10 @@ class ReverseBehaviorCloning(Model):
     def __repr__(self):
         s_agent = self.agent.__repr__()
         s_disc = self.discriminator.__repr__()
-        s = "{}(bptt_steps={}, grad_penalty={}, obs_penalty={}, "\
+        s = "{}(bptt_steps={}, grad_penalty={}, bc_penalty={}, obs_penalty={}, "\
             "lr_d={}, lr_a={}, decay={}, grad_clip={},\nagent={}, \ndisciminator={})".format(
-            self.__class__.__name__, self.bptt_steps, self.grad_penalty, self.obs_penalty, 
+            self.__class__.__name__, self.bptt_steps, 
+            self.grad_penalty, self.bc_penalty, self.obs_penalty, 
             self.lr_d, self.lr_a, self.decay, self.grad_clip, s_agent, s_disc
         )
         return s
@@ -288,32 +289,35 @@ class ReverseBehaviorCloning(Model):
                 ctl_sample = ctl_sample[0].squeeze(-2).cpu()
             self.real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
             self.fake_buffer.push(obs.numpy(), ctl_sample.numpy(), state.numpy(), rwd, done)
-    
+
     def on_epoch_end(self):
         """ Update real buffer hidden states on epoch end """
         num_samples = min(int(self.d_batch_size/4), self.real_buffer.num_eps)
-        eps_ids = np.random.choice(np.arange(self.real_buffer.num_eps), num_samples, replace=False)
-        for i in eps_ids:
-            # buffer size trim handle
-            if (i + 1) >= self.real_buffer.num_eps:
-                break
-            obs = torch.from_numpy(self.real_buffer.episodes[i]["obs"]).to(torch.float32).to(self.device)
-            ctl = torch.from_numpy(self.real_buffer.episodes[i]["ctl"]).to(torch.float32).to(self.device)
-            next_obs = torch.from_numpy(self.real_buffer.episodes[i]["next_obs"]).to(torch.float32).to(self.device)
-            next_ctl = torch.from_numpy(self.real_buffer.episodes[i]["next_ctl"]).to(torch.float32).to(self.device)
+        pad_batch, mask = self.real_buffer.sample_episodes(num_samples)
+        obs = pad_batch["obs"].to(self.device)
+        ctl = pad_batch["ctl"].to(self.device)
 
-            obs = torch.cat([obs, next_obs[-1:]], dim=0)
-            ctl = torch.cat([ctl, next_ctl[-1:]], dim=0)
-            rwd = np.zeros((len(obs), 1))
-            done = np.zeros((len(obs), 1))
-            with torch.no_grad():
-                ctl_sample, _, hidden = self.agent.choose_action_batch(
-                    obs.unsqueeze(1), ctl.unsqueeze(1), return_hidden=True
-                )
-                state = hidden[0].squeeze(1).cpu()
-                ctl_sample = ctl_sample[0].squeeze(-2).cpu()
-            self.real_buffer.push(obs.numpy(), ctl.numpy(), state.numpy(), rwd, done)
-            self.fake_buffer.push(obs.numpy(), ctl_sample.numpy(), state.numpy(), rwd, done)
+        with torch.no_grad():
+            ctl_sample, _, hidden = self.agent.choose_action_batch(obs, ctl, return_hidden=True)
+            state = hidden[0].cpu()
+            ctl_sample = ctl_sample[0].cpu()
+        
+        for i in range(num_samples):
+            eps_len = int(mask[:, i].sum())
+            rwd = np.zeros((eps_len, 1))
+            done = np.zeros((eps_len, 1))
+            self.real_buffer.push(
+                obs[:eps_len, i].cpu().numpy(), 
+                ctl[:eps_len, i].cpu().numpy(), 
+                state[:eps_len, i].cpu().numpy(), 
+                rwd, done
+            )
+            self.fake_buffer.push(
+                obs[:eps_len, i].cpu().numpy(), 
+                ctl_sample[:eps_len, i].cpu().numpy(), 
+                state[:eps_len, i].cpu().numpy(), 
+                rwd, done
+            )
 
     def normalize_obs(self, obs):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
@@ -466,7 +470,8 @@ class ReverseBehaviorCloning(Model):
                     "obs_loss": obs_loss.data.item(),
                 })
         
-        self.on_epoch_end()
+        if train:
+            self.on_epoch_end()
 
         stats = pd.DataFrame(epoch_stats).mean().to_dict()
         stats["d_loss"] = np.mean(d_loss_epoch)
