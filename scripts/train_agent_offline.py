@@ -47,7 +47,8 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="full", help="agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="agent control covariance, default=full")
     parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
-    parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
+    parser.add_argument("--action_set", type=str, choices=["ego", "frenet", "disc"], default="frenet", help="agent action set, default=frenet")
+    parser.add_argument("--discrete_action", type=bool_, default=False)
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     # nn args
@@ -98,8 +99,13 @@ def main(arglist):
     # define action set
     if arglist.action_set == "frenet":
         action_set = ["dds", "ddd"]
-    else:
+    elif arglist.action_set == "ego":
         action_set = ["ax_ego", "ay_ego"]
+    
+    action_bins = None
+    if arglist.discrete_action:
+        action_bins = arglist.act_dim
+
     assert set(action_set).issubset(set(ACTION_SET))
     
     # compute obs and ctl mean and variance stats
@@ -111,9 +117,9 @@ def main(arglist):
     ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
     ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
     ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.2
-
+    
     dataset = RelativeDataset(
-        df_track, feature_set, action_set, train_labels_col="is_train",
+        df_track, feature_set, action_set, action_bins=action_bins, train_labels_col="is_train",
         max_eps_len=arglist.max_eps_len, augmentation=[aug_flip_lr], seed=arglist.seed
     )
     train_loader, test_loader = train_test_split(
