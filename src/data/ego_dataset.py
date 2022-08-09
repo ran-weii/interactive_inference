@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from sklearn.preprocessing import KBinsDiscretizer
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -196,7 +197,7 @@ class EgoDataset(BaseDataset):
 
     
 class RelativeDataset(BaseDataset):
-    def __init__(self, df_track, feature_set, action_set, train_labels_col=None, 
+    def __init__(self, df_track, feature_set, action_set, action_bins=None, train_labels_col=None, 
         max_eps=500, max_eps_len=1000, augmentation=[], seed=0):
         super().__init__(df_track, train_labels_col, max_eps, seed)
         assert set(feature_set).issubset(set(df_track.columns))
@@ -205,6 +206,17 @@ class RelativeDataset(BaseDataset):
         self.act_fields = action_set
         self.meta_fields = ["track_id", "eps_id"]
         self.augmentation = augmentation
+        self.action_bins = action_bins
+
+        if action_bins is not None:
+            ax = df_track[action_set[0]].values.reshape(-1, 1)
+            ay = df_track[action_set[1]].values.reshape(-1, 1)
+
+            self.ax_discretizer = KBinsDiscretizer(n_bins=action_bins, encode="ordinal", strategy="quantile")
+            self.ay_discretizer = KBinsDiscretizer(n_bins=action_bins, encode="ordinal", strategy="quantile")
+
+            self.ax_discretizer.fit(np.vstack([ax, -ax]))
+            self.ay_discretizer.fit(np.vstack([ay, -ay]))
         
     def __getitem__(self, idx):
         df_ego = self.df_track.loc[
@@ -220,6 +232,11 @@ class RelativeDataset(BaseDataset):
         
         for aug in self.augmentation:
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
+        
+        if self.action_bins is not None:
+            ax = self.ax_discretizer.transform(act_ego[:, 0].reshape(-1, 1))
+            ay = self.ay_discretizer.transform(act_ego[:, 1].reshape(-1, 1))
+            act_ego = np.hstack([ax, ay])
 
         out_dict = {
             "ego": torch.from_numpy(obs_ego).to(torch.float32),
