@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributions as torch_dist
 import torch.nn.functional as F
 from src.agents.core import AbstractAgent
 from src.agents.tensor_qmdp_layers import TensorQMDPLayer
@@ -145,14 +146,28 @@ class TensorVINAgent(AbstractAgent):
         """
         _, alpha_a = hidden
         u_oh = F.one_hot(u.long(), num_classes=self.act_dim).float()
-        logp_u = torch.log(alpha_a + 1e-6)
-        logp_u = torch.sum(u_oh * logp_u, dim=-1).sum(-1)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+
+        # apply label smoothing
+        alpha = 0.01
+        u_oh = (
+            (1 - 4 * alpha) * u_oh + \
+            alpha * torch.roll(u_oh, 2, dims=-1) + \
+            alpha * torch.roll(u_oh, 1, dims=-1) + \
+            alpha * torch.roll(u_oh, -1, dims=-1) + \
+            alpha * torch.roll(u_oh, -2, dims=-1)
+        )
+        
+        # logp_u = torch.log(alpha_a + 1e-6)
+        # logp_u = torch.sum(u_oh * logp_u, dim=-1).sum(-1)
+        # loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+        logp_u = kl_divergence(alpha_a, u_oh).sum(-1)
+        loss = torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
 
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask == 0] = torch.nan
-        logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
+        # logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
+        logp_u_mean = torch.nanmean((nan_mask * logp_u)).cpu().data
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
@@ -199,14 +214,18 @@ class TensorVINAgent(AbstractAgent):
         )
         b_t, a_t = alpha_b[0], alpha_a[0]
         
-        if sample_method == "bma":
-            u_sample = self.ctl_model.bayesian_average(a_t)
-        else:
-            sample_mean = True if sample_method == "acm" else False
-            u_sample = self.ctl_model.ancestral_sample(
-                a_t.unsqueeze(0), num_samples, sample_mean
-            ).squeeze(-3)
-            logp = self.ctl_model.mixture_log_prob(a_t, u_sample)
+        dist = torch_dist.Categorical(a_t)
+        u_sample = dist.sample((num_samples,))
+        logp = dist.log_prob(u_sample)
+
+        # if sample_method == "bma":
+        #     u_sample = self.ctl_model.bayesian_average(a_t)
+        # else:
+        #     sample_mean = True if sample_method == "acm" else False
+        #     u_sample = self.ctl_model.ancestral_sample(
+        #         a_t.unsqueeze(0), num_samples, sample_mean
+        #     ).squeeze(-3)
+        #     logp = self.ctl_model.mixture_log_prob(a_t, u_sample)
         
         self._b, self._a = b_t, a_t
         self._prev_ctl = u_sample.sum(0)
@@ -230,34 +249,38 @@ class TensorVINAgent(AbstractAgent):
             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
         [alpha_b, alpha_a], hidden = self.forward(o, u)
-
-        if sample_method == "bma":
-            u_sample = self.ctl_model.bayesian_average(alpha_a)
-        else:
-            sample_mean = True if sample_method == "acm" else False
-            u_sample = self.ctl_model.ancestral_sample(
-                alpha_a, num_samples, sample_mean, tau, hard
-            )
-            logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
+        
+        dist = torch_dist.Categorical(alpha_a)
+        u_sample = dist.sample((num_samples,))
+        logp = dist.log_prob(u_sample)
+        
+        # if sample_method == "bma":
+        #     u_sample = self.ctl_model.bayesian_average(alpha_a)
+        # else:
+        #     sample_mean = True if sample_method == "acm" else False
+        #     u_sample = self.ctl_model.ancestral_sample(
+        #         alpha_a, num_samples, sample_mean, tau, hard
+        #     )
+        #     logp = self.ctl_model.mixture_log_prob(alpha_a, u_sample)
         if return_hidden:
             return u_sample, logp, hidden
         else:
             return u_sample, logp
 
-    def predict(self, o, u, sample_method="ace", num_samples=1):
-        """ Offline prediction observations and control """
-        [alpha_b, alpha_a], _ = self.forward(o, u)
+    # def predict(self, o, u, sample_method="ace", num_samples=1):
+    #     """ Offline prediction observations and control """
+    #     [alpha_b, alpha_a], _ = self.forward(o, u)
 
-        if sample_method == "bma":
-            o_sample = self.obs_model.bayesian_average(alpha_b)
-            u_sample = self.ctl_model.bayesian_average(alpha_a)
+    #     if sample_method == "bma":
+    #         o_sample = self.obs_model.bayesian_average(alpha_b)
+    #         u_sample = self.ctl_model.bayesian_average(alpha_a)
 
-        else:
-            sample_mean = True if sample_method == "acm" else False
-            o_sample = self.obs_model.ancestral_sample(
-                alpha_b, num_samples, sample_mean, tau=0.1, hard=True
-            )
-            u_sample = self.ctl_model.ancestral_sample(
-                alpha_a, num_samples, sample_mean, tau=0.1, hard=True
-            )
-        return o_sample, u_sample
+    #     else:
+    #         sample_mean = True if sample_method == "acm" else False
+    #         o_sample = self.obs_model.ancestral_sample(
+    #             alpha_b, num_samples, sample_mean, tau=0.1, hard=True
+    #         )
+    #         u_sample = self.ctl_model.ancestral_sample(
+    #             alpha_a, num_samples, sample_mean, tau=0.1, hard=True
+    #         )
+    #     return o_sample, u_sample
