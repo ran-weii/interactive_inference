@@ -10,6 +10,9 @@ from torch import Tensor
 from src.agents.qmdp_layers import poisson_pdf
 
 class TensorQMDPLayer(jit.ScriptModule):
+    """ QMDP layer with product of experts transition and 
+    centralized training decentralized execution style planning
+    """
     def __init__(self, state_dim, act_dim, ctl_dim, rank, horizon):
         super().__init__()
         self.state_dim = state_dim
@@ -39,16 +42,18 @@ class TensorQMDPLayer(jit.ScriptModule):
 
     @property
     def transition(self):
-        """ Return transition matrix. size=[1, ctl_dim, act_dim, state_dim, state_dim] """
+        """ Return transition matrix of individual experts. 
+        size=[1, ctl_dim, act_dim, state_dim, state_dim] 
+        """
         w = torch.einsum("nri, nrj, nruk -> nukij", self.u, self.v, self.w)
         return torch.softmax(w, dim=-1)
     
     @jit.script_method
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
-        """ Compute expected value using tensor value iteration
+        """ Compute expected value for each expert using CTDE
 
         Args:
-            transition (torch.tensor): transition matrix. size=[batch_size, act_dim, state_dim, state_dim]
+            transition (torch.tensor): transition matrix. size=[batch_size, ctl_dim, act_dim, state_dim, state_dim]
             reward (torch.tensor): reward matrix. size=[batch_size, ctl_dim, act_dim, state_dim]
         
         Returns:
@@ -57,9 +62,17 @@ class TensorQMDPLayer(jit.ScriptModule):
         q = [torch.empty(0)] * (self.horizon)
         q[0] = reward
         for t in range(self.horizon - 1):
-            v_next = torch.logsumexp(q[t], dim=-2, keepdim=True) # individual max
-            v_next = torch.logsumexp(v_next, dim=-3, keepdim=True) # group max
-            q[t+1] = reward + torch.einsum("nukij, nukj -> nki", transition, v_next)
+            # compute controlled transition
+            pi = torch.softmax(q[t], dim=-2)
+            pi_transition = torch.einsum("nukij, nuki -> nuij", transition, pi)
+            
+            poe_transition = pi_transition.prod(dim=-3)
+            poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
+            
+            v_next = torch.logsumexp(q[t], dim=[-2, -3], keepdim=False) # group max
+            ev_next = torch.einsum("nij, nj -> ni", poe_transition, v_next)
+            
+            q[t+1] = reward + ev_next.unsqueeze(-2).unsqueeze(-2)
         return torch.stack(q)
     
     @jit.script_method
@@ -96,8 +109,10 @@ class TensorQMDPLayer(jit.ScriptModule):
             b_post (torch.tensor): state posterior. size=[batch_size, state_dim]
         """
         u_oh = F.one_hot(u.long(), num_classes=self.act_dim).float()
-        transition_ = torch.einsum("nukij, nuk -> nij", transition, u_oh) / self.ctl_dim # average transition over agents
-        s_next = torch.einsum("nij, ni -> nj", transition_, b)
+        pi_transition = torch.einsum("nukij, nuk -> nuij", transition, u_oh)
+        poe_transition = pi_transition.prod(dim=-3)
+        poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
+        s_next = torch.einsum("nij, ni -> nj", poe_transition, b)
         logp_s = torch.log(s_next + self.eps)
         b_post = torch.softmax(logp_s + logp_o, dim=-1)
         return b_post
