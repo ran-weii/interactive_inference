@@ -228,7 +228,7 @@ class TensorVINAgent(AbstractAgent):
         #     logp = self.ctl_model.mixture_log_prob(a_t, u_sample)
         
         self._b, self._a = b_t, a_t
-        self._prev_ctl = u_sample.sum(0)
+        self._prev_ctl = u_sample
         return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
