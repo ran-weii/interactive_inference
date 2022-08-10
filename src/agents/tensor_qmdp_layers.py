@@ -66,7 +66,7 @@ class TensorQMDPLayer(jit.ScriptModule):
             pi = torch.softmax(q[t], dim=-2)
             pi_transition = torch.einsum("nukij, nuki -> nuij", transition, pi)
             
-            poe_transition = pi_transition.prod(dim=-3)
+            poe_transition = pi_transition.prod(dim=-3) + self.eps
             poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
             
             v_next = torch.logsumexp(q[t], dim=[-2, -3], keepdim=False) # group max
@@ -110,7 +110,7 @@ class TensorQMDPLayer(jit.ScriptModule):
         """
         u_oh = F.one_hot(u.long(), num_classes=self.act_dim).float()
         pi_transition = torch.einsum("nukij, nuk -> nuij", transition, u_oh)
-        poe_transition = pi_transition.prod(dim=-3)
+        poe_transition = pi_transition.prod(dim=-3) + self.eps
         poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
         s_next = torch.einsum("nij, ni -> nj", poe_transition, b)
         logp_s = torch.log(s_next + self.eps)
