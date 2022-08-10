@@ -15,6 +15,7 @@ from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 # model imports
 from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
+from src.agents.tensor_vin_agent import TensorVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
@@ -40,7 +41,7 @@ def parse_args():
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
     # agent args
-    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "idm", "mlp"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "tvin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
     parser.add_argument("--act_dim", type=int, default=45, help="agent action dimension, default=45")
     parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
@@ -76,11 +77,68 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
-    parser.add_argument("--plot_history", type=bool_, default=True, help="plot learning curve, default=True")
+    parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
+
+class SaveCallback:
+    def __init__(self, arglist, cp_history=None):
+        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
+        exp_path = os.path.join(arglist.exp_path, "agents")
+        agent_path = os.path.join(exp_path, arglist.agent)
+        save_path = os.path.join(agent_path, date_time)
+        model_path = os.path.join(save_path, "model")
+        if not os.path.exists(exp_path):
+            os.mkdir(exp_path)
+        if not os.path.exists(agent_path):
+            os.mkdir(agent_path)
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
+        if not os.path.exists(model_path):
+            os.mkdir(model_path)
+        
+        # save args
+        with open(os.path.join(save_path, "args.json"), "w") as f:
+            json.dump(vars(arglist), f)
+
+        self.save_path = save_path
+        self.model_path = model_path
+        self.cp_history = cp_history
+        self.cp_every = arglist.cp_every
+
+        self.num_test_eps = 0
+        self.iter = 0
+
+    def __call__(self, model, history):
+        self.iter += 1
+        if self.iter % self.cp_every != 0:
+            return
+        
+        # save history
+        df_history = pd.DataFrame(history)
+        if self.cp_history is not None:
+            df_history["epoch"] += self.cp_history["epoch"].values[-1] + 1
+            df_history["time"] += self.cp_history["time"].values[-1]
+            df_history = pd.concat([self.cp_history, df_history], axis=0)
+        df_history.to_csv(os.path.join(self.save_path, "history.csv"), index=False)
+        
+        # save history plot
+        fig_history, _ = plot_history(df_history, model.loss_keys)
+        fig_history.savefig(os.path.join(self.save_path, "history.png"), dpi=100)
+        
+        plt.clf()
+        plt.close()
+        
+        # save model
+        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        torch.save(cpu_state_dict, os.path.join(self.model_path, f"model_{self.iter}.pt"))
+        print(f"\ncheckpoint saved at: {self.save_path}\n")
+    
+    def save_model(self, model):
+        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
 
 def main(arglist):
     torch.manual_seed(arglist.seed)
@@ -154,6 +212,13 @@ def main(arglist):
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+    
+    elif arglist.agent == "tvin":
+        agent = TensorVINAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
+            arglist.horizon, obs_cov=arglist.obs_cov
+        )
+        agent.obs_model.init_batch_norm(obs_mean, obs_var)
 
     elif arglist.agent == "idm":
         agent = IDM(std=ctl_var)
@@ -193,6 +258,7 @@ def main(arglist):
     print(model)
 
     # load from check point
+    cp_history = None
     if arglist.checkpoint_path != "none":
         cp_path = os.path.join(
             arglist.exp_path, "agents", 
@@ -202,48 +268,16 @@ def main(arglist):
         state_dict = torch.load(os.path.join(cp_path, "model.pt"))
 
         # load history
-        df_history_cp = pd.read_csv(os.path.join(cp_path, "history.csv"))
+        cp_history = pd.read_csv(os.path.join(cp_path, "history.csv"))
 
         model.load_state_dict(state_dict)
         print(f"loaded checkpoint from {cp_path}")
     
+    callback = SaveCallback(arglist, cp_history)
     model, df_history = train(
-        model, train_loader, test_loader, arglist.epochs, verbose=1
+        model, train_loader, test_loader, arglist.epochs, callback=callback, verbose=1
     )
-    
-    if arglist.checkpoint_path != "none":
-        df_history["epoch"] += df_history_cp["epoch"].values[-1] + 1
-        df_history["time"] += df_history_cp["time"].values[-1]
-        df_history = pd.concat([df_history_cp, df_history], axis=0)
-
-    # save results
-    if arglist.save:
-        date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
-        exp_path = os.path.join(arglist.exp_path, "agents")
-        agent_path = os.path.join(exp_path, arglist.agent)
-        save_path = os.path.join(agent_path, date_time)
-        if not os.path.exists(exp_path):
-            os.mkdir(exp_path)
-        if not os.path.exists(agent_path):
-            os.mkdir(agent_path)
-        if not os.path.exists(save_path):
-            os.mkdir(save_path)
-        
-        # save args
-        with open(os.path.join(save_path, "args.json"), "w") as f:
-            json.dump(vars(arglist), f)
-        
-        # save model
-        torch.save(model.state_dict(), os.path.join(save_path, "model.pt"))
-        
-        # save history
-        df_history.to_csv(os.path.join(save_path, "history.csv"), index=False)
-        
-        # save history plot
-        fig_history, _ = plot_history(df_history, model.loss_keys)
-        fig_history.savefig(os.path.join(save_path, "history.png"), dpi=100)
-        
-        print(f"\nmodel saved at: {save_path}")
+    callback.save_model(model)
     
 if __name__ == "__main__":
     arglist = parse_args()
