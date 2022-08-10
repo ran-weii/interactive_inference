@@ -1,7 +1,7 @@
 import time
 import pandas as pd
 
-def train(model, train_loader, test_loader, epochs, verbose=1):
+def train(model, train_loader, test_loader, epochs, callback=None, verbose=1):
     history = []
     start_time = time.time()
     for e in range(epochs):
@@ -17,6 +17,9 @@ def train(model, train_loader, test_loader, epochs, verbose=1):
         if (e + 1) % verbose == 0:
             s = model.stdout(train_stats, test_stats)
             print("e: {}/{}, {}, t: {:.2f}".format(e + 1, epochs, s, tnow))
+
+        if callback is not None:
+            callback(model, history)
 
     df_history = pd.DataFrame(history)
     return model, df_history
