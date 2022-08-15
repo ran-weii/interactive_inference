@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+from torch.utils.data import DataLoader
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.data.lanelet import load_lanelet_df
 from src.data.train_utils import load_data
@@ -44,19 +45,25 @@ def test_ego_dataset(scenario):
     save(fig, os.path.join(save_path, f"{scenario}_Ego.html"))
 
 def test_relative_dataset(scenario):
+    from src.simulation.observers import FEATURE_SET
     df_track = load_data(data_path, scenario, filename)
     
     map_data = MapReader(cell_len=10)
     map_data.parse(os.path.join(data_path, "maps", scenario + ".osm"))
-
-    observer = RelativeObserver(map_data, fields="two_point")
-
-    min_eps_len = 50
-    rel_dataset = RelativeDataset(df_track, observer, min_eps_len=min_eps_len)
-    track_data = rel_dataset[0]
     
-    assert track_data["ego"].shape[1] == len(rel_dataset.ego_fields)
-    assert track_data["act"].shape[1] == len(rel_dataset.act_fields)
+    feature_set = FEATURE_SET["ego"] + FEATURE_SET["relative"]
+    action_set = ["dds", "ddd"]
+    max_eps_len = 50
+    rel_dataset = RelativeDataset(
+        df_track, feature_set, action_set, max_eps_len=max_eps_len, state_action=False
+    )
+    track_data = rel_dataset[0]
+
+    loader = DataLoader(rel_dataset, batch_size=64)
+    batch = next(iter(loader))
+    
+    assert track_data["ego"].shape[-1] == len(rel_dataset.ego_fields)
+    assert track_data["act"].shape[-1] == len(rel_dataset.act_fields)
     print("test_relative_dataset passed")
 
 def test_observer(scenario):
@@ -91,9 +98,7 @@ def test_observer(scenario):
     print("test_observer passed")
 
 if __name__ == "__main__":
-    test_ego_dataset(scenario1)
+    # test_ego_dataset(scenario1)
     # test_ego_dataset(scenario2)
-    # test_simple_ego_dataset(scenario1)
-    # test_simple_ego_dataset(scenario2)
-    # test_relative_dataset(scenario1)
+    test_relative_dataset(scenario1)
     # test_observer(scenario1)
