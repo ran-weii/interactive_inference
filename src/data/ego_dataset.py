@@ -44,16 +44,20 @@ def aug_flip_lr(obs, act, feature_set):
     """ Data augmentation by a left-right flip wrt the road 
     
     Args:
-        obs (np.array): observation matrix. size=[T, obs_dim]
-        act (np.array): action matrix. size=[T, act_dim]
+        obs ([np.array, torch.tensor]): observation matrix. size=[T, obs_dim]
+        act ([np.array, torch.tensor]): action matrix. size=[T, act_dim]
         feature_set (list): list of strings feature names
 
     Returns:
-        obs_aug (np.array): augmented observations. size=[T, obs_dim]
-        act_aug (np.array): augmented actions. size=[T, act_dim]
+        obs_aug ([np.array, torch.tensor]): augmented observations. size=[T, obs_dim]
+        act_aug ([np.array, torch.tensor]): augmented actions. size=[T, act_dim]
     """
-    obs_aug = obs.copy()
-    act_aug = act.copy()
+    if isinstance(obs, np.ndarray):
+        obs_aug = obs.copy()
+        act_aug = act.copy()
+    elif isinstance(obs, torch.Tensor):
+        obs_aug = obs.clone()
+        act_aug = act.clone()
     if np.random.randint(2) == 1: # perform augmentation with 0.5 probability
         for i, f in enumerate(feature_set):
             flippable = AUGMENTATION_PARAMETERS[f]["flip_lr"]
