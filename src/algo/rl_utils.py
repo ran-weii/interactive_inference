@@ -118,5 +118,6 @@ def train(
     logger.log_test_episode(sim_states, track_data)
 
     # final callback
-    callback(model, logger)
+    if callback is not None:
+        callback(model, logger)
     return model, logger
