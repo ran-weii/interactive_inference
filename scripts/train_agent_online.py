@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import pickle
 import datetime
 import numpy as np
 import pandas as pd
@@ -93,6 +94,7 @@ def parse_args():
     parser.add_argument("--obs_penalty", type=float, default=1., help="observation penalty, default=1.")
     parser.add_argument("--verbose", type=bool_, default=False, help="whether to verbose during training, default=False")
     parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
+    parser.add_argument("--save_buffer", type=bool_, default=False, help="whether to save buffer, default=False")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
@@ -142,13 +144,13 @@ class SaveCallback:
         df_history.to_csv(os.path.join(self.save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ =plot_history(df_history, model.plot_keys)
+        fig_history, _ =plot_history(df_history, model.plot_keys, plot_std=True)
         fig_history.savefig(os.path.join(self.save_path, "history.png"), dpi=100)
         
         # save test episode
         if len(logger.test_episodes) > self.num_test_eps:
             ani = animate(self.map_data, logger.test_episodes[-1]["sim_states"], logger.test_episodes[-1]["track_data"])
-            save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.num_test_eps+1}_ani.mp4"))
+            save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.iter+1}_ani.mp4"))
             self.num_test_eps += 1
         
         plt.clf()
@@ -164,6 +166,10 @@ class SaveCallback:
     def save_model(self, model):
         cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
         torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
+
+    def save_buffer(self, model):
+        with open(os.path.join(self.save_path, "buffer.p"), "wb") as f:
+            pickle.dump(model.replay_buffer, f)
         
 def main(arglist):
     np.random.seed(arglist.seed)
@@ -248,9 +254,10 @@ def main(arglist):
         model = DAC(
             agent, arglist.hidden_dim, arglist.num_hidden, 
             gamma=arglist.gamma, beta=arglist.beta, polyak=arglist.polyak, norm_obs=arglist.norm_obs,
-            buffer_size=arglist.buffer_size, batch_size=arglist.batch_size, 
+            buffer_size=arglist.buffer_size, batch_size=arglist.d_batch_size, 
             d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
-            lr=arglist.lr_d, decay=arglist.decay, grad_clip=arglist.grad_clip, grad_penalty=arglist.grad_penalty
+            lr=arglist.lr_d, decay=arglist.decay, grad_clip=arglist.grad_clip, 
+            grad_penalty=arglist.grad_penalty, grad_target=0.
         )
         model.fill_real_buffer(rel_dataset)
     elif arglist.algo == "rdac":
@@ -307,7 +314,16 @@ def main(arglist):
         log_test_every=arglist.log_test_every, verbose=arglist.verbose,
         callback=callback
     )
-    callback.save_model(model)
+    if callback is not None:
+        callback.save_model(model)
+        if arglist.save_buffer:
+            callback.save_buffer(model)
+    
+    # # test
+    # df_history = pd.DataFrame(logger.history)
+    # df_history = df_history.assign(train=1)
+    # fig_history, _ =plot_history(df_history, model.plot_keys, plot_std=True)
+    # plt.show()
 
 if __name__ == "__main__":
     arglist = parse_args()
