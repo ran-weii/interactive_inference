@@ -73,7 +73,7 @@ class MLPAgent(AbstractAgent):
         logp = dist.log_prob(ctl).sum(-1, keepdim=True)
         if self.use_tanh:
             logp -= (2. * (math.log(2.) - ctl - F.softplus(-2. * ctl))).sum(-1, keepdim=True)
-            ctl *= self.ctl_limits
+            ctl *= self.tanh_transform.limits
         return ctl, logp
 
     def choose_action_batch(self, o, u, sample_method="", num_samples=1):
