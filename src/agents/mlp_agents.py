@@ -47,7 +47,7 @@ class MLPAgent(AbstractAgent):
         return s
 
     def reset(self):
-        self._b = None 
+        self._b = torch.zeros(0) # dummy belief
         self._prev_ctl = None
     
     def normalize_obs(self, obs):
@@ -66,8 +66,8 @@ class MLPAgent(AbstractAgent):
             distribution = SimpleTransformedModule(distribution, [self.tanh_transform])
         return distribution
 
-    def choose_action(self, o, u, sample_method="", num_samples=1):
-        mu, lv = self.forward(o, u)
+    def choose_action(self, o, sample_method="", num_samples=1):
+        mu, lv = self.forward(o, None)
         dist = torch_dist.Normal(mu, rectify(lv))
         ctl = dist.rsample((num_samples,))
         logp = dist.log_prob(ctl).sum(-1, keepdim=True)
