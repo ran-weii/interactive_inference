@@ -16,7 +16,7 @@ class DAC(Model):
     def __init__(
         self, agent, hidden_dim, num_hidden, gamma=0.9, beta=0.2, polyak=0.995, norm_obs=False,
         buffer_size=int(1e6), batch_size=100, d_steps=50, a_steps=50, lr=1e-3, decay=0, 
-        grad_clip=None, grad_penalty=1., 
+        grad_clip=None, grad_penalty=1., grad_target=0.
         ):
         """
         Args:
@@ -35,6 +35,7 @@ class DAC(Model):
             decay (float, optional): weight decay. Default=0
             grad_clip (float, optional): gradient clipping. Default=None
             grad_penalty (float, optional): discriminator gradient penalty. Default=1.
+            grad_target (float, optional): discriminator gradient target. Default=0.
         """
         super().__init__()
         self.gamma = gamma
@@ -49,6 +50,7 @@ class DAC(Model):
         self.decay = decay
         self.grad_clip = grad_clip
         self.grad_penalty = grad_penalty
+        self.grad_target = grad_target
 
         self.agent = agent
         self.discriminator = MLP(
@@ -78,8 +80,8 @@ class DAC(Model):
             self.agent.parameters(), lr=lr, weight_decay=decay
         )
 
-        self.real_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
-        self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, buffer_size)
+        self.real_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, None, buffer_size)
+        self.replay_buffer = ReplayBuffer(agent.obs_dim, agent.ctl_dim, None, buffer_size)
 
         self.obs_mean = nn.Parameter(torch.zeros(agent.obs_dim), requires_grad=False)
         self.obs_variance = nn.Parameter(torch.ones(agent.obs_dim), requires_grad=False)
@@ -107,8 +109,11 @@ class DAC(Model):
             ctl = batch["act"].numpy()
             rwd = np.zeros((len(obs), 1))
             done = np.zeros((len(obs), 1))
-            self.real_buffer.push(obs, ctl, rwd, done)
-
+            self.real_buffer.push(obs=obs, ctl=ctl, rwd=rwd, done=done)
+    
+    def on_epoch_end(self):
+        pass
+    
     def normalize_obs(self, obs):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
         return obs_norm
@@ -155,11 +160,12 @@ class DAC(Model):
         )[0]
 
         grad_norm = torch.linalg.norm(grad, dim=-1)
-        return grad_norm
+        grad_pen = torch.pow(grad_norm - self.grad_target, 2).mean()
+        return grad_pen
 
     def compute_discriminator_loss(self):
         real_batch = self.real_buffer.sample_random(self.batch_size)
-        fake_batch = self.replay_buffer.sample_random(self.batch_size)
+        fake_batch = self.replay_buffer.sample_random(self.batch_size, prioritize=True)
         
         real_obs = real_batch["obs"]
         real_ctl = real_batch["ctl"]
@@ -182,8 +188,7 @@ class DAC(Model):
         loss = F.binary_cross_entropy(out, labels)
 
         gp = self.gradient_penalty(real_inputs, fake_inputs)
-        loss += self.grad_penalty * gp.mean()
-        return loss
+        return loss, gp
 
     def compute_critic_loss(self):
         batch = self.replay_buffer.sample_random(self.batch_size)
@@ -240,8 +245,9 @@ class DAC(Model):
         d_loss_epoch = []
         for i in range(self.d_steps):
             # train discriminator
-            d_loss = self.compute_discriminator_loss()
-            d_loss.backward()
+            d_loss, gp = self.compute_discriminator_loss()
+            d_total_loss = d_loss + self.grad_penalty * gp
+            d_total_loss.backward()
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.grad_clip)
             self.d_optimizer.step()
