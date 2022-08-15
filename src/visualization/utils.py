@@ -12,12 +12,13 @@ def set_plotting_style(strip_size=12, label_size=12):
     mpl.rcParams["axes.titlesize"] = label_size
     mpl.rcParams["figure.titlesize"] = label_size
 
-def plot_history(df_history, plot_keys):
+def plot_history(df_history, plot_keys, plot_std=False):
     """ Plot learning history
     
     Args:
         df_history (pd.dataframe): learning history dataframe with a binary train column.
         plot_keys (list): list of colnames to be plotted.
+        plot_std (bool, optional): whether to plot std shade. Default=False
 
     Returns:
         fig (plt.figure)
@@ -33,8 +34,24 @@ def plot_history(df_history, plot_keys):
     fig, ax = plt.subplots(1, num_cols, figsize=(width, 4))
     for i in range(num_cols):
         ax[i].plot(df_train["epoch"], df_train[plot_keys[i]], label="train")
+        if plot_std:
+            std = df_train[plot_keys[i].replace("_avg", "_std")]
+            ax[i].fill_between(
+                df_train["epoch"],
+                df_train[plot_keys[i]] - std,
+                df_train[plot_keys[i]] + std,
+                alpha=0.4
+            )
         if 0 in train_unique:
             ax[i].plot(df_test["epoch"], df_test[plot_keys[i]], label="test")
+            if plot_std:
+                std = df_test[plot_keys[i].replace("_avg", "_std")]
+                ax[i].fill_between(
+                df_test["epoch"],
+                df_test[plot_keys[i]] - std,
+                df_test[plot_keys[i]] + std,
+                alpha=0.4
+            )
         ax[i].legend()
         ax[i].set_xlabel("epoch")
         ax[i].set_ylabel(plot_keys[i])
@@ -73,11 +90,13 @@ def plot_time_series(x, feature_names, x_sample=None, num_cols=5, figsize=(6, 2)
     
     t = np.arange(len(x))
     for i in range(f_dim):
-        ax[i].plot(t, x[:, i])
+        ax[i].plot(t, x[:, i], label="true")
         if x_sample is not None:
             mu = x_sample[:, :, i].mean(0)
             std = x_sample[:, :, i].std(0)
+            ax[i].plot(t, mu, label="pred")
             ax[i].fill_between(t, mu + std, mu - std, alpha=0.4)
+        # ax[i].legend()
         ax[i].set_xlabel("time")
         ax[i].set_title(feature_names[i])
     ax[0].set_title(title)
