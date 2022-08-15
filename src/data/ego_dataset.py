@@ -24,7 +24,7 @@ def sample_sequence(seq_len, max_seq_len, gamma=1.):
         seq_len (int): original sequence length
         max_seq_len (int): maximum sequence length
         gamma (float, optional): higher gamma bias towards 
-            sampling smaller time steps. Default=1.
+            sampling smaller time steps. 0. is uniform sampling. Default=1.
     
     Returns:
         sample_id (np.array): sample id
@@ -33,7 +33,6 @@ def sample_sequence(seq_len, max_seq_len, gamma=1.):
     if seq_len <= max_seq_len:
         return sample_id
     else:
-        gamma = 1.
         candidates = np.arange(seq_len - max_seq_len)
         p = (candidates + 1) ** -float(gamma)
         p /= p.sum()
@@ -198,15 +197,34 @@ class EgoDataset(BaseDataset):
     
 class RelativeDataset(BaseDataset):
     def __init__(self, df_track, feature_set, action_set, action_bins=None, train_labels_col=None, 
-        max_eps=500, max_eps_len=1000, augmentation=[], seed=0):
+        max_eps=500, max_eps_len=1000, gamma=0., state_action=False, augmentation=[], seed=0):
+        """
+        Args:
+            df_track
+            feature_set
+            action_set
+            action_bins (int): used to create action discretizer
+            train_labels_col (str): training label column
+            max_esp (int): maximum number of episode. Exceeded episodes will be subsampled
+            max_eps_len (int): maximum number of steps in an episode. Exceeded steps will be subsampled.
+            gamma (float): sequence sampling factor.
+            state_action (bool): whether to return state action only instead of sequences.
+            augmentation (list): list of data augmentation functions.
+            seed (int): data sampling seed.
+        """
         super().__init__(df_track, train_labels_col, max_eps, seed)
         assert set(feature_set).issubset(set(df_track.columns))
         self.max_eps_len = max_eps_len
+        self.gamma = gamma
+        self.state_action = state_action
         self.ego_fields = feature_set
         self.act_fields = action_set
         self.meta_fields = ["track_id", "eps_id"]
         self.augmentation = augmentation
         self.action_bins = action_bins
+
+        if state_action:
+            self.df_track = self.df_track.loc[df_track["eps_id"].isna() == False].reset_index(drop=True)
 
         if action_bins is not None:
             ax = df_track[action_set[0]].values.reshape(-1, 1)
@@ -217,18 +235,27 @@ class RelativeDataset(BaseDataset):
 
             self.ax_discretizer.fit(np.vstack([ax, -ax]))
             self.ay_discretizer.fit(np.vstack([ay, -ay]))
-        
+    
+    def __len__(self):
+        if self.state_action:
+            return len(self.df_track)
+        else:
+            return super().__len__()
+
     def __getitem__(self, idx):
-        df_ego = self.df_track.loc[
-            self.df_track["eps_id"] == self.unique_eps[idx]
-        ].reset_index(drop=True)
+        if self.state_action:
+            df_ego = self.df_track.loc[idx].to_frame().T
+        else:
+            df_ego = self.df_track.loc[
+                self.df_track["eps_id"] == self.unique_eps[idx]
+            ].reset_index(drop=True)
+            
+            sample_ids = sample_sequence(len(df_ego), self.max_eps_len, gamma=self.gamma)
+            df_ego = df_ego.iloc[sample_ids].reset_index(drop=True)
         
-        sample_ids = sample_sequence(len(df_ego), self.max_eps_len, gamma=1.)
-        df_ego = df_ego.iloc[sample_ids].reset_index(drop=True)
-        
-        obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy()
-        obs_ego = df_ego[self.ego_fields].to_numpy()
-        act_ego = df_ego[self.act_fields].to_numpy()
+        obs_meta = df_ego[self.meta_fields].iloc[0].to_numpy().astype(np.float32)
+        obs_ego = df_ego[self.ego_fields].to_numpy().astype(np.float32)
+        act_ego = df_ego[self.act_fields].to_numpy().astype(np.float32) 
         
         for aug in self.augmentation:
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
