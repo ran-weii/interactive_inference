@@ -14,7 +14,7 @@ class VINAgent(AbstractAgent):
     QMDP hidden layer
     """
     def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1,
         obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None
         ):
         super().__init__()
@@ -23,6 +23,7 @@ class VINAgent(AbstractAgent):
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.horizon = horizon
+        self.alpha = alpha
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon)
         self.obs_model = ConditionalGaussian(
@@ -90,7 +91,7 @@ class VINAgent(AbstractAgent):
         entropy = self.obs_model.entropy()
         c = self.target_dist
         kl = kl_divergence(torch.eye(self.state_dim), c)
-        return -kl - entropy
+        return -kl - self.alpha * entropy
     
     @property
     def reward(self):
@@ -102,7 +103,7 @@ class VINAgent(AbstractAgent):
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
         log_pi0 = torch.log(self.pi0 + 1e-6)
-        r = -kl - eh + log_pi0
+        r = -kl - self.alpha * eh + log_pi0
         return r
 
     def forward(
@@ -144,7 +145,7 @@ class VINAgent(AbstractAgent):
         """
         _, alpha_a = hidden
         logp_u = self.ctl_model.mixture_log_prob(alpha_a, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+        loss = -torch.sum(logp_u * mask) / (mask.sum() + 1e-6)
 
         # compute stats
         nan_mask = mask.clone()
@@ -166,12 +167,18 @@ class VINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _ = hidden
-        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
-        loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
+        alpha_b, alpha_a = hidden
+        
+        # one step transition
+        transition = self.rnn.transition
+        pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a)
+        s_next = torch.einsum("tnij, tni -> tnj", pi_transition, alpha_b)
+        
+        logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
+        loss = -torch.sum(logp_o * mask[1:]) / (mask[1:].sum() + 1e-6)
 
         # compute stats
-        nan_mask = mask.clone()
+        nan_mask = mask[1:].clone()
         nan_mask[nan_mask == 0] = torch.nan
         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
@@ -244,15 +251,20 @@ class VINAgent(AbstractAgent):
     def predict(self, o, u, sample_method="ace", num_samples=1):
         """ Offline prediction observations and control """
         [alpha_b, alpha_a], _ = self.forward(o, u)
-
+        
+        # one step transition
+        transition = self.rnn.transition
+        pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a)
+        s_next = torch.einsum("tnij, tni -> tnj", pi_transition, alpha_b)
+        
         if sample_method == "bma":
-            o_sample = self.obs_model.bayesian_average(alpha_b)
+            o_sample = self.obs_model.bayesian_average(s_next)
             u_sample = self.ctl_model.bayesian_average(alpha_a)
 
         else:
             sample_mean = True if sample_method == "acm" else False
             o_sample = self.obs_model.ancestral_sample(
-                alpha_b, num_samples, sample_mean, tau=0.1, hard=True
+                s_next, num_samples, sample_mean, tau=0.1, hard=True
             )
             u_sample = self.ctl_model.ancestral_sample(
                 alpha_a, num_samples, sample_mean, tau=0.1, hard=True
