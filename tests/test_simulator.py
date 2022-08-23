@@ -12,7 +12,7 @@ from src.visualization.animation import animate, save_animation
 
 from src.simulation.observers import FEATURE_SET
 from src.simulation.observers import Observer
-from src.simulation.controllers import AgentWrapper
+# from src.simulation.controllers import AgentWrapper
 from src.map_api.frenet import FrenetPath
 from src.map_api.frenet_utils import compute_normal_from_kappa
 from src.map_api.frenet_utils import compute_acceleration_vector
@@ -44,6 +44,7 @@ def test_simulator_from_data():
     eps_id = env._track_data["meta"][1]
     df_eps = df_track.loc[df_track["eps_id"] == eps_id].reset_index(drop=True)
     
+    rewards = []
     for t in range(env.T):
         # get agent frenet acceleration
         dds = df_eps["dds"].values[t]
@@ -51,10 +52,13 @@ def test_simulator_from_data():
         ctl = torch.tensor([dds, ddd]).view(1, -1)
         
         obs, r, done, info = env.step(ctl)
+        rewards.append(r)
         
         if done:
             break
-
+    print(rewards)
+    print(np.mean(rewards))
+    exit()
     ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=True)
     save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
 
@@ -169,42 +173,91 @@ def test_data_wrapper():
     print("test_data_wrapper passed")
 
 def test_idm_agent():
+    torch.manual_seed(0)
     from src.agents.rule_based import IDM
 
     df_track = load_data(data_path, scenario, filename, train=True)
 
-    ego_dataset = EgoDataset(df_track, train_labels_col="is_train", max_eps=10, create_svt=False)
+    ego_dataset = EgoDataset(df_track, train_labels_col="is_train", max_eps=100, create_svt=False, seed=0)
     
-    env = InteractionSimulator(ego_dataset, map_data)
-
     ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
     relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
+    feature_set = ego_features + relative_features
     action_set = ["dds", "ddd"]
+    observer = Observer(map_data, ego_features=ego_features, relative_features=relative_features)
+
+    env = InteractionSimulator(ego_dataset, map_data, observer)
+
     ctl_std = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].var().values).view(1, 2).to(torch.float32)
     
-    agent = IDM(std=ctl_std)
-    observer = Observer(map_data, ego_features=ego_features, relative_features=relative_features)
-    controller = AgentWrapper(observer, agent, ["dds", "ddd"], "ace")
-    controller.reset()
+    agent = IDM(feature_set, std=ctl_std)
 
-    obs_env = env.reset(2)
+    obs = env.reset(1)
+    
+    # set sim states away
+    env._sim_states[0][1] -= 10
+    env._sim_states[0][3] -= 3
+    
     for t in range(env.T):
         # get true agent control
         # ctl_env = env.get_action()
-        ctl_env = controller.choose_action(obs_env)
+        # ctl_env = controller.choose_action(obs_env)
+        ctl = agent.choose_action(obs, None)
+        # print(ctl)
+        # break
         
-        obs_env, r, done, info = env.step(ctl_env)
+        obs, r, done, info = env.step(ctl)
         
         if done:
             break
-    
+    # print(env._sim_acts)
     ani = animate(map_data, env._sim_states, env._track_data, title="test", annot=False)
-    save_animation(ani, "/Users/rw422/Documents/render_ani.mp4")
+    save_animation(ani, "/Users/hfml/Documents/test_idm.mp4")
     print("test_idm_agent passed")
 
+def test_sensor_simulator():
+    import matplotlib.pyplot as plt
+    from src.data.train_utils import load_data
+    from src.simulation.utils import create_svt_from_df
+    from src.simulation.simulator import InteractionSimulator
+    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+    from src.map_api.lanelet import MapReader
+    from src.visualization.animation import lidar_animate, save_animation
+    
+    filepath = os.path.join(data_path, "maps", scenario + ".osm")
+    map_data = MapReader(cell_len=10)
+    map_data.parse(filepath, verbose=True)
+
+    df_track = load_data(data_path, scenario, filename)
+    df_track = df_track.iloc[:5000]
+    
+    svt_object = create_svt_from_df(df_track)
+    
+    num_beams = 20
+    ego_sensor = EgoSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data)
+    lidar_sensor = LidarSensor(num_beams)
+    sensors = [ego_sensor, lv_sensor, lidar_sensor]
+    
+    action_set = ["ax_ego", "ay_ego"]
+    env = InteractionSimulator(map_data, sensors, action_set, svt_object)
+    
+    env.reset(3) # beam too sparse for eps 3
+    for t in range(env.T):
+        action = env.get_data_action()
+        obs, _, _, _ = env.step(action)
+    
+    ani = lidar_animate(
+        map_data, env._data, env.state_keys, annot=True
+    )
+    save_animation(ani, "/Users/hfml/Documents/test_lidar.mp4")
+
+    print("test_sensor_simulator passed")
+
 if __name__ == "__main__":
-    test_simulator_from_data()
+    # test_simulator_from_data()
     # test_simulator_with_observer()
     # test_observer()
     # test_data_wrapper()
     # test_idm_agent()
+    test_sensor_simulator()
