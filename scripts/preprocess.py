@@ -14,7 +14,7 @@ from src.data.data_filter import (
     classify_tail_merging)
 from src.data.geometry import coord_transformation
 from src.map_api.frenet import Trajectory
-from src.simulation.observers import FEATURE_SET, Observer
+# from src.simulation.observers import FEATURE_SET, Observer
 
 # to use apply progress bar
 tqdm.pandas()
@@ -139,50 +139,138 @@ def find_neighbors(df, map_data, max_dist, parallel):
     df_neighbors.insert(1, "frame_id", df["frame_id"])
     return df_neighbors
 
+# def compute_features(df, map_data, min_seg_len, parallel):
+#     """ Return dataframe with fields defined in FEATURE_SET """
+#     seg_id = get_trajectory_segment_id(df)
+#     seg_id, seg_len = filter_segment_by_length(seg_id, min_seg_len)
+#     df = df.assign(seg_id=seg_id)
+#     df = df.assign(seg_len=seg_len)
+    
+#     # concat with neighbors
+#     df_ego = df.copy()
+#     df_agent = df.copy()
+#     df_agent.columns = [c + "_agent" for c in df_agent.columns]
+#     df_joint = df_ego.merge(
+#         df_agent, left_on=["frame_id", "lead_track_id"], 
+#         right_on=["frame_id_agent", "track_id_agent"], how="left"
+#     )
+    
+#     feature_set = FEATURE_SET["ego"] + FEATURE_SET["relative"]
+#     print(f"features set: {feature_set}")
+#     def f_compute_features(x, **kwargs): 
+#         """ Compute features for a time step """
+#         observer = Observer(
+#             map_data, ego_features=FEATURE_SET["ego"],
+#             relative_features=FEATURE_SET["relative"]
+#         )
+#         observer.reset()
+        
+#         if np.isnan(x["lead_track_id"]):
+#             obs = np.nan * np.ones(len(feature_set))
+#         else:
+#             ego_state = x[["x", "y", "vx", "vy", "psi_rad", "length", "width"]].values
+#             agent_state = x[["x_agent", "y_agent", "vx_agent", "vy_agent", "psi_rad_agent", "length_agent", "width_agent"]].values.reshape(1, -1)
+#             state = {"ego": ego_state, "agents": agent_state}
+#             obs = observer.observe(state).numpy().flatten()
+#         return pd.Series(obs)
+    
+#     df_features = parallel_apply(
+#         df_joint, f_compute_features, parallel, axis=1, desc="computing features"
+#     )
+#     df_features.columns = feature_set
+#     df_features.insert(0, "track_id", df["track_id"])
+#     df_features.insert(1, "frame_id", df["frame_id"])
+#     df_features.insert(2, "seg_id", df_joint["seg_id"])
+#     df_features.insert(3, "seg_len", df_joint["seg_len"])
+    
+#     def compute_trajectory_features(x):
+#         """ Compute features that require the entire trajectory """
+#         if x["seg_id"].values[0] == -1:
+#             features = np.nan * np.ones((len(x), 3))
+#         else:
+#             trajectory = Trajectory(
+#                 x["x"].values, x["y"].values, 
+#                 x["vy"].values, x["vy"].values, 
+#                 x["ax"].values, x["ay"].values, x["psi_rad"].values
+#             )
+            
+#             ref_lane_id = x["lane_id"].values[0]
+#             ref_path = map_data.lanes[ref_lane_id].centerline.frenet_path
+#             trajectory.get_frenet_trajectory(ref_path)
+            
+#             dds = trajectory.s_condition[:, 2]
+#             ddd = trajectory.d_condition[:, 2]
+#             kappa_ego = trajectory.kappa
+#             norm_ego = trajectory.norm
+#             a = trajectory.a # signed frenet acceleration
+#             features = np.stack([dds, ddd, kappa_ego, norm_ego, a]).T
+        
+#         df_out = pd.DataFrame(
+#             features, columns=["dds", "ddd", "kappa", "norm", "a"], index=x.index
+#         )
+#         df_out = df_out.assign(track_id=x["track_id"].values)
+#         df_out = df_out.assign(frame_id=x["frame_id"].values)
+#         return df_out
+    
+#     df_traj_features = df_joint.groupby("seg_id").progress_apply(
+#         compute_trajectory_features
+#     ).reset_index(drop=True)
+#     df_features = df_features.merge(
+#         df_traj_features, on=["track_id", "frame_id"], how="left"
+#     )
+#     return df_features
+
 def compute_features(df, map_data, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
+    from src.simulation.sensors import STATE_KEYS
+    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+    from src.simulation.observers import Observer
+
     seg_id = get_trajectory_segment_id(df)
     seg_id, seg_len = filter_segment_by_length(seg_id, min_seg_len)
     df = df.assign(seg_id=seg_id)
     df = df.assign(seg_len=seg_len)
-    
-    # concat with neighbors
-    df_ego = df.copy()
-    df_agent = df.copy()
-    df_agent.columns = [c + "_agent" for c in df_agent.columns]
-    df_joint = df_ego.merge(
-        df_agent, left_on=["frame_id", "lead_track_id"], 
-        right_on=["frame_id_agent", "track_id_agent"], how="left"
-    )
-    
-    feature_set = FEATURE_SET["ego"] + FEATURE_SET["relative"]
-    print(f"features set: {feature_set}")
-    def f_compute_features(x, **kwargs): 
-        """ Compute features for a time step """
-        observer = Observer(
-            map_data, ego_features=FEATURE_SET["ego"],
-            relative_features=FEATURE_SET["relative"]
-        )
-        observer.reset()
+
+    def f_compute_features_episode(x, **kwargs):
+        ego_sensor = EgoSensor(map_data)
+        lv_sensor = LeadVehicleSensor(map_data)
+        lidar_sensor = LidarSensor()
+        observer = Observer(map_data, [ego_sensor, lv_sensor, lidar_sensor])
         
-        if np.isnan(x["lead_track_id"]):
-            obs = np.nan * np.ones(len(feature_set))
-        else:
-            ego_state = x[["x", "y", "vx", "vy", "psi_rad", "length", "width"]].values
-            agent_state = x[["x_agent", "y_agent", "vx_agent", "vy_agent", "psi_rad_agent", "length_agent", "width_agent"]].values.reshape(1, -1)
-            state = {"ego": ego_state, "agents": agent_state}
-            obs = observer.observe(state).numpy().flatten()
-        return pd.Series(obs)
-    
+        x_ = x.reset_index(drop=True)
+        obs = np.nan * np.ones((len(x_), len(observer.feature_names)))
+        act = np.nan * np.ones((len(x_), 2))
+        if x["seg_id"].values[0] == np.nan:
+            df_out = pd.DataFrame(
+                np.hstack([obs, act]), columns=observer.feature_names + observer.action_set,
+                index=x.index
+            )
+            return df_out
+
+        for t in range(len(x_)):
+            df_ego = x_.iloc[t]
+            track_id = df_ego["track_id"]
+            frame_id = df_ego["frame_id"]
+            df_agents = df.loc[(df["frame_id"] == frame_id) & (df["track_id"] != track_id) ]
+            ego_state = df_ego[STATE_KEYS].values.astype(np.float64)
+            agent_states = df_agents[STATE_KEYS].values.astype(np.float64)
+
+            sensor_obs = {}
+            sensor_obs["EgoSensor"], _ = ego_sensor.get_obs(ego_state, agent_states)
+            sensor_obs["LeadVehicleSensor"], _ = lv_sensor.get_obs(ego_state, agent_states)
+            sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
+            
+            obs[t] = observer.observe(sensor_obs)
+        df_out = pd.DataFrame(obs, columns=observer.feature_names,index=x.index)
+        return df_out
+
     df_features = parallel_apply(
-        df_joint, f_compute_features, parallel, axis=1, desc="computing features"
+        df.groupby("seg_id"), f_compute_features_episode, parallel, axis=1, desc="computing features"
     )
-    df_features.columns = feature_set
-    df_features.insert(0, "track_id", df["track_id"])
-    df_features.insert(1, "frame_id", df["frame_id"])
-    df_features.insert(2, "seg_id", df_joint["seg_id"])
-    df_features.insert(3, "seg_len", df_joint["seg_len"])
-    
+    df_features = df[["track_id", "frame_id"]].merge(
+        df_features, how="left", left_index=True, right_index=True
+    )
+
     def compute_trajectory_features(x):
         """ Compute features that require the entire trajectory """
         if x["seg_id"].values[0] == -1:
@@ -212,7 +300,7 @@ def compute_features(df, map_data, min_seg_len, parallel):
         df_out = df_out.assign(frame_id=x["frame_id"].values)
         return df_out
     
-    df_traj_features = df_joint.groupby("seg_id").progress_apply(
+    df_traj_features = df.groupby("seg_id").progress_apply(
         compute_trajectory_features
     ).reset_index(drop=True)
     df_features = df_features.merge(
@@ -347,7 +435,7 @@ def main(arglist):
         )
     
     if arglist.save:
-        df.to_csv(os.path.join(save_path, arglist.filename), index=False)
+        df.to_csv(os.path.join(save_path, arglist.filename.replace(".csv", "_test.csv")), index=False)
         
         print(f"processed file saved at: {save_path}/{arglist.filename}")
 
