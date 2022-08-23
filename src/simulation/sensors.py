@@ -1,12 +1,8 @@
 import numpy as np
+from src.simulation.simulator import STATE_KEYS
 from src.data.geometry import compute_bounding_box
 from src.data.geometry import coord_transformation
 from src.data.geometry import wrap_angles
-
-STATE_KEYS = [
-    "x", "y", "vx", "vy", "ax", "ay", "psi_rad", 
-    "length", "width", "track_id"
-]
 
 class EgoSensor:
     def __init__(self, map_data, state_keys=STATE_KEYS):
