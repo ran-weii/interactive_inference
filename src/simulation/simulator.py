@@ -30,7 +30,8 @@ class InteractionSimulator:
         self.sensors = sensors
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
         self.observer = Observer(map_data, sensors, action_set)
-
+        self.reward_model = CarfollowingReward(self.observer.feature_names)
+        
         self.x_lim = map_data.x_lim
         self.y_lim = map_data.y_lim
         self.v_lim = 150. # velocity norm limit
@@ -128,7 +129,7 @@ class InteractionSimulator:
         })
 
         obs = self.observer.observe(sensor_obs)
-        rwd = None
+        rwd = self.reward_model(obs, action) 
         done = True if (self.t + 1) > self.T else False
         info = {}
         return obs, rwd, done, info
