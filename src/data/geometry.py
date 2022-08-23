@@ -58,6 +58,25 @@ def get_heading(x1, y1, x2, y2):
     delta_x = x2 - x1
     return np.arctan2(delta_y, delta_x)
 
+def compute_bounding_box(x, y, psi, length, width):
+    """ Return array with size=[..., 4, 2] """ 
+    sin = np.sin(psi)
+    cos = np.cos(psi)
+    l = 0.5 * length
+    w = 0.5 * width
+    
+    box = np.stack([
+        [l, w], # fl
+        [l, -w], #fr
+        [-l, -w], #rr
+        [-l, w] #rl
+    ])
+    box = np.stack([
+        x + box[:, 0] * cos - box[:, 1] * sin,
+        y + box[:, 0] * sin + box[:, 1] *cos
+    ]).T
+    return box
+    
 def closest_point_on_line(x, y, x_line, y_line):
     """ Find the closest point (a, b) to an external point (x, y) on a line segement
     
