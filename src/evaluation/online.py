@@ -1,4 +1,5 @@
 import torch
+from src.evaluation.offline import transform_action
 
 class Evaluator:
     def __init__(self):
@@ -22,8 +23,7 @@ class Evaluator:
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
 
-
-def eval_episode(env, agent, eps_id, max_steps=1000, callback=None):
+def eval_episode(env, agent, eps_id, max_steps=1000, discretizers=None, callback=None):
     """ Evaluate episode
     
     Args:
@@ -31,6 +31,7 @@ def eval_episode(env, agent, eps_id, max_steps=1000, callback=None):
         agent (Agent): agent class
         eps_id (int): episode id
         max_steps (int, optional): maximum number of steps
+        discretizers (list, optional): 
         callback (class, optional): controller callback
 
     Returns:
@@ -49,12 +50,13 @@ def eval_episode(env, agent, eps_id, max_steps=1000, callback=None):
         with torch.no_grad():
             ctl, _ = agent.choose_action(obs.to(agent.device))
             ctl = ctl.cpu().data.view(1, -1)
+            
+        if discretizers is not None:
+            ctl = transform_action(ctl, discretizers)
+            
         obs, r, done, _ = env.step(ctl)
         if done or t >= max_steps:
             break
         rewards.append(r)
     
-    sim_states = env._sim_states[:t+1]
-    sim_acts = env._sim_acts[:t+1]
-    track_data = {k:v[:t+1] for (k, v) in env._track_data.items()}
-    return sim_states, sim_acts, track_data, rewards
+    return env._data, rewards
