@@ -1,5 +1,6 @@
 import gym
 import numpy as np
+import torch
 from src.simulation.dynamics import ConstantAcceleration
 from src.simulation.reward import CarfollowingReward
 from src.simulation.observers import Observer
@@ -22,9 +23,10 @@ class InteractionSimulator:
         """
         self.state_keys = STATE_KEYS
         self.svt = svt_object.svt # stack vehicle trajectories per frame
+        self.ego_track_ids = svt_object.ego_track_ids # ego track id of each episode
         self.track_ids = svt_object.track_ids # track ids per frame
         self.t_range = svt_object.t_range # start and end time for each track
-        self.num_eps = len(self.t_range)
+        self.num_eps = len(self.ego_track_ids) # total number of episodes
 
         self.dynamics = ConstantAcceleration()
         self.sensors = sensors
@@ -37,21 +39,22 @@ class InteractionSimulator:
         self.v_lim = 150. # velocity norm limit
         self.a_lim = np.array([8, 3]).astype(np.float32) # acceleration limits
 
-    def reset(self, ego_id):
-        t_start = self.t_range[ego_id, 0]
-        t_end = self.t_range[ego_id, 1]
+    def reset(self, eps_id):
+        self.observer.reset()
+        t_start = self.t_range[eps_id, 0]
+        t_end = self.t_range[eps_id, 1]
         
         # episode properties
-        self.ego_id = ego_id
+        self.eps_svt = self.svt[t_start:t_end]
+        self.eps_ego_track_id = self.ego_track_ids[eps_id]
+        self.eps_track_ids = self.track_ids[t_start:t_end]
         self.t = 0
-        self.T = t_end - t_start
-        self.eps_svt = self.svt[t_start-1:t_end]
-        self.eps_track_id = self.track_ids[t_start-1:t_end]
+        self.T = len(self.eps_svt)
         self._data = []
 
         # get sim states
         ego_true_state, agent_states = self.get_sim_state(
-            self.eps_svt[self.t], self.eps_track_id[self.t], self.ego_id
+            self.eps_svt[self.t], self.eps_track_ids[self.t], self.eps_ego_track_id
         )
         self.ego_state = ego_true_state
         sim_state = {
@@ -80,7 +83,7 @@ class InteractionSimulator:
         self.t += 1
         
         # convert action to global
-        action = action.copy().flatten()
+        action = action.clone().flatten()
         action = np.clip(action, -self.a_lim, self.a_lim)
         psi_old = self.ego_state[6]
         action = self.observer.agent_control_to_global(action[0], action[1], psi_old)
@@ -106,7 +109,7 @@ class InteractionSimulator:
         
         # get sim states
         ego_true_state, agent_states = self.get_sim_state(
-            self.eps_svt[self.t], self.eps_track_id[self.t], self.ego_id
+            self.eps_svt[self.t], self.eps_track_ids[self.t], self.eps_ego_track_id
         )
         self.ego_state = next_ego_state 
         sim_state = {
@@ -130,20 +133,20 @@ class InteractionSimulator:
 
         obs = self.observer.observe(sensor_obs)
         rwd = self.reward_model(obs, action) 
-        done = True if (self.t + 1) > self.T else False
-        info = {}
+        done = True if (self.t + 1) >= self.T else False
+        info = self.observer.get_info()
         return obs, rwd, done, info
 
-    def get_sim_state(self, state, track_ids, ego_id):
-        ego_idx = np.where(track_ids == (ego_id + 1))[0][0]
-        agent_idx = np.where(track_ids != ego_id + 1)[0]
+    def get_sim_state(self, state, track_ids, ego_track_id):
+        ego_idx = np.where(track_ids == (ego_track_id))[0][0]
+        agent_idx = np.where(track_ids != ego_track_id)[0]
         ego_state = state[ego_idx]
         agent_states = state[agent_idx]
         return ego_state, agent_states
 
     def get_data_action(self):
         ego_state, _ = self.get_sim_state(
-            self.eps_svt[self.t], self.eps_track_id[self.t], self.ego_id
+            self.eps_svt[self.t], self.eps_track_ids[self.t], self.eps_ego_track_id
         )
         ax_id = self.state_keys.index("ax")
         ay_id = self.state_keys.index("ay")
@@ -153,6 +156,7 @@ class InteractionSimulator:
         ay = ego_state[ay_id]
         psi = ego_state[psi_id]
         action = self.observer.agent_control_to_local(ax, ay, psi)
+        action = torch.from_numpy(action).view(-1, 2).to(torch.float32)
         return action
 
 
