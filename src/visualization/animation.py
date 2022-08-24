@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from src.simulation.simulator import STATE_KEYS
 
 from src.visualization.map_vis import plot_ways
 
@@ -121,7 +122,7 @@ def polygon_xy_from_motionstate(x, y, psi, width, length):
 #         return self.assets
 
 
-def animate(map_data, sim_data, state_keys, title="", annot=False):
+def animate(map_data, sim_data, state_keys=STATE_KEYS, title="", annot=False):
     fig = plt.figure()
     ax = plt.axes()
     av = AnimationVisualizer(
@@ -135,7 +136,7 @@ def animate(map_data, sim_data, state_keys, title="", annot=False):
 
 class AnimationVisualizer:
     """ Animation visualizer with lead vehicle and lidar animation """
-    def __init__(self, ax, map_data, sim_data, state_keys, title="", annot=False):
+    def __init__(self, ax, map_data, sim_data, state_keys=STATE_KEYS, title="", annot=False):
         self.ax = ax
         self.title = title
         self.annot = annot
@@ -151,6 +152,7 @@ class AnimationVisualizer:
         self.id_id = state_keys.index("track_id")
         
         self.max_agents = max([d["sim_state"]["agent_states"].shape[0] for d in self.sim_data])
+        self.sensor_names = list(sim_data[0]["sensor_obs"].keys())
     
     @property
     def assets(self):
@@ -160,9 +162,12 @@ class AnimationVisualizer:
         plot_ways(self.map_data, self.ax, annot=False)
         self.ax.set_title(self.title)
         
-        # init car rects
+        # init assets
         carrects = []
         cartexts = []
+        sensor_lines = []
+
+        # init car rects
         for i in range(self.max_agents + 2):
             color = "tab:blue"
             alpha = 1
@@ -182,14 +187,15 @@ class AnimationVisualizer:
             cartexts.append(self.ax.text(0, 0, ""))
 
         # init lidar lines
-        sensor_lines = []
-        for i in range(len(self.sim_data[0]["sensor_pos"]["LidarSensor"])):
-            line, = self.ax.plot([0], [0], "g-")
-            sensor_lines.append(line)
+        if "LidarSensor" in self.sensor_names:
+            for i in range(len(self.sim_data[0]["sensor_pos"]["LidarSensor"])):
+                line, = self.ax.plot([0], [0], "g-")
+                sensor_lines.append(line)
         
         # init lv line
-        line, = self.ax.plot([0], [0], "ro", zorder=30)
-        sensor_lines.append(line)
+        if "LeadVehicleSensor" in self.sensor_names:
+            line, = self.ax.plot([0], [0], "ro", zorder=30)
+            sensor_lines.append(line)
 
         self._carrects = carrects
         self._cartexts = cartexts
@@ -245,13 +251,15 @@ class AnimationVisualizer:
             carrect.set_xy(rectpts)
         
         # plot lidar lines 
-        lidar_pos = self.sim_data[frame]["sensor_pos"]["LidarSensor"]
-        for i in range(len(lidar_pos)):
-            self._sensor_lines[i].set_data(
-                [x_ego, lidar_pos[i, 0]], [y_ego, lidar_pos[i, 1]]
-            )
+        if "LidarSensor" in self.sensor_names:
+            lidar_pos = self.sim_data[frame]["sensor_pos"]["LidarSensor"]
+            for i in range(len(lidar_pos)):
+                self._sensor_lines[i].set_data(
+                    [x_ego, lidar_pos[i, 0]], [y_ego, lidar_pos[i, 1]]
+                )
 
         # plot lv line 
-        lv_pos = self.sim_data[frame]["sensor_pos"]["LeadVehicleSensor"]
-        self._sensor_lines[i+1].set_data([lv_pos[0]], [lv_pos[1]])
+        if "LeadVehicleSensor" in self.sensor_names:
+            lv_pos = self.sim_data[frame]["sensor_pos"]["LeadVehicleSensor"]
+            self._sensor_lines[-1].set_data([lv_pos[0]], [lv_pos[1]])
         return self.assets
