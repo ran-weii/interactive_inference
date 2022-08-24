@@ -33,8 +33,8 @@ class Logger():
         # erase epoch stats
         self.epoch_dict = dict()
     
-    def log_test_episode(self, sim_states, track_data):
-        self.test_episodes.append({"sim_states": sim_states, "track_data": track_data})
+    def log_test_episode(self, sim_data):
+        self.test_episodes.append(sim_data)
 
 
 def train(
@@ -60,7 +60,7 @@ def train(
     start_time = time.time()
     
     model.reset()
-    eps_id = np.random.choice(np.arange(len(env.dataset)))
+    eps_id = np.random.choice(np.arange(env.num_eps))
     obs, eps_return, eps_len = env.reset(eps_id), 0, 0
     for t in range(total_steps):
         ctl = model.choose_action(obs)
@@ -82,7 +82,7 @@ def train(
             logger.push({"eps_len": eps_len})
             
             model.reset()
-            eps_id = np.random.choice(np.arange(len(env.dataset)))
+            eps_id = np.random.choice(np.arange(env.num_eps))
             obs, eps_return, eps_len = env.reset(eps_id), 0, 0
 
         # train model
@@ -104,18 +104,18 @@ def train(
             
             model.on_epoch_end()
             if t > update_after and epoch % log_test_every == 0:
-                eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
-                sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
-                logger.log_test_episode(sim_states, track_data)
+                eval_eps_id = np.random.choice(np.arange(env.num_eps))
+                sim_data, rewards = eval_episode(env, model.agent, eval_eps_id)
+                logger.log_test_episode(sim_data)
                 print(f"test id: {eval_eps_id}, mean reward: {np.mean(rewards)}\n")
             
             if t > update_after and callback is not None:
                 callback(model, logger)
     
     # final test episode
-    eval_eps_id = np.random.choice(np.arange(len(env.dataset)))
-    sim_states, sim_acts, track_data, rewards = eval_episode(env, model.agent, eval_eps_id)
-    logger.log_test_episode(sim_states, track_data)
+    eval_eps_id = np.random.choice(np.arange(env.num_eps))
+    sim_data, rewards = eval_episode(env, model.agent, eval_eps_id)
+    logger.log_test_episode(sim_data)
 
     # final callback
     if callback is not None:
