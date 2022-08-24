@@ -49,7 +49,7 @@ class InteractionSimulator:
         self.eps_ego_track_id = self.ego_track_ids[eps_id]
         self.eps_track_ids = self.track_ids[t_start:t_end]
         self.t = 0
-        self.T = len(self.eps_svt)
+        self.T = len(self.eps_svt) - 1
         self._data = []
 
         # get sim states
@@ -138,6 +138,7 @@ class InteractionSimulator:
         return obs, rwd, done, info
 
     def get_sim_state(self, state, track_ids, ego_track_id):
+        # print("ego", ego_track_id, track_ids)
         ego_idx = np.where(track_ids == (ego_track_id))[0][0]
         agent_idx = np.where(track_ids != ego_track_id)[0]
         ego_state = state[ego_idx]
