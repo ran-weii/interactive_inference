@@ -111,6 +111,7 @@ class Observer:
         
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
         self.ego_sensor_idx = self.sensor_names.index("EgoSensor")
+        self.lv_sensor_idx = self.sensor_names.index("LeadVehicleSensor")
         self.feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
         
         # self.fp_dist = fp_dist
@@ -118,12 +119,15 @@ class Observer:
         
         # self.reset()
     
-    # def reset(self):
-    #     self._ref_lane_id = None
-    #     self._ref_path = None
-    #     self._trajectory = None
-    #     self._s_condition_ego = None # [s, ds]
-    #     self._d_condition_ego = None # [d, dd]
+    def reset(self):
+        self._ref_path_id = None
+        self._ref_path = None
+        self._trajectory = None
+        self._s_condition_ego = None # [s, ds]
+        self._d_condition_ego = None # [d, dd]
+        self._lv_track_id = None
+        for sensor in self.sensors:
+            sensor.reset()
 
     def observe(self, obs):
         """ Convert environment observations into a vector 
@@ -146,10 +150,12 @@ class Observer:
         
         # update state
         ego_sensor = self.sensors[self.ego_sensor_idx]
+        lv_sensor = self.sensors[self.lv_sensor_idx]
         self._ref_path_id = ego_sensor._ref_path_id
         self._ref_path = ego_sensor._ref_path
         self._s_condition_ego = ego_sensor._s_condition_ego # [s, ds]
         self._d_condition_ego = ego_sensor._d_condition_ego # [d, dd]
+        self._lv_track_id = lv_sensor._lv_track_id
         return obs
     
     def agent_control_to_global(self, ax, ay, psi):

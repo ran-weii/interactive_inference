@@ -1,4 +1,5 @@
 import numpy as np
+from src.simulation.observers import calc_looming
 from src.simulation.simulator import STATE_KEYS
 from src.data.geometry import compute_bounding_box
 from src.data.geometry import coord_transformation
@@ -20,11 +21,14 @@ class EgoSensor:
         self.feature_names = [
             "ego_d", "ego_ds", "ego_dd", "ego_psi_error_r", "ego_kappa_r"
         ]
+        self.reset()
+    
+    def reset(self):
         self._ref_path_id = None
         self._ref_path = None
         self._s_condition_ego = None
         self._d_condition_ego = None
-    
+
     """ TODO: add far point features """
     def get_obs(self, ego_state, *args):
         """ Compute the following ego features
@@ -90,6 +94,9 @@ class LeadVehicleSensor:
         self.feature_names = [
             "lv_s_rel", "lv_ds_rel", "lv_inv_tau", "lv_d", "lv_dd"
         ]
+        self.reset()
+
+    def reset(self):
         self._ref_path_id = None
         self._ref_path = None
         self._lv_track_id = None
@@ -117,8 +124,8 @@ class LeadVehicleSensor:
         lv_measurements = np.array([self.max_range, 0., 0, 0., 0.]) 
         lv_pos = np.nan * np.ones(2)
 
-        x_ego, y_ego, vx_ego, vy_ego, psi_ego = (
-            ego_state[[self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, self.psi_idx]]
+        x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego = (
+            ego_state[[self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, self.psi_idx, self.l_idx]]
         )
         relative_states = agent_states - ego_state
 
@@ -144,12 +151,14 @@ class LeadVehicleSensor:
                 y_agent = agent_states[0, self.y_idx]
                 v_agent = np.sqrt(agent_states[0, self.vx_idx]**2 + agent_states[0, self.vy_idx]**2)
                 psi_agent = agent_states[0, self.psi_idx]
+                l_agent = agent_states[0, self.l_idx]
+                w_agent = agent_states[0, self.w_idx]
                 s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
                     x_agent, y_agent, v_agent, None, psi_agent, None, order=2
                 )
-                headway_offset = 0.5 * (ego_state[self.l_idx] + agent_states[0, self.l_idx])
                 lv_measurements = self.get_measurements(
-                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, headway_offset
+                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+                    l_ego, l_agent, w_agent
                 )
                 lv_pos = agent_states[0, :2]
             return lv_measurements, lv_pos
@@ -168,30 +177,53 @@ class LeadVehicleSensor:
             y_agent = agent_states[i, self.y_idx]
             v_agent = np.sqrt(agent_states[i, self.vx_idx]**2 + agent_states[i, self.vy_idx]**2)
             psi_agent = agent_states[i, self.psi_idx]
+            l_agent = agent_states[i, self.l_idx]
+            w_agent = agent_states[i, self.w_idx]
             s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
                 x_agent, y_agent, v_agent, None, psi_agent, None, order=2
             )
             headway_distance = s_condition_agent[0] - s_condition_ego[0]
             if headway_distance > 0 and headway_distance < headway_distance_lv:
                 headway_distance_lv = headway_distance
-                headway_offset = 0.5 * (ego_state[self.l_idx] + agent_states[i, self.l_idx])
                 lv_measurements = self.get_measurements(
-                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, headway_offset
+                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+                    l_ego, l_agent, w_agent
                 )
                 lv_pos = agent_states[i, :2]
                 self._lv_track_id = agent_states[i, self.id_idx]
         
         return lv_measurements, lv_pos 
 
-    def get_measurements(self, s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, headway_offset):
+    def get_measurements(
+        self, s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+        l_ego, l_agent, w_agent
+        ):
+        s_rel = s_condition_agent[0] - s_condition_ego[0]
+        ds_rel = s_condition_agent[1] - s_condition_ego[1]
         lv_measurements = np.zeros(5) 
-        headway_distance = s_condition_agent[0] - s_condition_ego[0]        
-        lv_measurements[0] = headway_distance - headway_offset
+        lv_measurements[0] = s_rel - l_agent / 2 - l_ego / 2
         lv_measurements[1] = s_condition_agent[1] - s_condition_ego[1]
-        lv_measurements[2] = lv_measurements[1] / (lv_measurements[0] + 1e-6)
+        lv_measurements[2] = calc_looming(s_rel, ds_rel, l_agent, w_agent, l_ego)
         lv_measurements[3] = d_condition_agent[0]
         lv_measurements[4] = d_condition_agent[1]
         return lv_measurements
+    
+    @staticmethod
+    def calc_looming(s_rel, ds_rel, l, w, l0, max_val=10):
+        """ Calculate longitudinal looming 
+        
+        Args:
+            s_rel (float): relative distance
+            ds_rel (float): relative velocity
+            l (float): lead vehicle length
+            w (float): lead vehicle width
+            l0 (float): ego vehicle length
+        """
+        x = s_rel - l/2 - l0/2
+        theta = 2 * np.arctan(0.5 * w / x)
+        theta_dot = w * ds_rel / (x**2 + w**2/4)
+        inv_tau = np.clip(theta_dot / (theta + 1e-6), -max_val, max_val)
+        return inv_tau
 
 
 class LidarSensor:
@@ -218,6 +250,9 @@ class LidarSensor:
             [f"lidar_range_{i}" for i in range(self.num_beams)],
             [f"lidar_range_rate_{i}" for i in range(self.num_beams)]
         ], axis=-1).flatten().tolist() 
+    
+    def reset(self):
+        pass 
     
     def get_obs(self, ego_state, agent_states):
         """ Compute lidar range and range-rate measurements at each angle offset
