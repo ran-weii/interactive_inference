@@ -8,9 +8,9 @@ class CarfollowingReward:
     """
     def __init__(self, feature_names):
         self.feature_names = feature_names
-        self.idx_d = [i for i, f in enumerate(self.feature_names) if f == "ego_d"][0]
-        self.idx_s_rel = [i for i, f in enumerate(self.feature_names) if f == "lv_s_rel"][0]
-        self.idx_loom = [i for i, f in enumerate(self.feature_names) if f == "lv_inv_tau"][0]
+        self.idx_d = feature_names.index("ego_d")
+        self.idx_s_rel = feature_names.index("lv_s_rel")
+        self.idx_loom = feature_names.index("lv_inv_tau")
 
         self.d_target = 0.
         self.min_s_rel = 3.
