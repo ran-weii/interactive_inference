@@ -6,7 +6,7 @@ from src.distributions.nn_models import MLP, PopArt
 from src.agents.legacy.baseline import FullyRecurrentAgent
 from src.evaluation.metrics import (
     mean_absolute_error, threshold_relative_error)
-from src.visualization.inspection import get_active_inference_parameters
+# from src.visualization.inspection import get_active_inference_parameters
 
 seed = 0
 
@@ -509,7 +509,7 @@ def test_embedded_agent():
 
 def test_vin_agent():
     torch.manual_seed(seed)
-    from src.agents.vin_agents import VINAgent
+    from src.agents.vin_agent import VINAgent
 
     state_dim = 10
     act_dim = 5
@@ -519,7 +519,7 @@ def test_vin_agent():
     horizon = 7
 
     agent = VINAgent(
-        state_dim, act_dim, obs_dim, ctl_dim, rank, horizon
+        state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=0.
     )
     agent.obs_model.batch_norm = False
     agent.ctl_model.batch_norm = False
@@ -532,27 +532,111 @@ def test_vin_agent():
     mask = (torch.randn(T, batch_size) < 1) * 1.
     
     # test static
-    [alpha_b, alpha_a], _ = agent(o, u)
-
+    [alpha_b, alpha_pi], _ = agent(o, u)
+    
     # test sequential
     prev_u = None
     hidden = None
+    
     alpha_b_seq = []
-    alpha_a_seq = []
+    alpha_pi_seq = []
     for t in range(T):
         hidden, _ = agent(o[t].unsqueeze(0), prev_u, hidden)
         hidden = [h[-1].detach() for h in hidden]
         prev_u = u[t].unsqueeze(0)
-
+        
         alpha_b_seq.append(hidden[0])
-        alpha_a_seq.append(hidden[1])
-
+        alpha_pi_seq.append(hidden[1])
+    
     alpha_b_seq = torch.stack(alpha_b_seq)
-    alpha_a_seq = torch.stack(alpha_a_seq)
+    alpha_pi_seq = torch.stack(alpha_pi_seq)
 
     assert torch.all(torch.isclose(alpha_b, alpha_b_seq, atol=1e-5))
+    assert torch.all(torch.isclose(alpha_pi, alpha_pi_seq, atol=1e-5))
+    print("test_vin_agent passed")
+
+def test_vin_agent_2():
+    torch.manual_seed(seed)
+    from src.agents.vin_agent import VINAgent2
+
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    rank = 32
+    horizon = 7
+
+    agent = VINAgent2(
+        state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=0.
+    )
+    agent.obs_model.batch_norm = False
+    agent.ctl_model.batch_norm = False
+
+    # synthetic data
+    T = 30
+    batch_size = 32
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.softmax(torch.randn(T, batch_size, ctl_dim), dim=-1)
+    mask = (torch.randn(T, batch_size) < 1) * 1.
+    
+    # test static
+    [alpha_a, alpha_b, alpha_pi], _ = agent(o, u)
+    
+    # test sequential
+    prev_u = None
+    hidden = None
+    
+    alpha_a_seq = []
+    alpha_b_seq = []
+    alpha_pi_seq = []
+    for t in range(T):
+        hidden, _ = agent(o[t].unsqueeze(0), prev_u, hidden)
+        hidden = [h[-1].detach() for h in hidden]
+        prev_u = u[t].unsqueeze(0)
+        
+        alpha_a_seq.append(hidden[0])
+        alpha_b_seq.append(hidden[1])
+        alpha_pi_seq.append(hidden[2])
+    
+    alpha_a_seq = torch.stack(alpha_a_seq)
+    alpha_b_seq = torch.stack(alpha_b_seq)
+    alpha_pi_seq = torch.stack(alpha_pi_seq)
+
     assert torch.all(torch.isclose(alpha_a, alpha_a_seq, atol=1e-5))
-    print("test_qdmp_agent passed")
+    assert torch.all(torch.isclose(alpha_b, alpha_b_seq, atol=1e-5))
+    assert torch.all(torch.isclose(alpha_pi, alpha_pi_seq, atol=1e-5))
+    print("test_vin_agent_2 passed")
+
+def test_hyper_vin_agent():
+    from src.agents.hyper_vin_agent import HyperVINAgent
+
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    rank = 15
+    horizon = 7
+    hyper_dim = 4
+    
+    hidden_dim = 64
+    num_hidden = 2
+    gru_layers = 1
+    activation = "relu"
+
+    agent = HyperVINAgent(
+        state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, hyper_dim,
+        hidden_dim, num_hidden, gru_layers, activation
+    )
+    print(agent)
+    
+    # synthetic data
+    T = 24
+    batch_size = 32
+    o = torch.randn(T, batch_size, obs_dim)
+    u = torch.randn(T, batch_size, ctl_dim)
+    
+    [alpha_b, alpha_a], _ = agent(o, u, sample_z=False)
+    print("test_hyper_vin_agent passed")
 
 if __name__ == "__main__":
     """ TODO: organize simple tests and complex tests """
@@ -570,3 +654,5 @@ if __name__ == "__main__":
     # test_factored_agent()
     # test_embedded_agent()
     test_vin_agent()
+    test_vin_agent_2()
+    # test_hyper_vin_agent()
