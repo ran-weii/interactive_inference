@@ -32,8 +32,10 @@ class InteractionSimulator:
         self.sensors = sensors
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
         self.observer = Observer(map_data, sensors, action_set)
-        self.reward_model = CarfollowingReward(self.observer.feature_names)
+        self.reward_model = CarfollowingReward(sensors)
         
+        self.ax_idx = self.state_keys.index("ax")
+        self.ay_idx = self.state_keys.index("ay")
         self.x_lim = map_data.x_lim
         self.y_lim = map_data.y_lim
         self.v_lim = 150. # velocity norm limit
@@ -72,6 +74,7 @@ class InteractionSimulator:
 
         self._data.append({
             "sim_state": sim_state, 
+            "sim_act": [],
             "sensor_obs": sensor_obs, 
             "sensor_pos": sensor_pos
         })
@@ -84,9 +87,10 @@ class InteractionSimulator:
         
         # convert action to global
         action = action.clone().flatten()
-        action = np.clip(action, -self.a_lim, self.a_lim)
+        action_local = action.clone().data.numpy().flatten()
         psi_old = self.ego_state[6]
-        action = self.observer.agent_control_to_global(action[0], action[1], psi_old)
+        action = self.observer.agent_control_to_global(action, psi_old)
+        action = np.clip(action, -self.a_lim, self.a_lim)
         
         # step ego state
         state = self.ego_state[:4].copy().reshape(4, 1)
@@ -117,6 +121,11 @@ class InteractionSimulator:
             "ego_true_state": ego_true_state,
             "agent_states": agent_states
         }
+        sim_act = {
+            "act": action.flatten(),
+            "true_act": ego_true_state[[self.ax_idx, self.ay_idx]].flatten(),
+            "act_local": action_local.flatten() # action in local coordinate
+        }
         
         # get sensor measurements
         sensor_obs, sensor_pos = {}, {}
@@ -125,20 +134,21 @@ class InteractionSimulator:
             sensor_obs[sensor_name] = s_obs
             sensor_pos[sensor_name] = s_pos
 
-        self._data.append({
-            "sim_state": sim_state, 
-            "sensor_obs": sensor_obs, 
-            "sensor_pos": sensor_pos
-        })
-
         obs = self.observer.observe(sensor_obs)
-        rwd = self.reward_model(obs, action) 
+        rwd = self.reward_model(sensor_obs, action) 
         done = True if (self.t + 1) >= self.T else False
         info = self.observer.get_info()
+
+        self._data.append({
+            "sim_state": sim_state, 
+            "sim_act": sim_act,
+            "sensor_obs": sensor_obs, 
+            "sensor_pos": sensor_pos,
+            "reward": rwd
+        })
         return obs, rwd, done, info
 
     def get_sim_state(self, state, track_ids, ego_track_id):
-        # print("ego", ego_track_id, track_ids)
         ego_idx = np.where(track_ids == (ego_track_id))[0][0]
         agent_idx = np.where(track_ids != ego_track_id)[0]
         ego_state = state[ego_idx]
