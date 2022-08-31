@@ -156,28 +156,27 @@ def get_ego_centric_df(df):
         )
     return df_ego
 
-def get_trajectory_segment_id(df):
-    """ Divide trajectory into segments based on change in lane_id and lead_track_id
+def get_trajectory_segment_id(df, colnames):
+    """ Divide trajectory into segments based on change in columns
     
     Args:
         df (pd.dataframe): track dataframe
+        colnames (list): list of colum names to detect change
     
     Returns:
         seg_id (np.array): segment episode id. Invalid segment id equals nan. dim=[len(df)]
     """
-    assert all(v in df.columns for v in ["track_id", "lead_track_id"])
-    
-    df = df.assign(seg_change=np.any(np.stack([
-        df.groupby("track_id")["lead_track_id"].fillna(-1).diff() != 0,
-        df.groupby("track_id")["lane_id"].fillna(-1).diff() != 0,
-    ]), axis=0))
+    col_diff = [
+        df.groupby("track_id")[colname].fillna(-1).diff() != 0 for colname in colnames
+    ]
+    df = df.assign(seg_change=np.any(np.stack(col_diff), axis=0))
     
     # get segment id per track
     track_seg_id = np.hstack([
         np.cumsum(1 * x[-1].values) for x in df.groupby("track_id")["seg_change"]
     ]).astype(float)
-    track_seg_id[df["lead_track_id"].isna()] = np.nan
-    track_seg_id[df["lane_id"].isna()] = np.nan
+    for colname in colnames:
+        track_seg_id[df[colname].isna()] = np.nan
     
     # get total segment id
     track_id = df["track_id"].values
@@ -186,6 +185,7 @@ def get_trajectory_segment_id(df):
         columns=["track_id", "track_seg_id"]
     )
     
+    # concat seg labels
     is_valid_seg = np.isnan(track_seg_id) == False
     seg_labels = (df_labels["track_id"].apply(str) + "_" + df_labels["track_seg_id"].apply(str)).values
     seg_labels[is_valid_seg == False] = np.nan
@@ -258,7 +258,7 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
         is_tail_merging (np.array): indicator array for tail merging
         cmat (np.array): confusion matrix
     """
-    assert all([v in df.columns for v in ["seg_id", "d", "dd", "ddd"]])
+    assert all([v in df.columns for v in ["seg_id", "ego_d", "ego_dd", "ddd"]])
     if "is_tail" in df.columns:
         df = df.drop(columns=["is_tail"])
     if "is_tail_merging" in df.columns:
@@ -273,7 +273,7 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
     
     def label_merging(x):
         is_merging = np.zeros(len(x))
-        if np.abs(x["d"].values[-1]) > max_d:
+        if np.abs(x["ego_d"].values[-1]) > max_d:
             is_merging = np.ones(len(x))
         return pd.DataFrame(is_merging)
     
@@ -283,7 +283,7 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
     df_tail["merging_labels"] = df_merging_labels[0]
     
     # logistic regression features
-    clf_inputs = np.abs(df_tail[["d", "dd", "ddd"]].values)
+    clf_inputs = np.abs(df_tail[["ego_d", "ego_dd", "ddd"]].values)
     clf_targets = df_tail["merging_labels"].values
     
     clf = LogisticRegression(class_weight=class_weight)
