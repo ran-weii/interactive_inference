@@ -242,11 +242,13 @@ def filter_segment_by_length(seg_id, min_seg_len):
     new_seg_len = df_seg_id["new_seg_len"].values
     return new_seg_id, new_seg_len
 
-def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
+def classify_tail_merging(df, feature_names, tail=True, p_tail=0.3, max_d=1.2, class_weight={0: 1, 1: 2}):
     """ Classify tail merging using logistic regression
     
     Args:
         df (pd.dataframe): track dataframe with fields ["seg_id", "d", "dd", "ddd"]
+        feature_names (list): list of variable names to be used as classification features. 
+            Features will be taken absolute values.
         tail (bool, optional): whether to classify the tail of an episode. If false classify head. Default=True
         p_tail (float, optional): proportion of trajectory to be considered tail. Default=0.3
         max_d (float, optional): maximum distance from centerline. Tail trajectories with the last step 
@@ -258,7 +260,7 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
         is_tail_merging (np.array): indicator array for tail merging
         cmat (np.array): confusion matrix
     """
-    assert all([v in df.columns for v in ["seg_id", "ego_d", "ego_dd", "ddd"]])
+    assert all([v in df.columns for v in ["seg_id", "ego_d"]])
     if "is_tail" in df.columns:
         df = df.drop(columns=["is_tail"])
     if "is_tail_merging" in df.columns:
@@ -273,7 +275,8 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
     
     def label_merging(x):
         is_merging = np.zeros(len(x))
-        if np.abs(x["ego_d"].values[-1]) > max_d:
+        idx_last = -1 if tail else 0
+        if np.abs(x["ego_d"].values[idx_last]) > max_d:
             is_merging = np.ones(len(x))
         return pd.DataFrame(is_merging)
     
@@ -283,7 +286,7 @@ def classify_tail_merging(df, tail=True, p_tail=0.3, max_d=1.2, class_weight={0:
     df_tail["merging_labels"] = df_merging_labels[0]
     
     # logistic regression features
-    clf_inputs = np.abs(df_tail[["ego_d", "ego_dd", "ddd"]].values)
+    clf_inputs = np.abs(df_tail[feature_names].values)
     clf_targets = df_tail["merging_labels"].values
     
     clf = LogisticRegression(class_weight=class_weight)
