@@ -232,11 +232,12 @@ class LidarSensor:
     https://github.com/travelbureau/RareSim/blob/master/simulator/Vehicle.py 
     https://github.com/sisl/InteractionSimulator/blob/main/intersim/envs/intersimple.py
     """
-    def __init__(self, num_beams=20, max_range=60., state_keys=STATE_KEYS):
+    def __init__(self, num_beams=20, max_range=60., max_angle=np.deg2rad(360/2), state_keys=STATE_KEYS):
         self.num_beams = num_beams
         self.max_range = max_range
         self.state_keys = state_keys
-        self.beam_angles = np.linspace(-np.pi, np.pi, num_beams + 1)[:-1]
+        self.beam_angles = np.linspace(-np.pi, np.pi, num_beams + 1)[1:]
+        self.valid_beam_idx = np.where((self.beam_angles >= -max_angle) & (self.beam_angles <= max_angle))[0]
 
         self.x_idx = state_keys.index("x")
         self.y_idx = state_keys.index("y")
@@ -323,6 +324,9 @@ class LidarSensor:
         lidar_measurements = np.stack([range_, range_rate], axis=-1)
         lidar_hit_pos = agent_states[ray_hit_idx, :2]
         lidar_hit_pos[num_hits == 0] = np.nan
+
+        lidar_measurements = lidar_measurements[self.valid_beam_idx]
+        lidar_hit_pos = lidar_hit_pos[self.valid_beam_idx]
         return lidar_measurements, lidar_hit_pos
 
     # def get_obs(self, ego_state, agent_state):
