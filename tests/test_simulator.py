@@ -222,33 +222,39 @@ def test_sensor_simulator():
     from src.simulation.simulator import InteractionSimulator
     from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
     from src.map_api.lanelet import MapReader
-    from src.visualization.animation import lidar_animate, save_animation
+    from src.visualization.animation import animate, save_animation
+    from src.data.data_filter import filter_segment_by_length
     
     filepath = os.path.join(data_path, "maps", scenario + ".osm")
     map_data = MapReader(cell_len=10)
     map_data.parse(filepath, verbose=True)
-
-    df_track = load_data(data_path, scenario, filename)
-    df_track = df_track.iloc[:5000]
     
-    svt_object = create_svt_from_df(df_track)
+    filename = "vehicle_tracks_007.csv"
+    df_track = load_data(data_path, scenario, filename)
+    df_track = df_track.iloc[:5000].reset_index(drop=True)
+    
+    svt_object = create_svt_from_df(df_track, eps_id_col="track_id")
     
     num_beams = 20
     ego_sensor = EgoSensor(map_data)
     lv_sensor = LeadVehicleSensor(map_data)
     lidar_sensor = LidarSensor(num_beams)
     sensors = [ego_sensor, lv_sensor, lidar_sensor]
+    # sensors = [ego_sensor, lv_sensor]
     
     action_set = ["ax_ego", "ay_ego"]
     env = InteractionSimulator(map_data, sensors, action_set, svt_object)
     
-    env.reset(3) # beam too sparse for eps 3
-    for t in range(env.T):
+    env.reset(1) # beam too sparse for eps 3
+    for t in range(env.T - 1):
         action = env.get_data_action()
-        obs, _, _, _ = env.step(action)
+        # action = torch.randn(1, 2)
+        obs, _, done, _ = env.step(action)
+        if done:
+            break
     
-    ani = lidar_animate(
-        map_data, env._data, env.state_keys, annot=True
+    ani = animate(
+        map_data, env._data, annot=True, axis_on=False
     )
     save_animation(ani, "/Users/hfml/Documents/test_lidar.mp4")
 
