@@ -83,7 +83,7 @@ def plot_time_series(x, feature_names, x_sample=None, num_cols=5, figsize=(6, 2)
     num_cols = min(f_dim, num_cols)
     num_rows = np.ceil(f_dim / num_cols).astype(int)
     fig, ax = plt.subplots(num_rows, num_cols, figsize=figsize)
-    if len(ax) == 1:
+    if num_cols * num_rows == 1:
         ax = [ax]
     else:
         ax = ax.flat
@@ -96,10 +96,10 @@ def plot_time_series(x, feature_names, x_sample=None, num_cols=5, figsize=(6, 2)
             std = x_sample[:, :, i].std(0)
             ax[i].plot(t, mu, label="pred")
             ax[i].fill_between(t, mu + std, mu - std, alpha=0.4)
-        # ax[i].legend()
         ax[i].set_xlabel("time")
         ax[i].set_title(feature_names[i])
-    ax[0].set_title(title)
+    
+    plt.suptitle(title)
     plt.tight_layout()
     return fig, ax
 
