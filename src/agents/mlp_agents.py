@@ -76,10 +76,13 @@ class MLPAgent(AbstractAgent):
             ctl *= self.tanh_transform.limits
         return ctl, logp
 
-    def choose_action_batch(self, o, u, sample_method="", num_samples=1):
+    def choose_action_batch(self, o, u, sample_method="", num_samples=1, return_hidden=False):
         mu, lv = self.forward(o, u)
         ctl = self.get_action_dist(mu, lv).rsample((num_samples,))
-        return ctl
+        if return_hidden:
+            return ctl, None, [mu, lv]
+        else:
+            return ctl, None
     
     def ctl_log_prob(self, o, u):
         mu, lv = self.forward(o, u)
