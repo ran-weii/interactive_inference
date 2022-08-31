@@ -14,6 +14,9 @@ class TensorVINAgent(AbstractAgent):
     """ Value iteraction network agent with 
     conditinal gaussian observation and discrete control models and 
     tensor QMDP hidden layer
+
+    This agent uses tensor qmdp layer to perform parallel planning and control
+    currently discrete actions are used
     """
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
@@ -118,8 +121,8 @@ class TensorVINAgent(AbstractAgent):
             hidden ([tuple[torch.tensor, torch.tensor], None], optional). initial hidden state.
         
         Returns:
-            alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
-            alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
+            alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, ctl_dim, state_dim]
+            alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, ctl_dim, act_dim]
         """
         b, a = None, None
         if hidden is not None:
@@ -160,8 +163,9 @@ class TensorVINAgent(AbstractAgent):
         # logp_u = torch.log(alpha_a + 1e-6)
         # logp_u = torch.sum(u_oh * logp_u, dim=-1).sum(-1)
         # loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
-        logp_u = kl_divergence(alpha_a, u_oh).sum(-1)
-        loss = torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+        # logp_u = kl_divergence(alpha_a, u_oh).sum(-1)
+        logp_u = kl_divergence(u_oh, alpha_a).sum(-1)
+        loss = torch.sum(logp_u * mask) / (mask.sum() + 1e-6)
 
         # compute stats
         nan_mask = mask.clone()
@@ -184,12 +188,21 @@ class TensorVINAgent(AbstractAgent):
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _ = hidden
-        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
-        loss = -torch.sum(logp_o * mask, dim=0) / (mask.sum(0) + 1e-6)
+        mask_ = mask[1:].unsqueeze(-1)
+        alpha_b, alpha_a = hidden
+
+        # one step transition
+        transition = self.rnn.transition
+        pi_transition = torch.einsum("nukij, tnuk -> tnuij", transition, alpha_a.data)
+        # poe_transition = pi_transition.prod(dim=-3) + self.rnn.eps
+        # poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
+        s_next = torch.einsum("tnuij, tnui -> tnuj", pi_transition, alpha_b)
+
+        logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:].unsqueeze(-2))
+        loss = -torch.sum(logp_o * mask_) / (mask_.sum() + 1e-6)
 
         # compute stats
-        nan_mask = mask.clone()
+        nan_mask = mask_.clone()
         nan_mask[nan_mask == 0] = torch.nan
         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
@@ -267,20 +280,21 @@ class TensorVINAgent(AbstractAgent):
         else:
             return u_sample, logp
 
-    # def predict(self, o, u, sample_method="ace", num_samples=1):
-    #     """ Offline prediction observations and control """
-    #     [alpha_b, alpha_a], _ = self.forward(o, u)
+    def predict(self, o, u, sample_method="ace", num_samples=1):
+        """ Offline prediction observations and control """
+        [alpha_b, alpha_a], _ = self.forward(o, u)
+        alpha_b_ = alpha_b.flatten(-3, -2)
+        
+        if sample_method == "bma":
+            o_sample = self.obs_model.bayesian_average(alpha_b)
 
-    #     if sample_method == "bma":
-    #         o_sample = self.obs_model.bayesian_average(alpha_b)
-    #         u_sample = self.ctl_model.bayesian_average(alpha_a)
-
-    #     else:
-    #         sample_mean = True if sample_method == "acm" else False
-    #         o_sample = self.obs_model.ancestral_sample(
-    #             alpha_b, num_samples, sample_mean, tau=0.1, hard=True
-    #         )
-    #         u_sample = self.ctl_model.ancestral_sample(
-    #             alpha_a, num_samples, sample_mean, tau=0.1, hard=True
-    #         )
-    #     return o_sample, u_sample
+        else:
+            sample_mean = True if sample_method == "acm" else False
+            o_sample = self.obs_model.ancestral_sample(
+                alpha_b_, num_samples, sample_mean, tau=0.1, hard=True
+            )
+            o_sample = torch.stack(torch.chunk(o_sample, self.ctl_dim, dim=-2)).flatten(0, 1)
+        
+        dist = torch_dist.Categorical(alpha_a)
+        u_sample = dist.sample((num_samples,))
+        return o_sample, u_sample

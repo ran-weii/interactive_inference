@@ -22,7 +22,7 @@ class TensorQMDPLayer(jit.ScriptModule):
         self.horizon = horizon
         self.eps = 1e-6
 
-        self.b0 = nn.Parameter(torch.randn(1, state_dim))
+        self.b0 = nn.Parameter(torch.randn(1, ctl_dim, state_dim))
         self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
         self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
         self.w = nn.Parameter(torch.randn(1, rank, ctl_dim, act_dim)) # action tensor 
@@ -58,21 +58,24 @@ class TensorQMDPLayer(jit.ScriptModule):
         
         Returns:
             q (torch.tensor): state q value. size=[horizon, batch_size, ctl_dim, act_dim, state_dim]
-        """        
+        """
         q = [torch.empty(0)] * (self.horizon)
         q[0] = reward
         for t in range(self.horizon - 1):
-            # compute controlled transition
-            pi = torch.softmax(q[t], dim=-2)
-            pi_transition = torch.einsum("nukij, nuki -> nuij", transition, pi)
+            # # compute controlled transition
+            # pi = torch.softmax(q[t], dim=-2)
+            # pi_transition = torch.einsum("nukij, nuki -> nuij", transition, pi)
             
-            poe_transition = pi_transition.prod(dim=-3) + self.eps
-            poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
+            # poe_transition = pi_transition.prod(dim=-3) + self.eps
+            # poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
             
-            v_next = torch.logsumexp(q[t], dim=[-2, -3], keepdim=False) # group max
-            ev_next = torch.einsum("nij, nj -> ni", poe_transition, v_next)
-            
-            q[t+1] = reward + ev_next.unsqueeze(-2).unsqueeze(-2)
+            # v_next = torch.logsumexp(q[t], dim=[-2, -3], keepdim=False) # group max
+            # ev_next = torch.einsum("nij, nj -> ni", poe_transition, v_next)
+            # q[t+1] = reward + ev_next.unsqueeze(-2).unsqueeze(-2)
+
+            v_next = torch.logsumexp(q[t], dim=-2, keepdim=True) # individual value
+            v_next = v_next.sum(-3, keepdim=True) # group value
+            q[t+1] = reward + torch.einsum("nukij, nukj -> nuki", transition, v_next)
         return torch.stack(q)
     
     @jit.script_method
@@ -80,7 +83,7 @@ class TensorQMDPLayer(jit.ScriptModule):
         """ Compute the belief action distribution 
         
         Args:
-            b (torch.tensor): current belief. size=[batch_size, state_dim]
+            b (torch.tensor): current belief. size=[batch_size, ctl_dim, state_dim]
             value (torch.tensor): state q value. size=[horizon, batch_size, act_dim, state_dim]
 
         Returns:
@@ -91,7 +94,7 @@ class TensorQMDPLayer(jit.ScriptModule):
         if tau.shape[0] != b.shape[0]:
             tau = torch.repeat_interleave(tau, b.shape[0], 0)
         
-        a = torch.softmax(torch.einsum("ni, hnuki -> hnuk", b, value), dim=-1)
+        a = torch.softmax(torch.einsum("nui, hnuki -> hnuk", b, value), dim=-1)
         a = torch.einsum("hnuk, nh -> nuk", a, tau)
         return a
 
@@ -110,11 +113,12 @@ class TensorQMDPLayer(jit.ScriptModule):
         """
         u_oh = F.one_hot(u.long(), num_classes=self.act_dim).float()
         pi_transition = torch.einsum("nukij, nuk -> nuij", transition, u_oh)
-        poe_transition = pi_transition.prod(dim=-3) + self.eps
-        poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
-        s_next = torch.einsum("nij, ni -> nj", poe_transition, b)
+        # poe_transition = pi_transition.prod(dim=-3) + self.eps
+        # poe_transition = poe_transition / poe_transition.sum(dim=-1, keepdim=True)
+        # s_next = torch.einsum("nij, ni -> nj", poe_transition, b)
+        s_next = torch.einsum("nuij, nui -> nuj", pi_transition, b)
         logp_s = torch.log(s_next + self.eps)
-        b_post = torch.softmax(logp_s + logp_o, dim=-1)
+        b_post = torch.softmax(logp_s + logp_o.unsqueeze(-2), dim=-1)
         return b_post
     
     # @jit.script_method
@@ -146,7 +150,7 @@ class TensorQMDPLayer(jit.ScriptModule):
     def init_hidden(self, logp_o: Tensor, value: Tensor) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self.b0, dim=-1)
         logp_s = torch.log(b0 + self.eps)
-        b = torch.softmax(logp_s + logp_o, dim=-1)
+        b = torch.softmax(logp_s + logp_o.unsqueeze(-2), dim=-1)
         a = self.plan(b, value)
         return b, a
     
@@ -164,8 +168,8 @@ class TensorQMDPLayer(jit.ScriptModule):
             a ([torch.tensor, None], optional): prior action. size=[batch_size, act_dim]
         
         Returns:
-            alpha_b (torch.tensor): sequence of posterior belief. size=[T, batch_size, state_dim]
-            alpha_a (torch.tensor): sequence of action prediction distribution. size=[T, batch_size, act_dim]
+            alpha_b (torch.tensor): sequence of posterior belief. size=[T, batch_size, ctl_dim, state_dim]
+            alpha_a (torch.tensor): sequence of action prediction distribution. size=[T, batch_size, ctl_dim, act_dim]
         """
         transition = self.transition
         value = self.compute_value(transition, reward)
