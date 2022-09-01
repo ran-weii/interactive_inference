@@ -14,8 +14,10 @@ from src.data.train_utils import load_data, count_parameters
 from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.map_api.lanelet import MapReader
+from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 from src.simulation.simulator import InteractionSimulator
-from src.simulation.observers import Observer
+from src.simulation.utils import create_svt_from_df
+# from src.simulation.observers import Observer
 
 # model imports
 from src.agents.vin_agent import VINAgent
@@ -54,6 +56,7 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="full", help="vin agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="vin agent control covariance, default=full")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
+    parser.add_argument("--use_lidar", type=bool_, default=False)
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of hyper factor, default=4")
     # trainer model args
     parser.add_argument("--algo", type=str, choices=["dac", "rdac"], default="dac", help="training algorithm, default=dac")
@@ -90,6 +93,7 @@ def parse_args():
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=1000., help="gradient clipping, default=1000.")
     parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
+    parser.add_argument("--grad_target", type=float, default=0., help="discriminator gradient target, default=0.")
     parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=1., help="observation penalty, default=1.")
     parser.add_argument("--verbose", type=bool_, default=False, help="whether to verbose during training, default=False")
@@ -149,7 +153,8 @@ class SaveCallback:
         
         # save test episode
         if len(logger.test_episodes) > self.num_test_eps:
-            ani = animate(self.map_data, logger.test_episodes[-1]["sim_states"], logger.test_episodes[-1]["track_data"])
+            # ani = animate(self.map_data, logger.test_episodes[-1]["sim_states"], logger.test_episodes[-1]["track_data"])
+            ani = animate(self.map_data, logger.test_episodes[-1], annot=True)
             save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.iter+1}_ani.mp4"))
             self.num_test_eps += 1
         
@@ -176,26 +181,36 @@ def main(arglist):
     torch.manual_seed(arglist.seed)
     
     df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, train=True)
-
+    df_track.loc[df_track["is_train"] != 1]["is_train"] = np.nan
+    
     # filter episode length
     df_track["eps_id"], df_track["eps_len"] = filter_segment_by_length(
         df_track["eps_id"].values, arglist.min_eps_len
     )
+
+    # build svt
+    svt = create_svt_from_df(df_track, eps_id_col="eps_id")
+
+    # load map
+    map_data = MapReader()
+    map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
     
-    """ TODO: add code to adapt input feature set """
-    # define feature set
-    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
-    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
-    feature_set = ego_features + relative_features
-    assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
-    assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
+    # init sensors
+    ego_sensor = EgoSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data)
+    lidar_sensor = LidarSensor()
+    sensors = [ego_sensor, lv_sensor]
+    if arglist.use_lidar:
+        sensors.append(lidar_sensor)
 
     # define action set
     if arglist.action_set == "frenet":
         action_set = ["dds", "ddd"]
     else:
         action_set = ["ax_ego", "ay_ego"]
-    assert set(action_set).issubset(set(ACTION_SET))
+
+    env = InteractionSimulator(map_data, sensors, action_set, svt)
+    feature_set = env.observer.feature_names
     
     # compute obs and ctl mean and variance stats
     obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
@@ -207,20 +222,15 @@ def main(arglist):
     ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
     ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
     ctl_lim = torch.max(torch.abs(ctl_max), torch.abs(ctl_min)) * 1.2
-
-    ego_dataset = EgoDataset(
-        df_track, train_labels_col="is_train", 
-        max_eps=arglist.max_data_eps, create_svt=arglist.create_svt, seed=arglist.seed
-    )
+    
+    obs_dim = len(feature_set)
+    ctl_dim = len(action_set)
+    print(f"obs_dim: {obs_dim}, ctl_dim: {ctl_dim}")
+    
     rel_dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train", 
         max_eps=arglist.max_data_eps, seed=arglist.seed
     )
-    obs_dim, ctl_dim = len(feature_set), 2 
-
-    print(f"feature set: {feature_set}")
-    print(f"action set: {action_set}")
-    print(f"data size: {len(ego_dataset)}")
     
     if arglist.agent == "mlp":
         agent = MLPAgent(
@@ -257,7 +267,7 @@ def main(arglist):
             buffer_size=arglist.buffer_size, batch_size=arglist.d_batch_size, 
             d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
             lr=arglist.lr_d, decay=arglist.decay, grad_clip=arglist.grad_clip, 
-            grad_penalty=arglist.grad_penalty, grad_target=0.
+            grad_penalty=arglist.grad_penalty, grad_target=arglist.grad_target
         )
         model.fill_real_buffer(rel_dataset)
     elif arglist.algo == "rdac":
@@ -293,17 +303,6 @@ def main(arglist):
     print(f"num parameters: {count_parameters(model)}")
     print(model)
     
-    # load map
-    map_data = MapReader()
-    map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
-    
-    # init simulator
-    observer = Observer(
-        map_data, ego_features=ego_features, relative_features=relative_features,
-        action_set=action_set
-    )
-    env = InteractionSimulator(ego_dataset, map_data, observer, max_eps_steps=arglist.max_eps_len)
-    
     callback = None
     if arglist.save:
         callback = SaveCallback(arglist, map_data, cp_history=cp_history)
@@ -318,12 +317,6 @@ def main(arglist):
         callback.save_model(model)
         if arglist.save_buffer:
             callback.save_buffer(model)
-    
-    # # test
-    # df_history = pd.DataFrame(logger.history)
-    # df_history = df_history.assign(train=1)
-    # fig_history, _ =plot_history(df_history, model.plot_keys, plot_std=True)
-    # plt.show()
 
 if __name__ == "__main__":
     arglist = parse_args()
