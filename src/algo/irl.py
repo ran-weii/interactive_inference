@@ -16,9 +16,10 @@ class BehaviorCloning(Model):
     """ Supervised behavior cloning algorithm 
     with truncated backpropagation through time
     """
-    def __init__(self, agent, bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(self, agent, bptt_steps=30, bc_penalty=1., obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
         self.bptt_steps = bptt_steps
+        self.bc_penalty = bc_penalty
         self.obs_penalty = obs_penalty
         self.lr = lr
         self.decay = decay
@@ -81,7 +82,7 @@ class BehaviorCloning(Model):
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
 
-                loss = torch.mean(loss_u + self.obs_penalty * loss_o)
+                loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o)
                     
                 if train:
                     loss.backward()
