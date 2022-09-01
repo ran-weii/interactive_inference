@@ -1,3 +1,4 @@
+from statistics import variance
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,21 +30,21 @@ class ConditionalGaussian(Model):
         self.use_tanh = use_tanh
         self.eps = 1e-6
         
-        self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
+        self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
         nn.init.normal_(self.mu, mean=0, std=1)
     
         if cov == "full":
-            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim))
             nn.init.normal_(self.lv, mean=0, std=0.01)
             nn.init.normal_(self.tl, mean=0, std=0.01)
         elif cov == "diag":
-            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim), requires_grad=True)
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
             nn.init.normal_(self.lv, mean=0, std=0.01)
         elif cov == "tied":
-            self.lv = nn.Parameter(torch.randn(1, 1, x_dim), requires_grad=True)
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
+            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
             nn.init.normal_(self.lv, mean=0, std=0.01)
 
         if batch_norm:
@@ -59,6 +60,24 @@ class ConditionalGaussian(Model):
         )
         return s
     
+    def init_params(self, means, covariances):
+        """ initialize mean and covariance, set bn momentum to 0 """
+        assert self.cov != "full"
+        assert means.shape[-2] == self.z_dim
+        means = torch.from_numpy(means).unsqueeze(0).to(torch.float32).to(self.device)
+        covs = torch.from_numpy(covariances).unsqueeze(0).to(torch.float32).to(self.device)
+        variances = torch.diagonal(covs, dim1=-2, dim2=-1) 
+        
+        self.mu.data = means
+        self.lv.data = 0.5 * torch.log(variances)
+
+        self.bn.moving_mean.data = torch.zeros_like(self.bn.moving_mean).to(self.device)
+        self.bn.moving_variance.data = torch.ones_like(self.bn.moving_variance).to(self.device)
+        
+        self.mu.requires_grad = False
+        self.lv.requires_grad = False
+        self.bn.momentum = 0.
+
     def init_batch_norm(self, mean, variance):
         self.bn.moving_mean.data = mean
         self.bn.moving_variance.data = variance
