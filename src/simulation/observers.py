@@ -201,7 +201,7 @@ class Observer:
 class CarfollowObserver:
     """ Car following observer """
     default_action_set = ["dds"]
-    def __init__(self, map_data, sensors, action_set=default_action_set, fp_dist=30.):
+    def __init__(self, map_data, sensors, action_set=default_action_set):
         """
         Args:
             map_data (MapReader): map data object
@@ -215,8 +215,10 @@ class CarfollowObserver:
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
         self.ego_sensor_idx = self.sensor_names.index("EgoSensor")
         self.lv_sensor_idx = self.sensor_names.index("LeadVehicleSensor")
-        self.feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
-        self.ds_idx = self.sensors[self.ego_sensor_idx].feature_names.index("ego_ds")
+        
+        feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
+        self.feature_names = ["ego_ds", "lv_s_rel", "lv_ds_rel", "lv_inv_tau"]
+        self.feature_idx = [feature_names.index(f) for f in self.feature_names]
         
         self.reset()
     
@@ -232,9 +234,8 @@ class CarfollowObserver:
 
     def observe(self, obs):
         """ Convert environment observations into a vector """
-        ego_obs = np.array(obs["EgoSensor"][self.ds_idx])
-        lv_obs = obs["LeadVehicleSensor"][:3]
-        obs = np.hstack([ego_obs, lv_obs]).reshape(1, -1)
+        obs = np.hstack([o.flatten() for o in obs.values()]).reshape(1, -1)
+        obs = obs[:, self.feature_idx]
         obs = torch.from_numpy(obs).to(torch.float32)        
         
         # update state
