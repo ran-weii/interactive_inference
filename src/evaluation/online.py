@@ -23,7 +23,7 @@ class Evaluator:
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
 
-def eval_episode(env, agent, eps_id, max_steps=1000, discretizers=None, callback=None):
+def eval_episode(env, agent, eps_id, max_steps=1000, callback=None):
     """ Evaluate episode
     
     Args:
@@ -31,7 +31,6 @@ def eval_episode(env, agent, eps_id, max_steps=1000, discretizers=None, callback
         agent (Agent): agent class
         eps_id (int): episode id
         max_steps (int, optional): maximum number of steps
-        discretizers (list, optional): 
         callback (class, optional): controller callback
 
     Returns:
@@ -43,20 +42,18 @@ def eval_episode(env, agent, eps_id, max_steps=1000, discretizers=None, callback
     agent.eval()
     agent.reset()
     obs = env.reset(eps_id)
+    env.observer.push(env._state, agent._state)
 
     rewards = []
     for t in range(max_steps):
-        """ TODO: figure out a better way to choose recurrent action """
         with torch.no_grad():
             ctl, _ = agent.choose_action(obs.to(agent.device))
             ctl = ctl.cpu().data.view(1, -1)
-            
-        if discretizers is not None:
-            ctl = transform_action(ctl, discretizers)
             
         obs, r, done, _ = env.step(ctl)
         if done or t >= max_steps:
             break
         rewards.append(r)
+        env.observer.push(env._state, agent._state)
     
-    return env._data, rewards
+    return env.observer._data, rewards
