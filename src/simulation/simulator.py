@@ -52,7 +52,6 @@ class InteractionSimulator:
         self.eps_track_ids = self.track_ids[t_start:t_end]
         self.t = 0
         self.T = len(self.eps_svt) - 1
-        self._data = []
 
         # get sim states
         ego_true_state, agent_states = self.get_sim_state(
@@ -64,6 +63,7 @@ class InteractionSimulator:
             "ego_true_state": ego_true_state,
             "agent_states": agent_states
         } 
+        sim_act = None
 
         # get sensor measurements
         sensor_obs, sensor_pos = {}, {}
@@ -71,15 +71,17 @@ class InteractionSimulator:
             s_obs, s_pos = sensor.get_obs(self.ego_state, agent_states) 
             sensor_obs[sensor_name] = s_obs
             sensor_pos[sensor_name] = s_pos
-
-        self._data.append({
-            "sim_state": sim_state, 
-            "sim_act": [],
-            "sensor_obs": sensor_obs, 
-            "sensor_pos": sensor_pos
-        })
         
         obs = self.observer.observe(sensor_obs)
+        rwd = None
+        
+        self._state = {
+            "sim_state": sim_state, 
+            "sim_act": sim_act,
+            "sensor_obs": sensor_obs, 
+            "sensor_pos": sensor_pos,
+            "rwd": rwd
+        }
         return obs
     
     def step(self, action):
@@ -138,14 +140,14 @@ class InteractionSimulator:
         rwd = self.reward_model(sensor_obs, action) 
         done = True if (self.t + 1) >= self.T else False
         info = self.observer.get_info()
-
-        self._data.append({
+        
+        self._state = {
             "sim_state": sim_state, 
             "sim_act": sim_act,
             "sensor_obs": sensor_obs, 
             "sensor_pos": sensor_pos,
             "reward": rwd
-        })
+        }
         return obs, rwd, done, info
 
     def get_sim_state(self, state, track_ids, ego_track_id):

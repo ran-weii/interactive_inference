@@ -113,6 +113,7 @@ class Observer:
         self._lv_track_id = None
         for sensor in self.sensors:
             sensor.reset()
+        self._data = []
 
     def observe(self, obs):
         """ Convert environment observations into a vector """
@@ -197,6 +198,9 @@ class Observer:
         }
         return info
 
+    def push(self, sim_state, agent_state):
+        self._data.append({"sim_state": sim_state.copy(), "agent_state": agent_state.copy()})
+
 
 class CarfollowObserver:
     """ Car following observer """
@@ -231,6 +235,7 @@ class CarfollowObserver:
         self._lv_track_id = None
         for sensor in self.sensors:
             sensor.reset()
+        self._data = []
 
     def observe(self, obs):
         """ Convert environment observations into a vector """
@@ -320,3 +325,6 @@ class CarfollowObserver:
             "d": self._d_condition_ego[0]
         }
         return info
+
+    def push(self, sim_state, agent_state):
+        self._data.append({"sim_state": sim_state.copy(), "agent_state": agent_state.copy()})
