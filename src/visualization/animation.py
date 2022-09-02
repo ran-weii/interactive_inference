@@ -54,7 +54,7 @@ class AnimationVisualizer:
         self.axis_on = axis_on
 
         self.map_data = map_data
-        self.sim_data = sim_data
+        self.sim_data = [d["sim_state"] for d in sim_data]
         
         self.x_id = state_keys.index("x")
         self.y_id = state_keys.index("y")
@@ -64,7 +64,7 @@ class AnimationVisualizer:
         self.id_id = state_keys.index("track_id")
         
         self.max_agents = max([d["sim_state"]["agent_states"].shape[0] for d in self.sim_data])
-        self.sensor_names = list(sim_data[0]["sensor_obs"].keys())
+        self.sensor_names = list(self.sim_data[0]["sensor_obs"].keys())
     
     @property
     def assets(self):
