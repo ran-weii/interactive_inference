@@ -14,7 +14,7 @@ class VINAgent(AbstractAgent):
     QMDP hidden layer
     """
     def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1,
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
         obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, detach=True
         ):
         super().__init__()
@@ -23,7 +23,8 @@ class VINAgent(AbstractAgent):
         self.obs_dim = obs_dim
         self.ctl_dim = ctl_dim
         self.horizon = horizon
-        self.alpha = alpha
+        self.alpha = alpha # obs entropy temperature
+        self.beta = beta # policy prior temperature
         self.detach = detach
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, detach=detach)
@@ -107,7 +108,7 @@ class VINAgent(AbstractAgent):
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1).data
         log_pi0 = torch.log(self.pi0 + 1e-6)
-        r = -kl - self.alpha * eh + log_pi0
+        r = -kl - self.alpha * eh + self.beta * log_pi0
         return r
 
     def forward(
