@@ -54,6 +54,11 @@ def poisson_pdf(gamma, K):
     pdf = torch.softmax(poisson_dist.log_prob(Ks), dim=-1)
     return pdf
 
+def entropy(p, eps=1e-6):
+    log_p = torch.log(p + eps)
+    ent = -torch.sum(p * log_p, dim=-1)
+    return ent
+    
 def kl_divergence(p, q, eps=1e-6):
     """ Discrete kl divergence """
     assert p.shape[-1] == q.shape[-1]
