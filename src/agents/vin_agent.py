@@ -51,9 +51,11 @@ class VINAgent(AbstractAgent):
     
     def reset(self):
         """ Reset internal states for online inference """
-        self._b = None # previous belief distribution
-        self._pi = None # previous policy/action prior
         self._prev_ctl = None
+        self._state = {
+            "b": None, # previous belief distribution
+            "pi": None, # previous policy/action prior
+        }
 
     @property
     def target_dist(self):
@@ -205,8 +207,9 @@ class VINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
+        b_t, pi_t = self._state["b"], self._state["pi"]
         [alpha_b, alpha_pi], _ = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [self._b, self._pi]
+            o.unsqueeze(0), self._prev_ctl, [b_t, pi_t]
         )
         b_t, pi_t = alpha_b[0], alpha_pi[0]
         
@@ -219,8 +222,9 @@ class VINAgent(AbstractAgent):
             ).squeeze(-3)
             logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
         
-        self._b, self._pi = b_t, pi_t
         self._prev_ctl = u_sample
+        self._state["b"] = b_t
+        self._state["pi"] = pi_t
         return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
@@ -284,7 +288,7 @@ class VINAgent2(AbstractAgent):
     QMDP hidden layer
     """
     def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1,
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
         obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, detach=True
         ):
         super().__init__()
@@ -294,6 +298,7 @@ class VINAgent2(AbstractAgent):
         self.ctl_dim = ctl_dim
         self.horizon = horizon
         self.alpha = alpha
+        self.beta = beta
         self.detach = detach
         
         self.rnn = QMDPLayer2(state_dim, act_dim, rank, horizon, detach=detach)
@@ -320,10 +325,12 @@ class VINAgent2(AbstractAgent):
     
     def reset(self):
         """ Reset internal states for online inference """
-        self._a = None # previous action distribution
-        self._b = None #
-        self._pi = None # previous policy/action prior
         self._prev_ctl = None
+        self._state = {
+            "a": None, # previous action distribution
+            "b": None, # previous belief distribution
+            "pi": None, # previous policy/action prior
+        }
 
     @property
     def target_dist(self):
@@ -378,7 +385,7 @@ class VINAgent2(AbstractAgent):
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1).data
         log_pi0 = torch.log(self.pi0 + 1e-6)
-        r = -kl - self.alpha * eh + log_pi0
+        r = -kl - self.alpha * eh + self.beta * log_pi0
         return r
 
     def forward(
@@ -448,7 +455,7 @@ class VINAgent2(AbstractAgent):
         
         # one step transition
         transition = self.rnn.transition
-        pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a)
+        pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a.data)
         s_next = torch.einsum("tnij, tni -> tnj", pi_transition, alpha_b)
         
         logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
@@ -476,8 +483,9 @@ class VINAgent2(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
+        a_t, b_t, pi_t = self._state["a"], self._state["b"], self._state["pi"]
         [alpha_a, alpha_b, alpha_pi], _ = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [self._a, self._b, self._pi]
+            o.unsqueeze(0), self._prev_ctl, [a_t, b_t, pi_t]
         )
         a_t, b_t, pi_t = alpha_a[0], alpha_b[0], alpha_pi[0]
         
@@ -490,8 +498,10 @@ class VINAgent2(AbstractAgent):
             ).squeeze(-3)
             logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
         
-        self._a, self._b, self._pi = a_t, b_t, pi_t
         self._prev_ctl = u_sample.sum(0)
+        self._state["a"] = a_t
+        self._state["b"] = b_t
+        self._state["pi"] = pi_t
         return u_sample, logp
     
     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
