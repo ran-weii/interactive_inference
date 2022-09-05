@@ -108,7 +108,8 @@ class QMDPLayer(jit.ScriptModule):
         Returns:
             a_post (torch.tensor): action posterior. size=[batch_size, act_dim]
         """ 
-        a_post = torch.softmax(self.a0 + logp_u, dim=-1)
+        # a_post = torch.softmax(self.a0 + logp_u, dim=-1)
+        a_post = torch.softmax(logp_u, dim=-1)
         return a_post
 
     @jit.script_method
@@ -344,10 +345,16 @@ class QMDPLayer2(jit.ScriptModule):
         alpha_b = [b] + [torch.empty(0)] * (T) # state posterior
         alpha_pi = [pi] + [torch.empty(0)] * (T) # policy/action prior
         for t in range(T):
-            alpha_a[t], alpha_b[t+1] = self.update_cell(
-                logp_o[t], logp_u[t], alpha_pi[t], alpha_b[t], transition
-            )
-            alpha_pi[t+1] = self.plan(alpha_b[t+1], value)
+            if self.detach:
+                alpha_a[t], alpha_b[t+1] = self.update_cell(
+                    logp_o[t], logp_u[t], alpha_pi[t].data, alpha_b[t], transition
+                )
+                alpha_pi[t+1] = self.plan(alpha_b[t+1].data, value)
+            else:
+                alpha_a[t], alpha_b[t+1] = self.update_cell(
+                    logp_o[t], logp_u[t], alpha_pi[t], alpha_b[t], transition
+                )
+                alpha_pi[t+1] = self.plan(alpha_b[t+1], value)
         
         alpha_a = torch.stack(alpha_a)
         alpha_b = torch.stack(alpha_b[1:])
