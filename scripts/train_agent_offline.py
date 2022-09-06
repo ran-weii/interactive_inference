@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 import torch 
 
 # setup imports
-from src.simulation.observers import ACTION_SET, FEATURE_SET, Observer
+from src.simulation.observers import ACTION_SET, FEATURE_SET
+from src.simulation.observers import Observer, CarfollowObserver
 from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
@@ -55,12 +56,16 @@ def parse_args():
     parser.add_argument("--ctl_cov", type=str, default="full", help="agent control covariance, default=full")
     parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
     parser.add_argument("--alpha", type=float, default=1., help="agent entropy reward coefficient, default=1.")
+    parser.add_argument("--beta", type=float, default=1., help="agent policy prior coefficient, default=1.")
+    parser.add_argument("--observer", type=str, choices=["full", "car_follow"], default="car_follow")
     parser.add_argument("--action_set", type=str, choices=["ego", "frenet", "disc"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     parser.add_argument("--use_lidar", type=bool_, default=False, help="whether to use lidar features, default=False")
-    parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     parser.add_argument("--detach", type=bool_, default=True, help="whether to detach dynamics model, default=True")
+    parser.add_argument("--discretize_ctl", type=bool_, default=True, help="whether to discretize ctl using gmm, default=True")
     parser.add_argument("--causal", type=bool_, default=True)
+    parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
+    parser.add_argument("--train_prior", type=bool_, default=False, help="whether to train hvin prior, default=False")
     # nn args
     parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
@@ -74,8 +79,9 @@ def parse_args():
     parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
     parser.add_argument("--d_steps", type=int, default=50, help="discriminator steps, default=50")
     parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
-    parser.add_argument("--bc_penalty", type=float, default=0., help="behavior cloning penalty, default=0.")
+    parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
+    parser.add_argument("--prior_penalty", type=float, default=0., help="prior penalty, default=0.")
     parser.add_argument("--cf_penalty", type=float, default=1., help="counterfactual action penalty for dagger. default=1.")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
@@ -169,10 +175,6 @@ def main(arglist):
         df_track.append(load_data(arglist.data_path, arglist.scenario, filename))
     df_track = pd.concat(df_track, axis=0)
     df_track = df_track.assign(eps_id=get_new_eps_id(df_track))
-     
-    # """ debug car following only """
-    # df_track.loc[df_track["is_head_merging"] == 1] = np.nan
-    # """ debug car following only """
 
     # filter episode length
     eps_id, df_track["eps_len"] = filter_segment_by_length(
@@ -195,15 +197,13 @@ def main(arglist):
     sensors = [ego_sensor, lv_sensor]
     if arglist.use_lidar:
         sensors.append(lidar_sensor)
-
-    observer = Observer(None, sensors, action_set)
+    
+    if arglist.observer == "full":
+        observer = Observer(None, sensors, action_set)
+    elif arglist.observer == "car_follow":
+        observer = CarfollowObserver(None, sensors)
     feature_set = observer.feature_names
-
-    # """ debug car following only """
-    # arglist.car_follow_only = True
-    # action_set = ["dds"]
-    # feature_set = ["ego_ds"] + lv_sensor.feature_names[:3]
-    # """ debug car follow only """
+    action_set = observer.action_set
     
     # compute obs and ctl mean and variance stats
     obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
@@ -234,29 +234,47 @@ def main(arglist):
         if arglist.causal:
             agent = VINAgent(
                 arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-                arglist.horizon, alpha=arglist.alpha, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+                arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
+                obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
                 use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
             )
         else:
             agent = VINAgent2(
                 arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-                arglist.horizon, alpha=arglist.alpha, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+                arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
+                obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
                 use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
             )
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+
+        if arglist.observer == "car_follow" and arglist.discretize_ctl:
+            # load ctl gmm parameters
+            with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
+                [ctl_means, ctl_covs] = pickle.load(f)
+
+            agent.ctl_model.init_params(ctl_means, ctl_covs)
+
     elif arglist.agent == "hvin":
         agent = HyperVINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, arglist.hyper_dim, arglist.hidden_dim, arglist.num_hidden, 
             arglist.gru_layers, arglist.activation,
             obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
-            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, train_prior=arglist.train_prior
         )
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+        
+        if arglist.observer == "car_follow" and arglist.discretize_ctl:
+            # load ctl gmm parameters
+            with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
+                [ctl_means, ctl_covs] = pickle.load(f)
+
+            agent.ctl_model.init_params(ctl_means, ctl_covs)
+
     elif arglist.agent == "idm":
         agent = IDM(std=ctl_var)
     elif arglist.agent == "mlp":
@@ -268,13 +286,13 @@ def main(arglist):
     # init trainer
     if arglist.algo == "bc":
         model = BehaviorCloning(
-            agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
+            agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
+            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     elif arglist.algo == "hbc":
         model = HyperBehaviorCloning(
-            agent, arglist.bptt_steps, arglist.obs_penalty, lr=arglist.lr, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
+            agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
+            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     elif arglist.algo == "rbc":
         model = ReverseBehaviorCloning(
@@ -291,7 +309,7 @@ def main(arglist):
         model.fill_buffer(train_loader.dataset)
     elif arglist.algo == "dag":
         # load expert
-        assert arglist.expert_exp_name is not "none"
+        assert arglist.expert_exp_name != "none"
         expert_path = os.path.join(arglist.exp_path, "agents", "mlp", arglist.expert_exp_name)
         
         with open(os.path.join(expert_path, "args.json"), "rb") as f:
