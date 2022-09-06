@@ -8,7 +8,7 @@ class IDM(AbstractAgent):
     """ Intelligent driver model """
     def __init__(
         self, feature_set, v0=120., tau=1.5, s0=2., a=0.5, b=3., 
-        k1=-0.01, k2=-0.2, std=torch.tensor([0.3, 0.003]).to(torch.float32)
+        k1=-0.01, k2=-0.2, std=torch.tensor([0.01, 0.0001]).to(torch.float32)
         ):
         """
         Args:
@@ -42,8 +42,9 @@ class IDM(AbstractAgent):
     
     def reset(self):
         self._b = None
+        self._state = {}
     
-    def compute_action_dist(self, o, u):
+    def compute_action_dist(self, o):
         """ Compute action distribution 
         
         Returns:
@@ -93,15 +94,14 @@ class IDM(AbstractAgent):
             mu (torch.tensor): action mean. size=[T, batch_size, 2]
             lv (torch.tensor): action log variance. size=[T, batch_size, 2]
         """
-        mu, lv = self.compute_action_dist(o, u)
+        mu, lv = self.compute_action_dist(o)
         return mu, lv
 
-    def choose_action(self, o, u, sample_method="ace", num_samples=1):
+    def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
         
         Args:
             o (torch.tensor): observation sequence. size[batch_size, obs_dim]
-            u (torch.tensor): control sequence. size[batch_size, ctl_dim]
             sample_method (str, optional): sampling method. 
                 choices=["bma", "ace", "ace"]. Default="ace"
             num_samples (int, optional): number of samples to draw. Default=1
@@ -109,10 +109,11 @@ class IDM(AbstractAgent):
         Returns:
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
         """
-        mu, lv = self.compute_action_dist(o, u)
+        mu, lv = self.compute_action_dist(o)
         mu = mu.clip(-5., 5.)
         a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
-        return a
+        logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a)
+        return a, logp
 
     def act_loss(self, o, u, mask, forward_out):
         mu, lv = forward_out
