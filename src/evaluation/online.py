@@ -23,25 +23,24 @@ class Evaluator:
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
 
-def eval_episode(env, agent, eps_id, max_steps=1000, callback=None):
+def eval_episode(env, agent, eps_id, max_steps=1000, playback=False):
     """ Evaluate episode
     
     Args:
         env (Env): gym style simulator
         agent (Agent): agent class
         eps_id (int): episode id
-        max_steps (int, optional): maximum number of steps
-        callback (class, optional): controller callback
+        max_steps (int, optional): maximum number of steps. Default=1000
+        playback (bool, optional): whether to playback data ego trajectory. Default=False
 
     Returns:
         sim_states (np.array): simulated states [T, num_agents, 5]
         sim_acts (np.array): simulated actions [T, 2]
         track_data (dict): recorded track data
-        callback (class): updated callback. return if callback is not None
     """
     agent.eval()
     agent.reset()
-    obs = env.reset(eps_id)
+    obs = env.reset(eps_id, playback)
     env.observer.push(env._state, agent._state)
 
     rewards = []
