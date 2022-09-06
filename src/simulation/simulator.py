@@ -41,7 +41,8 @@ class InteractionSimulator:
         self.v_lim = 150. # velocity norm limit
         self.a_lim = np.array([8, 3]).astype(np.float32) # acceleration limits
 
-    def reset(self, eps_id):
+    def reset(self, eps_id, playback=False):
+        self.playback = playback
         self.observer.reset()
         t_start = self.t_range[eps_id, 0]
         t_end = self.t_range[eps_id, 1]
@@ -93,6 +94,11 @@ class InteractionSimulator:
         psi_old = self.ego_state[6]
         action = self.observer.agent_control_to_global(action, psi_old)
         action = np.clip(action, -self.a_lim, self.a_lim)
+
+        if self.playback:
+            ax_idx = self.state_keys.index("ax")
+            ay_idx = self.state_keys.index("ay")
+            action = self._state["sim_state"]["ego_true_state"][[ax_idx, ay_idx]].copy()
         
         # step ego state
         state = self.ego_state[:4].copy().reshape(4, 1)
