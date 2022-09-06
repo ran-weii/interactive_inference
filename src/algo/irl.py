@@ -16,11 +16,13 @@ class BehaviorCloning(Model):
     """ Supervised behavior cloning algorithm 
     with truncated backpropagation through time
     """
-    def __init__(self, agent, bptt_steps=30, bc_penalty=1., obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(self, agent, bptt_steps=30, bc_penalty=1., obs_penalty=0., prior_penalty=0., lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
+        assert agent.__class__.__name__ == "VINAgent"
         self.bptt_steps = bptt_steps
         self.bc_penalty = bc_penalty
         self.obs_penalty = obs_penalty
+        self.prior_penalty = prior_penalty
         self.lr = lr
         self.decay = decay
         self.grad_clip = grad_clip
@@ -44,6 +46,22 @@ class BehaviorCloning(Model):
             train_stats["loss_o"], test_stats["loss_o"]
         )
         return s
+    
+    def compute_prior_loss(self):
+        # obs variance
+        obs_bn_vars = self.agent.obs_model.bn.moving_variance
+        obs_vars = self.agent.obs_model.variance().squeeze(0)
+        obs_vars = obs_vars / obs_bn_vars
+        obs_loss = torch.sum(obs_vars ** 2)
+
+        # ctl variance
+        ctl_bn_vars = self.agent.ctl_model.bn.moving_variance
+        ctl_vars = self.agent.ctl_model.variance().squeeze(0)
+        ctl_vars = ctl_vars / ctl_bn_vars
+        ctl_loss = torch.sum(ctl_vars ** 2)
+        
+        loss = obs_loss + ctl_loss 
+        return loss
 
     def run_epoch(self, loader, train=True):
         if train:
@@ -81,8 +99,9 @@ class BehaviorCloning(Model):
                 
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
-
-                loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o)
+                
+                loss_prior = self.compute_prior_loss()
+                loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o) + self.prior_penalty * loss_prior
                     
                 if train:
                     loss.backward()
@@ -103,10 +122,13 @@ class BehaviorCloning(Model):
 
         
 class HyperBehaviorCloning(Model):
-    def __init__(self, agent, bptt_steps=30, obs_penalty=0, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(self, agent, bptt_steps=30, bc_penalty=1., obs_penalty=0., prior_penalty=0., lr=1e-3, decay=0, grad_clip=None):
         super().__init__()
+        assert agent.__class__.__name__ == "HyperVINAgent"
         self.bptt_steps = bptt_steps
+        self.bc_penalty = bc_penalty
         self.obs_penalty = obs_penalty
+        self.prior_penalty = prior_penalty
         self.lr = lr
         self.decay = decay
         self.grad_clip = grad_clip
@@ -120,8 +142,8 @@ class HyperBehaviorCloning(Model):
     
     def __repr__(self):
         s_agent = self.agent.__repr__()
-        s = "{}(bptt_steps={}, obs_penalty={}, lr={}, decay={}, grad_clip={},\nagent={})".format(
-            self.__class__.__name__, self.bptt_steps, self.obs_penalty, self.lr, 
+        s = "{}(bptt_steps={}, bc_penalty={}, obs_penalty={}, prior_penalty={}, lr={}, decay={}, grad_clip={},\nagent={})".format(
+            self.__class__.__name__, self.bptt_steps, self.bc_penalty, self.obs_penalty, self.prior_penalty, self.lr, 
             self.decay, self.grad_clip, s_agent
         )
         return s
@@ -132,6 +154,25 @@ class HyperBehaviorCloning(Model):
             train_stats["loss_o"], test_stats["loss_o"]
         )
         return s
+    
+    def compute_prior_loss(self, hidden):
+        _, _, z, _ = hidden
+        
+        # obs variance
+        obs_bn_vars = self.agent.obs_model.bn.moving_variance
+        obs_vars = self.agent.obs_model.variance(z).squeeze(0)
+        # obs_vars = self.agent.obs_model.variance().squeeze(0)
+        obs_vars = obs_vars / obs_bn_vars
+        obs_loss = torch.sum(obs_vars ** 2)
+
+        # ctl variance
+        ctl_bn_vars = self.agent.ctl_model.bn.moving_variance
+        ctl_vars = self.agent.ctl_model.variance().squeeze(0)
+        ctl_vars = ctl_vars / ctl_bn_vars
+        ctl_loss = torch.sum(ctl_vars ** 2)
+        
+        loss = obs_loss + ctl_loss 
+        return loss
 
     def run_epoch(self, loader, train=True):
         if train:
@@ -173,10 +214,14 @@ class HyperBehaviorCloning(Model):
                     out, hidden = self.agent(o_t, u_t_cat, hidden, theta)
                 u_t_prev = u_t.clone()
                 
-                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
-                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
+                # add uniform noise to observation mask
+                eps = 1 + torch.rand(1, o_t.shape[1]).uniform_(-0.2, 0.2)
 
-                loss = torch.mean(loss_u + self.obs_penalty * loss_o)
+                loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
+                loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t * eps, hidden)
+                
+                loss_prior = self.compute_prior_loss(hidden)
+                loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o) + self.prior_penalty * loss_prior
                     
                 if train:
                     loss.backward()
