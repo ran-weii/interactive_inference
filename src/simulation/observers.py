@@ -85,22 +85,32 @@ def calc_looming(s_rel, ds_rel, l, w, l0):
 
 class Observer:
     """ Observer object that computes features in the frenet frame """
-    default_action_set = ["ax_ego", "ay_ego"]
-    def __init__(self, map_data, sensors, action_set=default_action_set):
+    default_feature_set = [
+        "ego_d", "ego_ds", "ego_dd", "ego_psi_error_r", "ego_kappa_r",
+        "lv_s_rel", "lv_ds_rel", "lv_inv_tau", "lv_d", "lv_dd"
+    ]
+    default_action_set = ["dds", "ddd"]
+    def __init__(self, map_data, sensors, feature_set=default_feature_set, action_set=default_action_set):
         """
         Args:
             map_data (MapReader): map data object
             sensors (list): list of sensor objects
-            action_set (list): list of action variables
+            feature_set (list): list of feature variable names. Default=ego and lead vehicle sensor feature names
+            action_set (list): list of action variable names. Default=["dds", "ddd"]
         """
         self.map_data = map_data
         self.sensors = sensors
+        self.feature_set = feature_set
         self.action_set = action_set
         
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
+        assert "EgoSensor" in self.sensor_names
+        assert "LeadVehicleSensor" in self.sensor_names
         self.ego_sensor_idx = self.sensor_names.index("EgoSensor")
         self.lv_sensor_idx = self.sensor_names.index("LeadVehicleSensor")
-        self.feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
+        
+        sensor_feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
+        self.feature_idx = [sensor_feature_names.index(f) for f in self.feature_set]
         
         self.reset()
     
@@ -118,6 +128,7 @@ class Observer:
     def observe(self, obs):
         """ Convert environment observations into a vector """
         obs = np.hstack([o.flatten() for o in obs.values()]).reshape(1, -1)
+        obs = obs[:, self.feature_idx]
         obs = torch.from_numpy(obs).to(torch.float32)
         
         # update state
@@ -143,6 +154,8 @@ class Observer:
         if self.action_set[0] == "ax_ego":
             ax_ego, ay_ego = coord_transformation(ax, ay, None, None, theta=psi)
             act = np.array([ax_ego, ay_ego])
+        else:
+            raise NotImplementedError
         return act
 
     def ego_action_to_global(self, ax, ay, psi):
@@ -204,25 +217,29 @@ class Observer:
 
 class CarfollowObserver:
     """ Car following observer """
+    default_feature_set = ["ego_ds", "lv_s_rel", "lv_ds_rel"]
     default_action_set = ["dds"]
-    def __init__(self, map_data, sensors, action_set=default_action_set):
+    def __init__(self, map_data, sensors, feature_set=default_feature_set, action_set=default_action_set):
         """
         Args:
             map_data (MapReader): map data object
             sensors (list): list of sensor objects
-            action_set (list): list of action variables
+            feature_set (list): list of feature variable names
+            action_set (list): list of action variable names
         """
         self.map_data = map_data
         self.sensors = sensors
+        self.feature_set = feature_set
         self.action_set = action_set
         
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
+        assert "EgoSensor" in self.sensor_names
+        assert "LeadVehicleSensor" in self.sensor_names
         self.ego_sensor_idx = self.sensor_names.index("EgoSensor")
         self.lv_sensor_idx = self.sensor_names.index("LeadVehicleSensor")
         
-        feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
-        self.feature_names = ["ego_ds", "lv_s_rel", "lv_ds_rel", "lv_inv_tau"]
-        self.feature_idx = [feature_names.index(f) for f in self.feature_names]
+        sensor_feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
+        self.feature_idx = [sensor_feature_names.index(f) for f in self.feature_set]
         
         self.reset()
     
@@ -255,7 +272,7 @@ class CarfollowObserver:
     
     def agent_control_to_global(self, act, psi):
         """ Convert agent control to global frame """  
-        # parameters for feedback controller
+        # parameters for feedback lateral controller
         k1=-0.01
         k2=-0.2
 
