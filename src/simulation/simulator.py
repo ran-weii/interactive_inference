@@ -3,7 +3,6 @@ import numpy as np
 import torch
 from src.simulation.dynamics import ConstantAcceleration
 from src.simulation.reward import CarfollowingReward
-from src.simulation.observers import Observer
 from src.data.geometry import clip_norm
 
 STATE_KEYS = [
@@ -12,13 +11,12 @@ STATE_KEYS = [
 ]
 
 class InteractionSimulator:
-    """ Temporary simulation used to test lidar observation """
-    def __init__(self, map_data, sensors, action_set, svt_object):
+    def __init__(self, map_data, sensors, observer, svt_object):
         """
         Args:
             map_data (MapReader):
             sensor (List): list of sensors
-            action_set (List): list of action names
+            observer (Observer): observer object
             svt_object (VehicleTrajectories):
         """
         self.state_keys = STATE_KEYS
@@ -30,9 +28,9 @@ class InteractionSimulator:
 
         self.dynamics = ConstantAcceleration()
         self.sensors = sensors
-        self.sensor_names = [s.__class__.__name__ for s in self.sensors]
-        self.observer = Observer(map_data, sensors, action_set)
+        self.observer = observer
         self.reward_model = CarfollowingReward(sensors)
+        self.sensor_names = [s.__class__.__name__ for s in self.sensors]
         
         self.ax_idx = self.state_keys.index("ax")
         self.ay_idx = self.state_keys.index("ay")
