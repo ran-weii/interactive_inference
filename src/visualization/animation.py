@@ -16,7 +16,7 @@ def polygon_xy_from_motionstate(x, y, psi, width, length):
     upleft = (x - length / 2., y + width / 2.)
     return rotate_around_center(np.array([lowleft, lowright, upright, upleft]), np.array([x, y]), yaw=psi)
 
-def animate(map_data, sim_data, state_keys=STATE_KEYS, title="", annot=False, axis_on=True):
+def animate(map_data, sim_data, state_keys=STATE_KEYS, title="", plot_lidar=False, annot=False, axis_on=True):
     """
     Args:
         map_data (MapReader): map reader object.
@@ -29,7 +29,8 @@ def animate(map_data, sim_data, state_keys=STATE_KEYS, title="", annot=False, ax
     fig = plt.figure()
     ax = plt.axes()
     av = AnimationVisualizer(
-        ax, map_data, sim_data, state_keys, title=title, annot=annot, axis_on=axis_on
+        ax, map_data, sim_data, state_keys, title=title, 
+        plot_lidar=plot_lidar, annot=annot, axis_on=axis_on
     )
     ani = animation.FuncAnimation(
         fig, av.update, frames=len(sim_data),
@@ -47,11 +48,12 @@ class AnimationVisualizer:
     
         Lead vehicle is drawn with a red dot. Lidar beams are drawn with greed line
     """
-    def __init__(self, ax, map_data, sim_data, state_keys=STATE_KEYS, title="", annot=False, axis_on=True):
+    def __init__(self, ax, map_data, sim_data, state_keys=STATE_KEYS, title="", plot_lidar=False, annot=False, axis_on=True):
         self.ax = ax
         self.title = title
         self.annot = annot
         self.axis_on = axis_on
+        self.plot_lidar = plot_lidar
 
         self.map_data = map_data
         self.sim_data = [d["sim_state"] for d in sim_data]
@@ -99,7 +101,7 @@ class AnimationVisualizer:
             cartexts.append(self.ax.text(0, 0, ""))
 
         # init lidar lines
-        if "LidarSensor" in self.sensor_names:
+        if "LidarSensor" in self.sensor_names and self.plot_lidar:
             for i in range(len(self.sim_data[0]["sensor_pos"]["LidarSensor"])):
                 line, = self.ax.plot([0], [0], "g-")
                 sensor_lines.append(line)
@@ -168,7 +170,7 @@ class AnimationVisualizer:
             carrect.set_xy(rectpts)
         
         # plot lidar lines 
-        if "LidarSensor" in self.sensor_names:
+        if "LidarSensor" in self.sensor_names and self.plot_lidar:
             lidar_pos = self.sim_data[frame]["sensor_pos"]["LidarSensor"]
             for i in range(len(lidar_pos)):
                 self._sensor_lines[i].set_data(
