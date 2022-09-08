@@ -72,8 +72,7 @@ class HyperVINAgent(AbstractAgent):
         self._state = {
             "b": None, # previous belief distribution
             "pi": None, # previous policy/action prior
-            "z": None, # hyper vector
-            "ent": None, # hyper posterior entropy
+            "z": self.sample_z(), # hyper vector
         }
 
     @property
@@ -143,7 +142,7 @@ class HyperVINAgent(AbstractAgent):
         c = self.compute_target_dist(z)
         pi0 = self.compute_prior_policy(z)
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
-        eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1).data
+        eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
         log_pi0 = torch.log(pi0 + 1e-6)
         r = -kl - self.alpha * eh + self.beta * log_pi0
         return r
@@ -166,17 +165,16 @@ class HyperVINAgent(AbstractAgent):
             self.mu, rectify(self.lv)
         ).rsample(sample_shape)
         return z
-
+    
     def forward(
-        self, o: Tensor, u: Union[Tensor, None], 
-        hidden: Optional[Union[Tuple[Tensor, Tensor, Tensor, Tensor], None]]=None,
-        sample_z: Optional[bool]=False
+        self, o: Tensor, u: Union[Tensor, None], z: Tensor,
+        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None,
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-            hidden ([tuple[torch.tensor] * 4, None], optional). initial hidden state.
+            hidden ([tuple[torch.tensor] * 2, None], optional). initial hidden state.
             sample_z (bool, optional): whether to sample z from prior. If not encode observations. 
         
         Returns:
@@ -186,25 +184,55 @@ class HyperVINAgent(AbstractAgent):
             ent (torch.tensor): variational distribution entropy. size=[batch_size, 1]
         """
         batch_size = o.shape[1]
-        b, pi, z, ent = None, None, None, None
+        b, pi = None, None
         if hidden is not None:
-            b, pi, z, ent = hidden
-        
-        if z is None:
-            if sample_z:
-                z = self.sample_z()
-            else:
-                z, ent = self.encode(o, u)
-        z = z.view(-1, self.hyper_dim)
+            b, pi = hidden
 
         logp_o = self.obs_model.log_prob(o, z)
         # logp_o = self.obs_model.log_prob(o)
         logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward(z)
         alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, z, b)
-        return [alpha_b, alpha_pi], [alpha_b, alpha_pi, z, ent] # second tuple used in bptt
+        return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
     
-    def act_loss(self, o, u, mask, hidden):
+    # def forward(
+    #     self, o: Tensor, u: Union[Tensor, None], 
+    #     hidden: Optional[Union[Tuple[Tensor, Tensor, Tensor, Tensor], None]]=None,
+    #     sample_z: Optional[bool]=False
+    #     ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
+    #     """ 
+    #     Args:
+    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+    #         hidden ([tuple[torch.tensor] * 4, None], optional). initial hidden state.
+    #         sample_z (bool, optional): whether to sample z from prior. If not encode observations. 
+        
+    #     Returns:
+    #         alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
+    #         alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
+    #         z (torch.tensor): agent parameter vector. size=[batch_size, num_params]
+    #         ent (torch.tensor): variational distribution entropy. size=[batch_size, 1]
+    #     """
+    #     batch_size = o.shape[1]
+    #     b, pi, z, ent = None, None, None, None
+    #     if hidden is not None:
+    #         b, pi, z, ent = hidden
+        
+    #     if z is None:
+    #         if sample_z:
+    #             z = self.sample_z()
+    #         else:
+    #             z, ent = self.encode(o, u)
+    #     z = z.view(-1, self.hyper_dim)
+
+    #     logp_o = self.obs_model.log_prob(o, z)
+    #     # logp_o = self.obs_model.log_prob(o)
+    #     logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
+    #     reward = self.compute_reward(z)
+    #     alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, z, b)
+    #     return [alpha_b, alpha_pi], [alpha_b, alpha_pi, z, ent] # second tuple used in bptt
+    
+    def act_loss(self, o, u, z, mask, hidden):
         """ Compute action loss 
         
         Args:
@@ -217,9 +245,10 @@ class HyperVINAgent(AbstractAgent):
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        _, alpha_pi, _, kl = hidden
+        # _, alpha_pi, _, kl = hidden
+        _, alpha_pi = hidden
         logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) + torch.mean(kl)/len(o)
+        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) #+ torch.mean(kl)/len(o)
         
         # compute stats
         nan_mask = mask.clone()
@@ -229,20 +258,21 @@ class HyperVINAgent(AbstractAgent):
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
-    def obs_loss(self, o, u, mask, hidden):
+    def obs_loss(self, o, u, z, mask, hidden):
         """ Compute observation loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-            forward_out (list): outputs of forward method
+            hidden (list): hidden outputs of forward method
 
         Returns:
             loss (torch.tensor): observation loss. size=[batch_size]
             stats (dict): observation loss stats
         """
-        alpha_b, _, z, _ = hidden
+        # alpha_b, _, z, _ = hidden
+        alpha_b, _ = hidden
         
         # one step transition
         logp_u = self.ctl_model.log_prob(u)
@@ -274,10 +304,9 @@ class HyperVINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
-        b_t, pi_t, z, ent = self._state["b"], self._state["pi"], self._state["z"], self._state["ent"]
-        [alpha_b, alpha_pi], [_, _, z, _] = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [b_t, pi_t, z, ent], 
-            sample_z=True
+        b_t, pi_t = self._state["b"], self._state["pi"]
+        [alpha_b, alpha_pi], _ = self.forward(
+            o.unsqueeze(0), self._prev_ctl, self._state["z"], [b_t, pi_t]
         )
         b_t, pi_t = alpha_b[0], alpha_pi[0]
         
@@ -293,9 +322,44 @@ class HyperVINAgent(AbstractAgent):
         self._prev_ctl = u_sample
         self._state["b"] = b_t
         self._state["pi"] = pi_t
-        self._state["z"] = z
-        self._state["ent"] = ent
         return u_sample, logp
+
+    # def choose_action(self, o, sample_method="ace", num_samples=1):
+    #     """ Choose action online for a single time step
+        
+    #     Args:
+    #         o (torch.tensor): observation sequence. size[batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size[batch_size, ctl_dim]
+    #         sample_method (str, optional): sampling method. 
+    #             choices=["bma", "ace", "ace"]. Default="ace"
+    #         num_samples (int, optional): number of samples to draw. Default=1
+        
+    #     Returns:
+    #         u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
+    #         logp (torch.tensor): control log probability. size=[num_samples, batch_size]
+    #     """
+    #     b_t, pi_t, z, ent = self._state["b"], self._state["pi"], self._state["z"], self._state["ent"]
+    #     [alpha_b, alpha_pi], [_, _, z, _] = self.forward(
+    #         o.unsqueeze(0), self._prev_ctl, [b_t, pi_t, z, ent], 
+    #         sample_z=True
+    #     )
+    #     b_t, pi_t = alpha_b[0], alpha_pi[0]
+        
+    #     if sample_method == "bma":
+    #         u_sample = self.ctl_model.bayesian_average(pi_t)
+    #     else:
+    #         sample_mean = True if sample_method == "acm" else False
+    #         u_sample = self.ctl_model.ancestral_sample(
+    #             pi_t.unsqueeze(0), num_samples, sample_mean
+    #         ).squeeze(-3)
+    #         logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
+        
+    #     self._prev_ctl = u_sample
+    #     self._state["b"] = b_t
+    #     self._state["pi"] = pi_t
+    #     self._state["z"] = z
+    #     self._state["ent"] = ent
+    #     return u_sample, logp
     
     def choose_action_batch(
         self, o, u, sample_method="ace", num_samples=1, tau=0.1, 
