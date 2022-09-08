@@ -92,7 +92,7 @@ class VINAgent(AbstractAgent):
     @property
     def efe(self):
         """ Negative expected free energy """
-        entropy = self.obs_model.entropy()
+        entropy = self.obs_model.entropy() / self.obs_dim
         c = self.target_dist
         kl = kl_divergence(torch.eye(self.state_dim), c)
         return -kl - self.alpha * entropy
@@ -101,14 +101,15 @@ class VINAgent(AbstractAgent):
     def reward(self):
         """ State action reward """
         transition = self.rnn.transition
-        entropy = self.obs_model.entropy()
+        entropy = self.obs_model.entropy() / self.obs_dim
 
         if self.detach:
             transition = transition.data
+            entropy = entropy.data
         
         c = self.target_dist
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
-        eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1).data
+        eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
         log_pi0 = torch.log(self.pi0 + 1e-6)
         r = -kl - self.alpha * eh + self.beta * log_pi0
         return r
