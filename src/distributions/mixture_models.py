@@ -40,11 +40,11 @@ class ConditionalGaussian(Model):
             nn.init.normal_(self.tl, mean=0, std=0.01)
         elif cov == "diag":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
             nn.init.normal_(self.lv, mean=0, std=0.01)
         elif cov == "tied":
             self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim)
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
             nn.init.normal_(self.lv, mean=0, std=0.01)
 
         if batch_norm:
@@ -60,7 +60,7 @@ class ConditionalGaussian(Model):
         )
         return s
     
-    def init_params(self, means, covariances):
+    def init_params(self, means, covariances, requires_grad=False):
         """ initialize mean and covariance, set bn momentum to 0 """
         assert self.cov != "full"
         assert means.shape[-2] == self.z_dim
@@ -74,8 +74,8 @@ class ConditionalGaussian(Model):
         self.bn.moving_mean.data = torch.zeros_like(self.bn.moving_mean).to(self.device)
         self.bn.moving_variance.data = torch.ones_like(self.bn.moving_variance).to(self.device)
         
-        self.mu.requires_grad = False
-        self.lv.requires_grad = False
+        self.mu.requires_grad = requires_grad
+        self.lv.requires_grad = requires_grad
         self.bn.momentum = 0.
 
     def init_batch_norm(self, mean, variance):
@@ -217,15 +217,20 @@ class HyperConditionalGaussian(Model):
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
-        self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-        self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim), requires_grad=True)
-        nn.init.normal_(self.lv, mean=0, std=0.01)
-        nn.init.normal_(self.tl, mean=0, std=0.01)
-    
-        if cov == "diag":
-            del self.tl
-            self.parameter_size = self.parameter_size[:-1]
-            self.tl = torch.zeros(1, z_dim, x_dim, x_dim).to(self.device)
+        
+        if cov == "full":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim))
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+            nn.init.normal_(self.tl, mean=0, std=0.01)
+        elif cov == "diag":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "tied":
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
         
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
