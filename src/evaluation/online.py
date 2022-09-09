@@ -23,7 +23,7 @@ class Evaluator:
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
 
-def eval_episode(env, agent, eps_id, max_steps=1000, playback=False):
+def eval_episode(env, agent, eps_id, max_steps=1000, sample_method="ace", playback=False):
     """ Evaluate episode
     
     Args:
@@ -31,6 +31,7 @@ def eval_episode(env, agent, eps_id, max_steps=1000, playback=False):
         agent (Agent): agent class
         eps_id (int): episode id
         max_steps (int, optional): maximum number of steps. Default=1000
+        sample_method (str, optional): 
         playback (bool, optional): whether to playback data ego trajectory. Default=False
 
     Returns:
@@ -46,7 +47,7 @@ def eval_episode(env, agent, eps_id, max_steps=1000, playback=False):
     rewards = []
     for t in range(max_steps):
         with torch.no_grad():
-            ctl, _ = agent.choose_action(obs.to(agent.device))
+            ctl, _ = agent.choose_action(obs.to(agent.device), sample_method=sample_method)
             ctl = ctl.cpu().data.view(1, -1)
             
         obs, r, done, _ = env.step(ctl)
