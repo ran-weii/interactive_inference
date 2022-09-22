@@ -14,13 +14,11 @@ from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 
 # model imports
-from src.agents.vin_agent import VINAgent, VINAgent2
+from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
 from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
-from src.algo.irl import ReverseBehaviorCloning
-from src.algo.dagger import Dagger
 
 # training imports
 from src.algo.utils import train
@@ -42,8 +40,6 @@ def parse_args():
     parser.add_argument("--filenames", type=str_list_, default=["vehicle_tracks_007.csv"])
     parser.add_argument("--checkpoint_path", type=str, default="none", 
         help="if entered train agent from check point")
-    parser.add_argument("--expert_exp_name", type=str, default="none", 
-        help="expert exp path for dagger. Assume mlp expert")
     # agent args
     parser.add_argument("--agent", type=str, choices=["vin", "hvin", "vin", "idm", "mlp"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=30, help="agent state dimension, default=30")
@@ -59,7 +55,6 @@ def parse_args():
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     parser.add_argument("--detach", type=bool_, default=True, help="whether to detach dynamics model, default=True")
     parser.add_argument("--discretize_ctl", type=bool_, default=True, help="whether to discretize ctl using gmm, default=True")
-    parser.add_argument("--causal", type=bool_, default=True)
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     parser.add_argument("--train_prior", type=bool_, default=False, help="whether to train hvin prior, default=False")
     parser.add_argument("--sample_z", type=bool_, default=False, help="whether to compute obs likelihood with sampled z, default=False")
@@ -71,7 +66,7 @@ def parse_args():
     parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observation for discriminator, default=False")
     parser.add_argument("--use_state", type=bool_, default=False, help="whether to use state for discriminator, default=False")
     # algo args
-    parser.add_argument("--algo", type=str, choices=["bc", "hbc", "rbc", "dag"], default="bc", help="training algorithm, default=bc")
+    parser.add_argument("--algo", type=str, choices=["bc", "hbc", "dag"], default="bc", help="training algorithm, default=bc")
     parser.add_argument("--d_batch_size", type=int, default=200, help="discriminator batch size, default=200")
     parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
     parser.add_argument("--d_steps", type=int, default=50, help="discriminator steps, default=50")
@@ -210,20 +205,13 @@ def main(arglist):
     
     # init agent
     if arglist.agent == "vin":
-        if arglist.causal:
-            agent = VINAgent(
-                arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-                arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
-                obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
-                use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
-            )
-        else:
-            agent = VINAgent2(
-                arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-                arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
-                obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
-                use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
-            )
+        agent = VINAgent(
+            arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
+            arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
+        )
+        
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
@@ -275,46 +263,7 @@ def main(arglist):
             agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
             sample_z=arglist.sample_z, lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
-    elif arglist.algo == "rbc":
-        model = ReverseBehaviorCloning(
-            agent, arglist.hidden_dim, arglist.num_hidden, arglist.activation,
-            norm_obs=arglist.norm_obs, use_state=arglist.use_state, 
-            d_batch_size=arglist.d_batch_size, bptt_steps=arglist.bptt_steps, 
-            d_steps=arglist.d_steps, grad_target=0., grad_penalty=arglist.grad_penalty,
-            bc_penalty=arglist.bc_penalty, obs_penalty=arglist.obs_penalty,
-            lr_d=arglist.lr_d, lr_a=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
-        )
-        if arglist.norm_obs:
-            model.obs_mean.data = obs_mean
-            model.obs_variance.data = obs_var
-        model.fill_buffer(train_loader.dataset)
-    elif arglist.algo == "dag":
-        # load expert
-        assert arglist.expert_exp_name != "none"
-        expert_path = os.path.join(arglist.exp_path, "agents", "mlp", arglist.expert_exp_name)
-        
-        with open(os.path.join(expert_path, "args.json"), "rb") as f:
-            expert_config = json.load(f)
-        
-        with open(os.path.join(expert_path, "buffer.p"), "rb") as f:
-            buffer = pickle.load(f)
-        
-        expert_state_dict = torch.load(os.path.join(expert_path, "model.pt"), map_location=torch.device("cpu"))
-        expert_state_dict = {k.replace("agent.", ""): v for (k, v) in expert_state_dict.items() if "agent." in k}
-        
-        expert = MLPAgent(
-            obs_dim, ctl_dim, expert_config["hidden_dim"], expert_config["num_hidden"],
-            expert_config["activation"], use_tanh=expert_config["use_tanh"], 
-            ctl_limits=ctl_lim, norm_obs=expert_config["norm_obs"]
-        )
-        expert.load_state_dict(expert_state_dict, strict=True)
-
-        expert = IDM(feature_set)
-        
-        model = Dagger(
-            agent, expert, buffer, arglist.bptt_steps, obs_penalty=arglist.obs_penalty,
-            cf_penalty=arglist.cf_penalty, lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
-        )
+    
     print(f"num parameters: {count_parameters(model)}")
     print(model)
 
