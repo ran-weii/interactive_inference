@@ -1,5 +1,4 @@
 import torch
-from src.evaluation.offline import transform_action
 
 class Evaluator:
     def __init__(self):
