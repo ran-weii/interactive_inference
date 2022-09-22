@@ -45,15 +45,20 @@ def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
     
     Returns:
         u_sample (torch.tensor): sampled action sequence. size=[num_samples, T, ctl_dim]
+        act_loss (torch.tensor): action loss. size=[batch_size]
     """
     agent.eval()
     
     with torch.no_grad():
-        u_sample, _ = agent.choose_action_batch(
+        u_sample, _, hidden = agent.choose_action_batch(
             obs.unsqueeze(-2), ctl.unsqueeze(-2), 
-            sample_method=sample_method, num_samples=num_samples
+            sample_method=sample_method, num_samples=num_samples, return_hidden=True
         )
-    return u_sample.squeeze(-2)
+        act_loss, _ = agent.act_loss(
+            obs.unsqueeze(-2), ctl.unsqueeze(-2), 
+            torch.ones(len(obs), 1), hidden
+        )
+    return u_sample.squeeze(-2), act_loss
 
 def eval_dynamics_episode(model, obs, ctl, sample_method="ace", num_samples=30):
     """ Evaluate dynamics model prediction for an episode
