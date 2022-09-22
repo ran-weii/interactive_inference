@@ -67,21 +67,16 @@ def parse_args():
     parser.add_argument("--use_state", type=bool_, default=False, help="whether to use state for discriminator, default=False")
     # algo args
     parser.add_argument("--algo", type=str, choices=["bc", "hbc", "dag"], default="bc", help="training algorithm, default=bc")
-    parser.add_argument("--d_batch_size", type=int, default=200, help="discriminator batch size, default=200")
     parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
-    parser.add_argument("--d_steps", type=int, default=50, help="discriminator steps, default=50")
-    parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
     parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
     parser.add_argument("--prior_penalty", type=float, default=0., help="prior penalty, default=0.")
-    parser.add_argument("--cf_penalty", type=float, default=1., help="counterfactual action penalty for dagger. default=1.")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
     parser.add_argument("--train_ratio", type=float, default=0.7, help="ratio of training dataset, default=0.7")
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
-    parser.add_argument("--lr_d", type=float, default=0.001, help="discriminator learning rate, default0.001")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
@@ -239,7 +234,7 @@ def main(arglist):
         if arglist.action_set == ["dds"]:
             # load ctl gmm parameters
             with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
-                [ctl_means, ctl_covs] = pickle.load(f)
+                [ctl_means, ctl_covs, weights] = pickle.load(f)
 
             agent.ctl_model.init_params(ctl_means, ctl_covs, requires_grad=arglist.discretize_ctl)
             print("action model loaded")
