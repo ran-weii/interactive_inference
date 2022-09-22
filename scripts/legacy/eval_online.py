@@ -6,23 +6,24 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-
 import torch 
-from torch.utils.data import DataLoader, random_split
-from torch.nn.utils.rnn import pad_sequence
 
 from src.map_api.lanelet import MapReader
+from src.data.data_filter import filter_lane, filter_tail_merging
 from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.agents.active_inference import ActiveInference
 from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
     StructuredRecurrentAgent, FullyRecurrentAgent, 
     HMMRecurrentAgent, StructuredHMMRecurrentAgent)
+from src.agents.recurrent_agent import RecurrentActiveInference
 from src.irl.algorithms import (
     MLEIRL, ImitationLearning, ReverseKL)
+from src.irl.implicit_irl import ImplicitIRL
 from src.simulation.simulator import InteractionSimulator
 from src.simulation.observers import RelativeObserver
-from src.evaluation.online_evaluator import Evaluator
+from src.simulation.controllers import AgentWrapper
+from src.evaluation.online import Evaluator, eval_episode
 from src.visualization.animation import animate, save_animation
 from src.visualization.inspection import ModelExplainer
 
@@ -55,7 +56,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl", "cirl"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--explain_trajectory", type=bool_, default=True)
@@ -64,113 +65,6 @@ def parse_args():
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
-
-def collate_fn(batch):
-    pad_obs = pad_sequence([b["ego"] for b in batch])
-    pad_act = pad_sequence([b["act"] for b in batch])
-    mask = torch.all(pad_obs != 0, dim=-1).to(torch.float32)
-    return pad_obs, pad_act, mask
-
-def eval_offline(track_data, agent):
-    agent.eval()
-    
-    o = track_data["ego"].unsqueeze(1)
-    u = track_data["act"].unsqueeze(1)
-    
-    u_batch = agent.choose_action(o, u, batch=True)
-
-    # sequential eval
-    agent.reset()
-    b = [torch.empty(0)] * len(o)
-    a = [torch.empty(0)] * len(o)
-    u_seq = torch.zeros(len(o), 2)
-    for t in range(len(o)):
-        o_t = o[t]
-        u_t = u[t] if t > 0 else torch.zeros_like(u)[0]
-        u_seq[t] = agent.choose_action(o_t, u_t).data
-        b[t] = agent._b
-        a[t] = agent._a
-    b = torch.stack(b, dim=0).squeeze(1)
-    a = torch.stack(a, dim=0).squeeze(1)
-    return u.data.squeeze(-2), u_batch.data.squeeze(-2), u_seq
-
-def eval_episode(
-    env, observer, agent, eps_id, data, control_direction, 
-    control_method="ace", num_samples=1, max_steps=1000, seed=0
-    ):
-    torch.manual_seed(seed)
-    if control_method in ["acm", "data"]:
-        num_samples = 0
-    diagnostic = True if control_method == "data" else False
-
-    agent.eval()
-    agent.reset()
-    observer.reset()
-    evaluator = Evaluator()
-    
-    ctl_data = data["act"]
-    ego_dict = {"b": [], "a": [], "v": [], "obs": [], "ctl": []}
-
-    obs_env = env.reset(eps_id)
-    obs = observer.observe(obs_env)
-    ctl_agent = torch.zeros(1, 2) if control_direction == "both" else torch.zeros(1, 1)
-    if control_method == "bma":
-        ctl_agent = agent.choose_action(obs, ctl_agent)
-    else:
-        ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
-
-    ego_dict["b"].append(agent._b.view(-1))
-    ego_dict["a"].append(agent._a.view(-1))
-    ego_dict["v"].append(agent.planner.value(agent._b).view(-1))
-    ego_dict["obs"].append(obs.view(-1))
-    ego_dict["ctl"].append(ctl_agent.view(-1))
-    for t in range(max_steps):
-        if control_direction == "both":
-            ctl = ctl_agent
-        elif control_direction == "lon":
-            ctl = torch.tensor([ctl_agent[0], ctl_data[t][1]])
-        elif control_direction == "lat":
-            ctl = torch.tensor([ctl_data[t][0], ctl_agent[0]])
-        
-        if diagnostic:
-            ctl_env = env.get_action()
-            ctl = observer.glob_to_ego(ctl_env[0], ctl_env[1], obs_env["ego"][2], obs_env["ego"][3])
-            ctl = torch.tensor(ctl)
-            ctl_agent = ctl.view(1, -1).to(torch.float32)
-            if control_direction == "lon":
-                ctl_agent = ctl_agent[:, :1]
-            elif control_direction == "lat":
-                ctl_agent = ctl_agent[:, -1:]
-
-        ctl_env = observer.control(ctl, obs_env)
-        obs_env, r, done, info = env.step(ctl_env)
-        if done:
-            break
-        
-        evaluator.observe(obs, ctl)
-        obs = observer.observe(obs_env)
-        if control_method == "bma":
-            ctl_agent = agent.choose_action(obs, ctl_agent)
-        else:
-            ctl_agent = agent.choose_action(obs, ctl_agent, num_samples=num_samples).mean(0)
-
-        # collect agent states
-        ego_dict["b"].append(agent._b.view(-1))
-        ego_dict["a"].append(agent._a.view(-1))
-        ego_dict["v"].append(agent.planner.value(agent._b).view(-1))
-        ego_dict["obs"].append(obs.view(-1))
-        ego_dict["ctl"].append(ctl_agent.view(-1))
-    
-    ego_dict["b"] = torch.stack(ego_dict["b"]).data.numpy()
-    ego_dict["a"] = torch.stack(ego_dict["a"]).data.numpy()
-    ego_dict["v"] = torch.stack(ego_dict["v"]).data.numpy()
-    ego_dict["obs"] = torch.stack(ego_dict["obs"]).data.numpy()
-    ego_dict["ctl"] = torch.stack(ego_dict["ctl"]).data.numpy()
-
-    states = env._states[:t+1]
-    acts = env._acts[:t+1]
-    track = {k:v[:t+1] for (k, v) in env._track.items()}
-    return states, acts, track, ego_dict, evaluator._track
 
 def plot_map_trajectories(map_data, states, track, title):
     fig, ax = map_data.plot(option="ways", annot=False, figsize=(8, 4))
@@ -233,6 +127,12 @@ def main(arglist):
     df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
+    # filter data
+    lane_id = [1, 6]
+    max_psi_error = 0.05
+    df_track = filter_lane(df_track, lane_id)
+    df_track = filter_tail_merging(df_track, max_psi_error=max_psi_error, min_bound_dist=1)
+
     # load test labels
     df_train_labels = pd.read_csv(
         os.path.join(arglist.data_path, "test_labels", arglist.scenario, arglist.filename)
@@ -247,8 +147,9 @@ def main(arglist):
     state_dict = torch.load(os.path.join(exp_path, "model.pt"))
     torch.manual_seed(config["seed"])
     
+    frame = "carte" if "frame" not in config.keys() else config["frame"]
     obs_fields = "rel" if "obs_fields" not in config.keys() else config["obs_fields"]
-    observer = RelativeObserver(map_data, fields=obs_fields)
+    observer = RelativeObserver(map_data, frame=frame, fields=obs_fields)
     dataset = EgoDataset(
         df_track, observer, df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
@@ -317,6 +218,15 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = ImitationLearning(agent)
+    elif arglist.method == "cirl":
+        agent = RecurrentActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = ImplicitIRL(agent)
     else:
         raise NotImplementedError
     
@@ -339,29 +249,28 @@ def main(arglist):
     )
 
     # simulate
-    test_eps_id = [121, 109, 119, 93]
+    controller = AgentWrapper(observer, agent, arglist.control_method)
+    # test_eps_id = [121, 109, 119, 93]
+    # test_eps_id = [121, 158, 48, 109, 98, 124, 119, 82, 67, 93, 110, 33]
+    test_eps_id = [105, 139, 41, 107, 88, 84, 100, 109, 52, 82, 97, 29]
     sim_data = []
     map_figs = []
     ctl_figs = []
     animations = []
     for i in test_eps_id:
         rel_track = rel_dataset[i]
-
-        states, ctl, track, ego_dict, eval_dict = eval_episode(
-            env, observer, agent, i, rel_track, 
-            config["control_direction"], control_method=arglist.control_method, seed=arglist.seed
-        )
         
-        title = f"track_{track['meta'][2]}_id_{i} agent control: {config['control_direction']}"
-        ani = animate(map_data, states, track, title=title)
-        fig_map, _ = plot_map_trajectories(map_data, states, track, title)
-        fig_act, _ = plot_action_trajectory(ctl, track, title)
+        sim_states, sim_acts, track_data = eval_episode(env, controller, i)
+        title = f"track_{track_data['meta'][2]}_id_{i} agent control: {config['control_direction']}"
+        ani = animate(map_data, sim_states, track_data, title=title)
+        fig_map, _ = plot_map_trajectories(map_data, sim_states, track_data, title)
+        fig_act, _ = plot_action_trajectory(sim_acts, track_data, title)
         
-        sim_data.append({"states": states, "ctl": ctl, "track": track, "ego": ego_dict, "eval": eval_dict})
+        sim_data.append({"sim_states": sim_states, "sim_acts": sim_acts, "track_data": track_data})
         map_figs.append(fig_map)
         ctl_figs.append(fig_act)
         animations.append(ani)
-        # break
+        break
     
     # explain active inference agent
     if arglist.method == "mleirl" and arglist.explain_trajectory:

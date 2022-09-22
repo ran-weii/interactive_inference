@@ -9,11 +9,11 @@ import matplotlib.pyplot as plt
 import torch 
 
 from src.simulation.observers import FEATURE_SET
-from src.data.train_utils import load_data, train_test_split
+from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
 from src.agents.legacy.active_inference import ActiveInference
 from src.agents.baseline import FullyRecurrentAgent
-from src.irl.algorithms import MLEIRL, BayesianIRL, ImitationLearning
+from src.algo.legacy.algorithms import MLEIRL, BayesianIRL, ImitationLearning
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -23,13 +23,10 @@ def parse_args():
     
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data_path", type=str, default="../interaction-dataset-master"
+        "--data_path", type=str, default="../../interaction-dataset-master"
     )
     parser.add_argument(
-        "--lanelet_path", type=str, default="../exp/lanelet"
-    )
-    parser.add_argument(
-        "--save_path", type=str, default="../exp/"
+        "--save_path", type=str, default="../../exp/"
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
@@ -157,6 +154,11 @@ def main(arglist):
     else:
         raise NotImplementedError
     
+    print(f"num parameters: {count_parameters(model)}")
+    print(model)
+    for n, p in model.named_parameters():
+        print(n, p.shape)
+
     start_time = time.time()
     history = []
     for e in range(arglist.epochs):
@@ -173,15 +175,15 @@ def main(arglist):
         
         print("epoch: {}, train, logp_pi: {:.4f}, logp_obs: {:.4f}, plan_error: {:.4f}, t: {:.2f}".format(
             e + 1, 
-            train_stats["logp_pi_mean"], 
-            train_stats["logp_obs_mean"], 
+            -train_stats["logp_pi_mean"], 
+            -train_stats["logp_obs_mean"], 
             train_stats["loss_plan_mean"] if "loss_plan" in train_stats.keys() else 0, 
             tnow
         ))
         print("epoch: {}, test , logp_pi: {:.4f}, logp_obs: {:.4f}, plan_error: {:.4f}, t: {:.2f} \n{}".format(
             e + 1, 
-            test_stats["logp_pi_mean"], 
-            test_stats["logp_obs_mean"], 
+            -test_stats["logp_pi_mean"], 
+            -test_stats["logp_obs_mean"], 
             test_stats["loss_plan_mean"] if "loss_plan" in test_stats.keys() else 0, 
             tnow, "=="*40
         ))

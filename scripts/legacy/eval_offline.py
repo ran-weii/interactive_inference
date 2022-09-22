@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 
 from src.map_api.lanelet import MapReader
+from src.data.data_filter import filter_lane, filter_tail_merging
 from src.simulation.observers import RelativeObserver
 from src.data.ego_dataset import RelativeDataset
 from src.agents.active_inference import ActiveInference
@@ -19,8 +20,10 @@ from src.agents.embedded_agent import EmbeddedActiveInference
 from src.agents.baseline import (
     StructuredRecurrentAgent, FullyRecurrentAgent, 
     HMMRecurrentAgent, StructuredHMMRecurrentAgent)
+from src.agents.recurrent_agent import RecurrentActiveInference
 from src.irl.algorithms import (
     MLEIRL, ImitationLearning, ReverseKL)
+from src.irl.implicit_irl import ImplicitIRL
 from src.evaluation.offline_metrics import (
     mean_absolute_error, threshold_relative_error)
 from src.visualization.inspection import ModelExplainer
@@ -54,7 +57,7 @@ def parse_args():
     )
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl"], 
+    parser.add_argument("--method", type=str, choices=["mleirl", "il", "birl", "srnn", "frnn", "hrnn", "shrnn", "eai", "rkl", "cirl"], 
         default="active_inference", help="algorithm, default=mleirl")
     parser.add_argument("--exp_name", type=str, default="03-10-2022 10-52-38")
     parser.add_argument("--explain_agent", type=bool_, default=False)
@@ -105,12 +108,13 @@ def sample_trajectory_by_cluster(dataset, num_samples, sample=False, seed=0):
     Returns:
         df_eps (pd.dataframe): dataframe with fields [cluster, eps_id, idx]
     """
-    unique_clusters = dataset.df_track["cluster"].unique()
+    df_track = dataset.df_track.loc[dataset.df_track["eps_id"] != -1]
+    unique_clusters = np.unique(df_track["cluster"])
     unique_clusters = unique_clusters[np.isnan(unique_clusters) == False]
     
     # get episode header
     merge_keys = ["scenario", "record_id", "track_id"]
-    df_track_head = dataset.df_track.groupby(merge_keys).head(1)
+    df_track_head = df_track.groupby(merge_keys).head(1)
     df_track_head = df_track_head.loc[df_track_head["is_train"] == True]
     
     df_eps = df_track_head.dropna(subset=["cluster"]).groupby("cluster")
@@ -246,6 +250,12 @@ def main(arglist):
     df_track = df_track.merge(df_processed, on=["track_id", "frame_id"])
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
+    # filter data
+    lane_id = [1, 6]
+    max_psi_error = 0.05
+    df_track = filter_lane(df_track, lane_id)
+    df_track = filter_tail_merging(df_track, max_psi_error=max_psi_error, min_bound_dist=1)
+
     # load test labels
     df_train_labels = pd.read_csv(
         os.path.join(arglist.data_path, "test_labels", arglist.scenario, arglist.filename)
@@ -256,8 +266,9 @@ def main(arglist):
     map_data = MapReader()
     map_data.parse(os.path.join(arglist.data_path, "maps", arglist.scenario + ".osm"))
     
+    frame = "carte" if "frame" not in config.keys() else config["frame"]
     obs_fields = "rel" if "obs_fields" not in config.keys() else config["obs_fields"]
-    observer = RelativeObserver(map_data, fields=obs_fields)
+    observer = RelativeObserver(map_data, frame=frame, fields=obs_fields)
     dataset = RelativeDataset(
         df_track, observer, df_train_labels=df_train_labels, 
         min_eps_len=config["min_eps_len"], max_eps_len=1000,
@@ -334,6 +345,15 @@ def main(arglist):
             hidden_dim=config["hidden_dim"], num_hidden=config["num_hidden"]
         )
         model = ImitationLearning(agent)
+    elif arglist.method == "cirl":
+        agent = RecurrentActiveInference(
+            config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["horizon"],
+            obs_model=config["obs_model"], obs_dist=config["obs_dist"], obs_cov=config["obs_cov"], 
+            ctl_model=config["ctl_model"], ctl_dist=config["ctl_dist"], ctl_cov=config["ctl_cov"],
+            rwd_model=rwd_model, hmm_rank=hmm_rank, planner=config["planner"], tau=config["tau"], hidden_dim=config["hidden_dim"], 
+            num_hidden=config["num_hidden"], activation=config["activation"]
+        )
+        model = ImplicitIRL(agent)
     
     model.load_state_dict(state_dict, strict=False)
     agent = model.agent
@@ -376,7 +396,7 @@ def main(arglist):
     metrics_dict = {"mae": mae, "mae_s": mae_s, "mae_sc": mae_sc, "tre": tre}
     
     # plot sample test scenes
-    num_samples = 1
+    num_samples = 3
     df_eps = sample_trajectory_by_cluster(
         dataset, num_samples, sample=True, seed=arglist.seed
     )
@@ -390,15 +410,14 @@ def main(arglist):
             u_true[:, idx], u_pred[:, idx], u_sample[:, :, idx], masks[:, idx], title=title
         )
         acc_figs.append(fig_acc)
-    
-    # plot action units
-    fig_action, ax = plot_action_units(agent)
+        # print(idx, track_id)
     
     # explain active inference agent
     if arglist.method == "mleirl" and arglist.explain_agent:
         explainer = ModelExplainer(agent, dataset.ego_fields)
         explainer.sort(by="C")
         fig_agent = plot_agent_model(explainer)
+        fig_action, ax = plot_action_units(agent)
 
     # save results
     if arglist.save:
@@ -411,11 +430,11 @@ def main(arglist):
             json.dump(metrics_dict, f)
         
         # save figures
-        fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
         for i, fig in enumerate(acc_figs):
             fig.savefig(os.path.join(save_path, f"test_scene_{i}_offline_ctl.png"), dpi=100)
         
         if arglist.method == "mleirl" and arglist.explain_agent:
+            fig_action.savefig(os.path.join(save_path, "action_units.png"), dpi=100)
             for i, fig in enumerate(fig_agent):
                 fig.savefig(os.path.join(save_path, f"agent_model_{i}.png"), dpi=100)
             
