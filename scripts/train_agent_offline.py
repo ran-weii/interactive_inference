@@ -9,12 +9,9 @@ import matplotlib.pyplot as plt
 import torch 
 
 # setup imports
-from src.simulation.observers import ACTION_SET, FEATURE_SET
-from src.simulation.observers import Observer, CarfollowObserver
 from src.data.train_utils import load_data, train_test_split, count_parameters
 from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
-from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 
 # model imports
 from src.agents.vin_agent import VINAgent, VINAgent2
@@ -57,15 +54,15 @@ def parse_args():
     parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
     parser.add_argument("--alpha", type=float, default=1., help="agent entropy reward coefficient, default=1.")
     parser.add_argument("--beta", type=float, default=1., help="agent policy prior coefficient, default=1.")
-    parser.add_argument("--observer", type=str, choices=["full", "car_follow"], default="car_follow")
-    parser.add_argument("--action_set", type=str, choices=["ego", "frenet", "disc"], default="frenet", help="agent action set, default=frenet")
+    parser.add_argument("--feature_set", type=str_list_, default=["ego_ds", "lv_s_rel", "lv_ds_rel"], help="agent feature set")
+    parser.add_argument("--action_set", type=str_list_, default="dds", help="agent action set, default=dds")
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
-    parser.add_argument("--use_lidar", type=bool_, default=False, help="whether to use lidar features, default=False")
     parser.add_argument("--detach", type=bool_, default=True, help="whether to detach dynamics model, default=True")
     parser.add_argument("--discretize_ctl", type=bool_, default=True, help="whether to discretize ctl using gmm, default=True")
     parser.add_argument("--causal", type=bool_, default=True)
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     parser.add_argument("--train_prior", type=bool_, default=False, help="whether to train hvin prior, default=False")
+    parser.add_argument("--sample_z", type=bool_, default=False, help="whether to compute obs likelihood with sampled z, default=False")
     # nn args
     parser.add_argument("--hidden_dim", type=int, default=64, help="nn hidden dimension, default=64")
     parser.add_argument("--num_hidden", type=int, default=2, help="number of hidden layers, default=2")
@@ -184,26 +181,8 @@ def main(arglist):
 
     df_track = df_track.loc[(df_track["is_train"] == 1) & (df_track["eps_id"] != np.nan)]
     
-    # define action set
-    if arglist.action_set == "frenet":
-        action_set = ["dds", "ddd"]
-    elif arglist.action_set == "ego":
-        action_set = ["ax_ego", "ay_ego"]
-    
-    # define feature set
-    ego_sensor = EgoSensor(None)
-    lv_sensor = LeadVehicleSensor(None)
-    lidar_sensor = LidarSensor()
-    sensors = [ego_sensor, lv_sensor]
-    if arglist.use_lidar:
-        sensors.append(lidar_sensor)
-    
-    if arglist.observer == "full":
-        observer = Observer(None, sensors, action_set)
-    elif arglist.observer == "car_follow":
-        observer = CarfollowObserver(None, sensors)
-    feature_set = observer.feature_names
-    action_set = observer.action_set
+    feature_set = arglist.feature_set
+    action_set = arglist.action_set
     
     # compute obs and ctl mean and variance stats
     obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
@@ -248,32 +227,34 @@ def main(arglist):
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
-
-        if arglist.observer == "car_follow" and arglist.discretize_ctl:
+        
+        if arglist.action_set == ["dds"] and arglist.discretize_ctl:
             # load ctl gmm parameters
             with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
-                [ctl_means, ctl_covs] = pickle.load(f)
+                [ctl_means, ctl_covs, weights] = pickle.load(f)
 
             agent.ctl_model.init_params(ctl_means, ctl_covs)
+            print("action model loaded")
 
     elif arglist.agent == "hvin":
         agent = HyperVINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, arglist.hyper_dim, arglist.hidden_dim, arglist.num_hidden, 
             arglist.gru_layers, arglist.activation,
-            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            alpha=arglist.alpha, beta=arglist.beta, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
             use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, train_prior=arglist.train_prior
         )
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
         
-        if arglist.observer == "car_follow" and arglist.discretize_ctl:
+        if arglist.action_set == ["dds"]:
             # load ctl gmm parameters
             with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
                 [ctl_means, ctl_covs] = pickle.load(f)
 
-            agent.ctl_model.init_params(ctl_means, ctl_covs)
+            agent.ctl_model.init_params(ctl_means, ctl_covs, requires_grad=arglist.discretize_ctl)
+            print("action model loaded")
 
     elif arglist.agent == "idm":
         agent = IDM(std=ctl_var)
@@ -292,7 +273,7 @@ def main(arglist):
     elif arglist.algo == "hbc":
         model = HyperBehaviorCloning(
             agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
-            lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
+            sample_z=arglist.sample_z, lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     elif arglist.algo == "rbc":
         model = ReverseBehaviorCloning(
@@ -350,7 +331,7 @@ def main(arglist):
         # load history
         cp_history = pd.read_csv(os.path.join(cp_path, "history.csv"))
 
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, strict=False)
         print(f"loaded checkpoint from {cp_path}")
     
     callback = None
