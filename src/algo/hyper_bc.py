@@ -25,7 +25,7 @@ class HyperBehaviorCloning(Model):
 
         self._set_params_grad()
         
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             self.agent.parameters(), lr=lr, weight_decay=decay
         )
         self.loss_keys = ["total_loss", "loss_u", "loss_o"]
@@ -146,18 +146,16 @@ class HyperBehaviorCloning(Model):
             u = u.to(self.device)
             mask = mask.to(self.device)
             
-            # stats = self.bptt(o, u, mask, train)
-            # epoch_stats.append(stats)
             loss, stats = self.compute_loss(o, u, mask, len(loader.dataset))
             
             if train:
                 loss.backward()
-                for n, p in self.named_parameters():
-                    if p.grad is None:
-                        print(n, p.requires_grad, None)
-                    else:
-                        print(n, p.requires_grad, p.grad.data.norm())
-                exit()
+                # for n, p in self.named_parameters():
+                #     if p.grad is None:
+                #         print(n, p.requires_grad, None)
+                #     else:
+                #         print(n, p.requires_grad, p.grad.data.norm())
+                # exit()
                 
                 if self.grad_clip is not None:
                     nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
@@ -170,69 +168,3 @@ class HyperBehaviorCloning(Model):
 
         stats = pd.DataFrame(epoch_stats).mean().to_dict()
         return stats
-
-    # def compute_prior_loss(self, z):
-    #     # obs variance
-    #     obs_bn_vars = self.agent.obs_model.bn.moving_variance
-    #     obs_vars = self.agent.obs_model.variance(z).squeeze(0)
-    #     # obs_vars = self.agent.obs_model.variance().squeeze(0)
-    #     obs_vars = obs_vars / obs_bn_vars
-    #     obs_loss = torch.sum(obs_vars ** 2)
-
-    #     # ctl variance
-    #     ctl_bn_vars = self.agent.ctl_model.bn.moving_variance
-    #     ctl_vars = self.agent.ctl_model.variance().squeeze(0)
-    #     ctl_vars = ctl_vars / ctl_bn_vars
-    #     ctl_loss = torch.sum(ctl_vars ** 2)
-        
-    #     loss = obs_loss + ctl_loss 
-    #     return loss
-    
-    # def bptt(self, o, u, mask, train):
-    #     """ Backprop through time """
-    #     z, kl = self.agent.encode(o, u)
-    #     z_sample = self.agent.sample_z((o.shape[1],)).squeeze(-2)
-        
-    #     hidden = None
-    #     for t, batch_t in enumerate(zip(
-    #         o.split(self.bptt_steps, dim=0),
-    #         u.split(self.bptt_steps, dim=0),
-    #         mask.split(self.bptt_steps, dim=0)
-    #         )):
-    #         o_t, u_t, mask_t = batch_t
-
-    #         if hidden is None:
-    #             out, hidden = self.agent(o_t, u_t, z)
-
-    #         else:
-    #             # concat previous ctl
-    #             u_t_cat = torch.cat([u_t_prev[-1:], u_t[1:]], dim=0)
-
-    #             hidden = [h[-1].detach() for h in hidden]
-                
-    #             out, hidden = self.agent(o_t, u_t_cat, z, hidden)
-    #         u_t_prev = u_t.clone()
-
-    #         loss_u, stats_u = self.agent.act_loss(o_t, u_t, z, mask_t, hidden)
-    #         if self.sample_z:
-    #             loss_o, stats_o = self.agent.obs_loss(o_t, u_t, z_sample, mask_t, hidden)
-    #         else:
-    #             loss_o, stats_o = self.agent.obs_loss(o_t, u_t, z, mask_t, hidden)
-    #         loss_kl = torch.mean(kl) / o.shape[0]
-    #         loss_prior = self.compute_prior_loss(z)
-    #         loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o) + loss_kl + self.reg_penalty * loss_prior
-                
-    #         if train:
-    #             loss.backward()
-    #             if self.grad_clip is not None:
-    #                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
-
-    #             self.optimizer.step()
-    #         self.optimizer.zero_grad()
-
-    #         stats = {
-    #             "train": 1 if train else 0,
-    #             "loss": loss.cpu().data.item(),
-    #             **stats_u, **stats_o,
-    #         }
-    #     return stats

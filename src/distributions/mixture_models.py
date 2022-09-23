@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.distributions as torch_dist
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.flows import TanhTransform
-from src.distributions.utils import make_covariance_matrix
+from src.distributions.utils import make_covariance_matrix, rectify
 from src.distributions.nn_models import Model
 
 class ConditionalGaussian(Model):
@@ -231,7 +231,7 @@ class HyperConditionalGaussian(Model):
             self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
             self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
             nn.init.normal_(self.lv, mean=0, std=0.01)
-        
+
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
 
@@ -248,7 +248,12 @@ class HyperConditionalGaussian(Model):
     def init_batch_norm(self, mean, variance):
         self.bn.moving_mean.data = mean
         self.bn.moving_variance.data = variance
-    
+        
+    def parameter_entropy(self, z):
+        eps = 1e-6
+        mu_ent = torch.log(torch.abs(self._mu.weight) + eps).sum() / self.hyper_dim
+        return mu_ent
+
     def mu(self, z):
         return self._mu(z).view(-1, self.z_dim, self.x_dim)
 

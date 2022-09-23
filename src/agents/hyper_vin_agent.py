@@ -77,18 +77,18 @@ class HyperVINAgent(AbstractAgent):
 
     @property
     def target_dist(self):
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         return self.compute_target_dist(z)
     
     @property
     def pi0(self):
         """ Prior policy """
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         return self.compute_prior_policy(z)
     
     @property
     def transition(self):
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         return self.rnn.compute_transition(z)
     
     @property
@@ -99,7 +99,7 @@ class HyperVINAgent(AbstractAgent):
     @property
     def policy(self):
         """ Optimal planned policy """
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         b = torch.eye(self.state_dim).to(self.device)
         pi = self.rnn.plan(b, z, self.value)
         return pi
@@ -114,7 +114,7 @@ class HyperVINAgent(AbstractAgent):
     @property
     def efe(self):
         """ Negative expected free energy """
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         entropy = self.obs_model.entropy(z)
         # entropy = self.obs_model.entropy()
         c = self.target_dist
@@ -123,21 +123,35 @@ class HyperVINAgent(AbstractAgent):
     
     @property
     def reward(self):
-        z = torch.ones(1, self.hyper_dim).to(self.device)
+        z = torch.zeros(1, self.hyper_dim).to(self.device)
         return self.compute_reward(z)
     
+    def parameter_entropy(self, z):
+        eps = 1e-6
+        c_ent = torch.log(torch.abs(self._c.weight) + eps).sum() / self.hyper_dim
+        pi0_ent = torch.log(torch.abs(self._pi0.weight) + eps).sum() / self.hyper_dim
+        rnn_ent = self.rnn.parameter_entropy(z)
+        obs_ent = self.obs_model.parameter_entropy(z)
+
+        ent = c_ent + self.beta * pi0_ent + rnn_ent + obs_ent
+        return ent
+
     def compute_target_dist(self, z):
         return torch.softmax(self._c(z), dim=-1)
     
     def compute_prior_policy(self, z):
         pi0 = self._pi0(z).view(-1, self.act_dim, self.state_dim)
         return torch.softmax(pi0, dim=-2)
-
-    def compute_reward(self, z):
+    
+    def compute_reward(self, z, detach=False):
         """ State action reward """
         transition = self.rnn.compute_transition(z)
-        entropy = self.obs_model.entropy(z)
+        entropy = self.obs_model.entropy(z) / self.obs_dim
         # entropy = self.obs_model.entropy()
+
+        if detach:
+            transition = transition.data
+            entropy = entropy.data
 
         c = self.compute_target_dist(z)
         pi0 = self.compute_prior_policy(z)
@@ -146,36 +160,40 @@ class HyperVINAgent(AbstractAgent):
         log_pi0 = torch.log(pi0 + 1e-6)
         r = -kl - self.alpha * eh + self.beta * log_pi0
         return r
+    
+    def get_prior_dist(self):
+        return torch_dist.Normal(self.mu, rectify(self.lv))        
 
-    def encode(self, o, u):
-        """ Sample from variational posterior """
+    def sample_z(self, sample_shape=torch.Size()):
+        """ Sample from latent prior """
+        return self.get_prior_dist().rsample(sample_shape)
+    
+    def get_posterior_dist(self, o, u, mask):
         o_norm = (o - self.obs_mean) / self.obs_variance**0.5
-        z_params = self.encoder(torch.cat([o_norm, u], dim=-1))
+        z_params = self.encoder(torch.cat([o_norm, u], dim=-1), mask)
         mu, lv = torch.chunk(z_params, 2, dim=-1)
         
         z_dist = torch_dist.Normal(mu, rectify(lv))
+        return z_dist
+
+    def encode(self, o, u, mask):
+        """ Sample from variational posterior """
+        z_dist = self.get_posterior_dist(o, u, mask)
         z = z_dist.rsample()
-        
-        prior_dist = torch_dist.Normal(self.mu, rectify(self.lv))
-        kl = torch_dist.kl.kl_divergence(z_dist, prior_dist).sum(-1, keepdim=True)
-        return z, kl
-    
-    def sample_z(self, sample_shape=torch.Size()):
-        z = torch_dist.Normal(
-            self.mu, rectify(self.lv)
-        ).rsample(sample_shape)
         return z
     
     def forward(
         self, o: Tensor, u: Union[Tensor, None], z: Tensor,
         hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None,
+        detach: Optional[bool]=False
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+            z (torch.tensor): latent variance. size=[batch_size, hyper_dim]
             hidden ([tuple[torch.tensor] * 2, None], optional). initial hidden state.
-            sample_z (bool, optional): whether to sample z from prior. If not encode observations. 
+            detach (bool, optional): whether to detach model training. Default=False
         
         Returns:
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
@@ -192,7 +210,7 @@ class HyperVINAgent(AbstractAgent):
         # logp_o = self.obs_model.log_prob(o)
         logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
         reward = self.compute_reward(z)
-        alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, z, b)
+        alpha_b, alpha_pi = self.rnn.forward(logp_o, logp_u, reward, z, b, detach=detach)
         return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
     
     # def forward(
@@ -249,7 +267,7 @@ class HyperVINAgent(AbstractAgent):
         _, alpha_pi = hidden
         logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6) #+ torch.mean(kl)/len(o)
-        
+
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask != 0] = 1.
@@ -274,6 +292,7 @@ class HyperVINAgent(AbstractAgent):
         # alpha_b, _, z, _ = hidden
         alpha_b, _ = hidden
         
+        """ TODO: move this to rnn updates """
         # one step transition
         logp_u = self.ctl_model.log_prob(u)
         s_next = self.rnn.predict_one_step(logp_u, alpha_b, z)

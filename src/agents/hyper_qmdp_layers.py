@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
-import torch.jit as jit
 
-import math
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 from torch import Tensor
 
 from src.agents.qmdp_layers import poisson_pdf
+from src.distributions.utils import rectify
 
-class HyperQMDPLayer(jit.ScriptModule):
+class HyperQMDPLayer(nn.Module):
     """ Causal hypernet version of qmdp layer """
     def __init__(self, state_dim, act_dim, rank, horizon, hyper_dim):
         super().__init__()
@@ -38,15 +37,24 @@ class HyperQMDPLayer(jit.ScriptModule):
         z = torch.zeros(1, self.hyper_dim).to(self._b0.bias.device)
         return self.compute_transition(z)
     
-    @jit.script_method
+    def parameter_entropy(self, z):
+        eps = 1e-6
+        b0_ent = torch.log(torch.abs(self._b0.weight) + eps).sum() / self.hyper_dim
+        u_ent = torch.log(torch.abs(self._u.weight) + eps).sum() / self.hyper_dim
+        v_ent = torch.log(torch.abs(self._v.weight) + eps).sum() / self.hyper_dim
+        w_ent = torch.log(torch.abs(self._w.weight) + eps).sum() / self.hyper_dim
+        tau_ent = torch.log(torch.abs(self._tau.weight) + eps).sum() / self.hyper_dim
+        
+        ent = b0_ent + u_ent + v_ent + w_ent + tau_ent
+        return ent
+
     def compute_transition(self, z):
         u = self._u(z).view(-1, self.rank, self.state_dim)
         v = self._v(z).view(-1, self.rank, self.state_dim)
         w = self._w(z).view(-1, self.rank, self.act_dim)
         core = torch.einsum("nri, nrj, nrk -> nkij", u, v, w)
         return torch.softmax(core, dim=-1)
-
-    @jit.script_method
+    
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
         """ Compute expected value using value iteration
 
@@ -63,8 +71,12 @@ class HyperQMDPLayer(jit.ScriptModule):
             v_next = torch.logsumexp(q[t], dim=-2, keepdim=True)
             q[t+1] = reward + torch.einsum("nkij, nkj -> nki", transition, v_next)
         return torch.stack(q)
-    
-    @jit.script_method
+
+    def compute_horizon_dist(self, z):
+        tau = self._tau(z)
+        h_dist = poisson_pdf(rectify(tau), self.horizon)
+        return h_dist
+
     def plan(self, b: Tensor, z: Tensor, value: Tensor) -> Tensor:
         """ Compute the belief action distribution 
         
@@ -76,15 +88,12 @@ class HyperQMDPLayer(jit.ScriptModule):
         Returns:
             a (torch.tensor): action distribution. size=[batch_size, act_dim]
         """
-        tau = torch.exp(self._tau(z).clip(math.log(1e-6), math.log(1e3)))
-        tau = poisson_pdf(tau, self.horizon)
+        tau = self.compute_horizon_dist(z)
         
         a = torch.softmax(torch.einsum("ni, hnki -> hnk", b, value), dim=-1)
-        # print("a", a.shape, tau.shape)
         a = torch.einsum("hnk, nh -> nk", a, tau)
         return a
     
-    @jit.script_method
     def update_action(self, logp_u: Tensor) -> Tensor:
         """ Compute action posterior 
         
@@ -96,8 +105,7 @@ class HyperQMDPLayer(jit.ScriptModule):
         """ 
         a_post = torch.softmax(logp_u, dim=-1)
         return a_post
-
-    @jit.script_method
+ 
     def update_belief(self, logp_o: Tensor, a: Tensor, b: Tensor, transition: Tensor) -> Tensor:
         """ Compute state posterior
         
@@ -115,7 +123,6 @@ class HyperQMDPLayer(jit.ScriptModule):
         b_post = torch.softmax(logp_s + logp_o, dim=-1)
         return b_post
     
-    @jit.script_method
     def update_cell(
         self, logp_o: Tensor, a: Tensor, b: Tensor, transition: Tensor
         ) -> Tensor:
@@ -123,7 +130,6 @@ class HyperQMDPLayer(jit.ScriptModule):
         b_post = self.update_belief(logp_o, a, b, transition)
         return b_post
     
-    @jit.script_method
     def init_hidden(self, z: Tensor) -> Tensor:
         b0 = torch.softmax(self._b0(z), dim=-1)
         return b0
@@ -136,7 +142,7 @@ class HyperQMDPLayer(jit.ScriptModule):
 
     def forward(
         self, logp_o: Tensor, logp_u: Union[Tensor, None], reward: Tensor, 
-        z: Tensor, b: Union[Tensor, None]
+        z: Tensor, b: Union[Tensor, None], detach: Optional[bool]=False
         ) -> Tuple[Tensor, Tensor]:
         """
         Args:
@@ -146,6 +152,7 @@ class HyperQMDPLayer(jit.ScriptModule):
             reward (torch.tensor): reward matrix. size=[batch_size, act_dim, state_dim]
             z (torch.tensor): hyper vector, size=[batch_size, hyper_dim]
             b ([torch.tensor, None], optional): prior belief. size=[batch_size, state_dim]
+            detach (bool, optional): whether to detach model training. Default=False
         
         Returns:
             alpha_b (torch.tensor): sequence of posterior belief. size=[T, batch_size, state_dim]
@@ -154,7 +161,6 @@ class HyperQMDPLayer(jit.ScriptModule):
         batch_size = logp_o.shape[1]
         transition = self.compute_transition(z)
         value = self.compute_value(transition, reward)
-        # t_offset = 0 if b is not None else -1 # offset for offline prediction
         T = len(logp_o)
         
         if b is None:
@@ -166,7 +172,10 @@ class HyperQMDPLayer(jit.ScriptModule):
         alpha_pi = [torch.empty(0)] * (T)
         for t in range(T):
             alpha_b[t+1] = self.update_cell(logp_o[t], alpha_a[t], alpha_b[t], transition)
-            alpha_pi[t] = self.plan(alpha_b[t+1], z, value)
+            if detach:
+                alpha_pi[t] = self.plan(alpha_b[t+1].data, z, value)
+            else:
+                alpha_pi[t] = self.plan(alpha_b[t+1], z, value)
         
         alpha_b = torch.stack(alpha_b[1:])
         alpha_pi = torch.stack(alpha_pi)
