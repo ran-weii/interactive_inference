@@ -123,11 +123,62 @@ class HyperBehaviorCloning(Model):
         }
         return loss, stats
     
+    def compute_marginal_loss(self, o, u, mask, num_total_eps):
+        """ Elbo loss for marginal likelihood """
+        prior_dist = self.agent.get_prior_dist()
+        z_prior = prior_dist.rsample()
+        z_prior = torch.repeat_interleave(z_prior, o.shape[1], dim=0)
+        
+        post_dist = self.agent.get_posterior_dist(o, u, mask)
+        z_post = post_dist.rsample()
+
+        _, hidden_prior = self.agent.forward(o, u, z_prior, detach=True)
+        act_loss_prior, act_stats_prior = self.agent.act_loss(o, u, z_prior, mask, hidden_prior)
+        obs_loss_prior, obs_stats_prior = self.agent.obs_loss(o, u, z_prior, mask, hidden_prior)
+
+        _, hidden_post = self.agent.forward(o, u, z_post, detach=False)
+        act_loss_post, act_stats_post = self.agent.act_loss(o, u, z_post, mask, hidden_post)
+        obs_loss_post, obs_stats_post = self.agent.obs_loss(o, u, z_post, mask, hidden_post)
+        kl = torch_dist.kl.kl_divergence(post_dist, prior_dist).sum(-1)
+        reg_loss_post = self.compute_reg_loss(z_post)
+        
+        avg_eps_len = torch.mean(mask.sum(0))
+        prior_loss = avg_eps_len * num_total_eps * (
+            self.bc_penalty * act_loss_prior.mean() + \
+            self.obs_penalty * obs_loss_prior.mean()
+        )
+        post_loss = num_total_eps * (
+            torch.mean(act_loss_post * mask.sum(0)) + \
+            torch.mean(kl) + self.reg_penalty * reg_loss_post
+        )
+        loss = prior_loss + post_loss
+        
+        prior_stats = {
+            "total_loss": prior_loss.data.item(),
+            **act_stats_prior, **obs_stats_prior
+        }
+        prior_stats = {f"prior_{k}": v for (k, v) in prior_stats.items()}
+        post_stats = {
+            "total_loss": post_loss.data.item(),
+            **act_stats_post, **obs_stats_post,
+            "kl": kl.data.mean().item(),
+            "reg_loss": reg_loss_post.data.item()
+        }
+        post_stats = {f"post_{k}": v for (k, v) in post_stats.items()}
+        stats = {
+            "total_loss": loss.data.item(),
+            **act_stats_post, ** obs_stats_post,
+            **prior_stats, **post_stats
+        }
+        return loss, stats
+
     def compute_loss(self, o, u, mask, num_total_eps):
         if self.train_mode == "prior":
             loss, stats = self.compute_prior_loss(o, u, mask, num_total_eps)
         elif self.train_mode == "post":
             loss, stats = self.compute_posterior_loss(o, u, mask)
+        elif self.train_mode == "marginal":
+            loss, stats = self.compute_marginal_loss(o, u, mask, num_total_eps)
         return loss, stats
 
     def run_epoch(self, loader, train=True):
