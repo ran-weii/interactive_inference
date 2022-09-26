@@ -66,13 +66,20 @@ class HyperVINAgent(AbstractAgent):
         self.obs_mean = nn.Parameter(torch.zeros(obs_dim), requires_grad=False)
         self.obs_variance = nn.Parameter(torch.ones(obs_dim), requires_grad=False)
     
-    def reset(self):
-        """ Reset internal states for online inference """
+    def reset(self, z=None):
+        """ Reset internal states for online inference 
+        
+        Args:
+            z (torch.tensor): latent variable. size=[1, hyper_dim]
+        """
+        if z is None:
+            z = self.sample_z()
+            
         self._prev_ctl = None # previous control
         self._state = {
             "b": None, # previous belief distribution
             "pi": None, # previous policy/action prior
-            "z": self.sample_z(), # hyper vector
+            "z": z, # hyper vector
         }
 
     @property
