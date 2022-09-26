@@ -22,13 +22,14 @@ class Evaluator:
         self._track["vx_rel"].append(obs[0, 6].item())
         self._track["loom_x"].append(obs[0, 9].item())
 
-def eval_episode(env, agent, eps_id, max_steps=1000, sample_method="ace", playback=False):
+def eval_episode(env, agent, eps_id, z=None, max_steps=1000, sample_method="ace", playback=False):
     """ Evaluate episode
     
     Args:
         env (Env): gym style simulator
         agent (Agent): agent class
         eps_id (int): episode id
+        z (torch.tensor, optional): latent variable for posterior simulation. size=[1, hyper_dim]
         max_steps (int, optional): maximum number of steps. Default=1000
         sample_method (str, optional): 
         playback (bool, optional): whether to playback data ego trajectory. Default=False
@@ -39,7 +40,10 @@ def eval_episode(env, agent, eps_id, max_steps=1000, sample_method="ace", playba
         track_data (dict): recorded track data
     """
     agent.eval()
-    agent.reset()
+    if z is not None:
+        agent.reset(z)
+    else:
+        agent.reset()
     obs = env.reset(eps_id, playback)
     env.observer.push(env._state, agent._state)
 
