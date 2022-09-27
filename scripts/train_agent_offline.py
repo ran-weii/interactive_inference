@@ -18,7 +18,8 @@ from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.rule_based import IDM
 from src.agents.mlp_agents import MLPAgent
-from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
+from src.algo.irl import BehaviorCloning
+from src.algo.hyper_bc import HyperBehaviorCloning
 
 # training imports
 from src.algo.utils import train
@@ -64,13 +65,15 @@ def parse_args():
     parser.add_argument("--gru_layers", type=int, default=1, help="number of gru layers, default=1")
     parser.add_argument("--activation", type=str, default="relu", help="nn activation, default=relu")
     parser.add_argument("--norm_obs", type=bool_, default=False, help="whether to normalize observation for discriminator, default=False")
-    parser.add_argument("--use_state", type=bool_, default=False, help="whether to use state for discriminator, default=False")
     # algo args
     parser.add_argument("--algo", type=str, choices=["bc", "hbc", "dag"], default="bc", help="training algorithm, default=bc")
+    parser.add_argument("--train_mode", type=str, choices=["prior", "post", "marginal"], help="training mode for hbc")
     parser.add_argument("--bptt_steps", type=int, default=30, help="bptt truncation steps, default=30")
     parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
-    parser.add_argument("--prior_penalty", type=float, default=0., help="prior penalty, default=0.")
+    parser.add_argument("--reg_penalty", type=float, default=0., help="regularization penalty, default=0.")
+    parser.add_argument("--post_obs_penalty", type=float, default=0., help="posterior observation penalty, default=0.")
+    parser.add_argument("--kl_penalty", type=float, default=1., help="kl penalty, default=1.")
     # training args
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=200, help="max track length, default=200")
@@ -78,6 +81,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=64, help="training batch size, default=64")
     parser.add_argument("--epochs", type=int, default=3, help="number of training epochs, default=10")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate, default=0.01")
+    parser.add_argument("--lr_post", type=float, default=0.005, help="hvin posterior learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
     parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
@@ -236,7 +240,7 @@ def main(arglist):
             with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
                 [ctl_means, ctl_covs, weights] = pickle.load(f)
 
-            agent.ctl_model.init_params(ctl_means, ctl_covs, requires_grad=arglist.discretize_ctl)
+            agent.ctl_model.init_params(ctl_means, ctl_covs)
             print("action model loaded")
 
     elif arglist.agent == "idm":
@@ -250,13 +254,15 @@ def main(arglist):
     # init trainer
     if arglist.algo == "bc":
         model = BehaviorCloning(
-            agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
+            agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.reg_penalty, 
             lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     elif arglist.algo == "hbc":
         model = HyperBehaviorCloning(
-            agent, arglist.bptt_steps, arglist.bc_penalty, arglist.obs_penalty, arglist.prior_penalty, 
-            sample_z=arglist.sample_z, lr=arglist.lr, decay=arglist.decay, grad_clip=arglist.grad_clip
+            agent, arglist.train_mode, arglist.bptt_steps, 
+            arglist.bc_penalty, arglist.obs_penalty, arglist.reg_penalty, 
+            arglist.post_obs_penalty, arglist.kl_penalty,
+            lr=arglist.lr, lr_post=arglist.lr_post, decay=arglist.decay, grad_clip=arglist.grad_clip
         )
     
     print(f"num parameters: {count_parameters(model)}")
