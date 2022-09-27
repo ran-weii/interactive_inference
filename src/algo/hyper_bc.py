@@ -6,7 +6,12 @@ import torch.distributions as torch_dist
 from src.distributions.nn_models import Model
 
 class HyperBehaviorCloning(Model):
-    def __init__(self, agent, train_mode, bptt_steps=30, bc_penalty=1., obs_penalty=0., reg_penalty=0., sample_z=False, lr=1e-3, decay=0, grad_clip=None):
+    def __init__(
+        self, agent, train_mode, bptt_steps=30, 
+        bc_penalty=1., obs_penalty=0., reg_penalty=0., 
+        post_obs_penalty=0., kl_penalty=1.,
+        lr=1e-2, lr_post=1e-3, decay=0, grad_clip=None
+        ):
         super().__init__()
         assert agent.__class__.__name__ == "HyperVINAgent"
         assert train_mode in ["prior", "post", "marginal"]
@@ -15,9 +20,11 @@ class HyperBehaviorCloning(Model):
         self.bc_penalty = bc_penalty
         self.obs_penalty = obs_penalty
         self.reg_penalty = reg_penalty
-        self.sample_z = sample_z # whether to compute obs likelihood with sampled z
+        self.post_obs_penalty = post_obs_penalty
+        self.kl_penalty = kl_penalty
 
         self.lr = lr
+        self.lr_post = lr_post
         self.decay = decay
         self.grad_clip = grad_clip
 
@@ -25,9 +32,12 @@ class HyperBehaviorCloning(Model):
 
         self._set_params_grad()
         
-        self.optimizer = torch.optim.AdamW(
-            self.agent.parameters(), lr=lr, weight_decay=decay
-        )
+        prior_params = [p for (n, p) in self.agent.named_parameters() if "encoder" not in n]
+        post_params = [p for (n, p) in self.agent.named_parameters() if "encoder" in n]
+        self.optimizers = [
+            torch.optim.AdamW(prior_params, lr=lr, weight_decay=decay),
+            torch.optim.AdamW(post_params, lr=lr_post, weight_decay=decay),
+        ]
         self.loss_keys = ["total_loss", "loss_u", "loss_o"]
     
     def _set_params_grad(self):
@@ -43,9 +53,12 @@ class HyperBehaviorCloning(Model):
 
     def __repr__(self):
         s_agent = self.agent.__repr__()
-        s = "{}(train_mode={}, bptt_steps={}, bc_penalty={}, obs_penalty={}, reg_penalty={}, sample_z={}, lr={}, decay={}, grad_clip={},\nagent={})".format(
-            self.__class__.__name__, self.train_mode, self.bptt_steps, self.bc_penalty, self.obs_penalty, self.reg_penalty, 
-            self.sample_z, self.lr, self.decay, self.grad_clip, s_agent
+        s = "{}(train_mode={}, bptt_steps={}, bc_penalty={}, obs_penalty={}, reg_penalty={}, "\
+        "post_obs_penalty={}, kl_penalty={}, lr={}, lr_post={}, decay={}, grad_clip={},\nagent={})".format(
+            self.__class__.__name__, self.train_mode, self.bptt_steps, 
+            self.bc_penalty, self.obs_penalty, self.reg_penalty, 
+            self.post_obs_penalty, self.kl_penalty,
+            self.lr, self.lr_post, self.decay, self.grad_clip, s_agent
         )
         return s
     
@@ -114,7 +127,12 @@ class HyperBehaviorCloning(Model):
         kl = torch_dist.kl.kl_divergence(z_dist, prior_dist).sum(-1)
         reg_loss = self.compute_reg_loss(z)
 
-        loss = torch.mean(act_loss * mask.sum(0) + self.reg_penalty * reg_loss + kl) 
+        loss = torch.mean(
+            act_loss * mask.sum(0) + \
+            self.obs_penalty * obs_loss * mask.sum(0) + \
+            self.reg_penalty * reg_loss + \
+            self.kl_penalty * kl
+        ) 
         
         stats = {
             "total_loss": loss.data.item(),
@@ -149,7 +167,8 @@ class HyperBehaviorCloning(Model):
         )
         post_loss = num_total_eps * (
             torch.mean(act_loss_post * mask.sum(0)) + \
-            torch.mean(kl) + self.reg_penalty * reg_loss_post
+            self.post_obs_penalty * torch.mean(obs_loss_post * mask.sum(0)) + \
+            self.kl_penalty * torch.mean(kl) + self.reg_penalty * reg_loss_post
         )
         loss = prior_loss + post_loss
         
@@ -210,9 +229,10 @@ class HyperBehaviorCloning(Model):
                 
                 if self.grad_clip is not None:
                     nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
-
-                self.optimizer.step()
-            self.optimizer.zero_grad()
+                
+                for optimizer in self.optimizers:
+                    optimizer.step()
+                    optimizer.zero_grad()
             
             stats["train"] = 1 if train else 0
             epoch_stats.append(stats)
