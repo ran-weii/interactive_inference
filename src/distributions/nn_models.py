@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from src.distributions.flows import BatchNormTransform
 
 class Model(nn.Module):
@@ -68,9 +69,13 @@ class GRUMLP(Model):
         self.mlp = MLP(gru_layers * hidden_dim, output_dim, hidden_dim, mlp_layers, activation)
         nn.init.xavier_normal_(self.h0, gain=1.)
 
-    def forward(self, x):
+    def forward(self, x, mask):
+        x_masked = pack_padded_sequence(x, mask.sum(0).cpu(), enforce_sorted=False)
+        
         h0 = self.init_hidden(x.shape[1])
-        out, hn = self.gru(x, h0)
+        out, hn = self.gru(x_masked, h0)
+        out, _ = pad_packed_sequence(out)
+        
         hn = hn.transpose(0, 1).flatten(1, -1)
         out = self.mlp(hn)
         return out
