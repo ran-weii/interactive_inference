@@ -35,17 +35,24 @@ class QMDPLayer(jit.ScriptModule):
 
         self.b0 = nn.Parameter(torch.randn(1, state_dim)) # initial belief
         self.a0 = nn.Parameter(torch.randn(1, act_dim)) # total action prior
-        self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
-        self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
-        self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
         self.tau = nn.Parameter(torch.randn(1, 1))
 
         nn.init.xavier_normal_(self.b0, gain=1.)
         nn.init.xavier_normal_(self.a0, gain=1.)
+        nn.init.uniform_(self.tau, a=-1, b=1)
+        
+        if rank != 0:
+            self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+            self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+            self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+        else:
+            self.u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+            self.v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+            self.w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # action tensor 
+        
         nn.init.xavier_normal_(self.u, gain=1.)
         nn.init.xavier_normal_(self.v, gain=1.)
         nn.init.xavier_normal_(self.w, gain=1.)
-        nn.init.uniform_(self.tau, a=-1, b=1)
     
     def __repr__(self):
         s = "{}(state_dim={}, act_dim={}, rank={}, horizon={}, detach={})".format(
@@ -56,7 +63,10 @@ class QMDPLayer(jit.ScriptModule):
     @property
     def transition(self):
         """ Return transition matrix. size=[1, act_dim, state_dim, state_dim] """
-        w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
+        if self.rank != 0:
+            w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
+        else:
+            w = self.w
         return torch.softmax(w, dim=-1)
     
     @jit.script_method

@@ -150,6 +150,11 @@ class HyperVINAgent(AbstractAgent):
         pi0 = self._pi0(z).view(-1, self.act_dim, self.state_dim)
         return torch.softmax(pi0, dim=-2)
     
+    def compute_policy(self, z):        
+        b = torch.eye(self.state_dim).to(self.device)
+        pi = self.rnn.plan(b, z, self.value)
+        return pi
+
     def compute_reward(self, z, detach=False):
         """ State action reward """
         transition = self.rnn.compute_transition(z)
