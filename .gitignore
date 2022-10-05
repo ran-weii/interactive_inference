@@ -1,9 +1,12 @@
 *.pyc
 *.sh
 *.ipynb
-doc/fig/*
+.DS_Store
+src/.DS_Store
+doc/*
 examples/*
 exp/*
 presentations/*
+publications/*
 interaction-dataset-master/*
 src.egg-info/*
