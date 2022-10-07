@@ -158,15 +158,16 @@ def compute_features(df, map_data, min_seg_len, parallel):
         observer = Observer(map_data, [ego_sensor, lv_sensor, lidar_sensor])
         
         x_ = x.reset_index(drop=True)
-        obs = np.nan * np.ones((len(x_), len(observer.feature_names)))
+        obs = np.nan * np.ones((len(x_), len(observer.feature_set)))
         act = np.nan * np.ones((len(x_), 2))
         if x["seg_id"].values[0] == np.nan:
             df_out = pd.DataFrame(
-                np.hstack([obs, act]), columns=observer.feature_names + observer.action_set,
+                np.hstack([obs, act]), columns=observer.feature_set + observer.action_set,
                 index=x.index
             )
             return df_out
-
+        
+        lv_sensor_track_id = np.nan * np.ones((len(x_),))
         for t in range(len(x_)):
             df_ego = x_.iloc[t]
             track_id = df_ego["track_id"]
@@ -181,7 +182,9 @@ def compute_features(df, map_data, min_seg_len, parallel):
             sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
             
             obs[t] = observer.observe(sensor_obs)
-        df_out = pd.DataFrame(obs, columns=observer.feature_names,index=x.index)
+            lv_sensor_track_id[t] = lv_sensor._lv_track_id
+        df_out = pd.DataFrame(obs, columns=observer.feature_set,index=x.index)
+        df_out.insert(0, "lv_sensor_track_id", lv_sensor_track_id)
         return df_out
 
     df_features = parallel_apply(
