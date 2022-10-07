@@ -1,3 +1,4 @@
+import numpy as np
 
 class CarfollowingReward:
     """
@@ -20,15 +21,23 @@ class CarfollowingReward:
         self.s_rel_penalty = 10.
         self.loom_target = 0.
 
-    def __call__(self, sensor_obs, ctl):
-        ego_obs = sensor_obs["EgoSensor"]
-        lv_obs = sensor_obs["LeadVehicleSensor"]
-        d = ego_obs[self.idx_d]
-        s_rel = lv_obs[self.idx_s_rel]
-        loom_s = lv_obs[self.idx_loom]
+    # def __call__(self, sensor_obs, ctl):
+    #     ego_obs = sensor_obs["EgoSensor"]
+    #     lv_obs = sensor_obs["LeadVehicleSensor"]
+    #     d = ego_obs[self.idx_d]
+    #     s_rel = lv_obs[self.idx_s_rel]
+    #     loom_s = lv_obs[self.idx_loom]
 
-        f1 = -(d - self.d_target) ** 2
-        f2 = (s_rel >= self.min_s_rel) * 0 - self.s_rel_penalty * (s_rel < self.min_s_rel)
-        f3 = -(loom_s - self.loom_target) ** 2
-        r = f1 + f2 + 10 * f3
+    #     f1 = -(d - self.d_target) ** 2
+    #     f2 = (s_rel >= self.min_s_rel) * 0 - self.s_rel_penalty * (s_rel < self.min_s_rel)
+    #     f3 = -(loom_s - self.loom_target) ** 2
+    #     r = f1 + f2 + 10 * f3
+    #     return r
+
+    def __call__(self, sim_state, sensor_obs, ctl):
+        ego_state = sim_state["ego_state"]
+        ego_true_state = sim_state["ego_true_state"]
+        
+        # compute displacement error
+        r = np.sqrt(np.sum((ego_state[:2] - ego_true_state[:2])**2))
         return r

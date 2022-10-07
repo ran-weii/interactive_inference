@@ -141,7 +141,7 @@ class InteractionSimulator:
             sensor_pos[sensor_name] = s_pos
 
         obs = self.observer.observe(sensor_obs)
-        rwd = self.reward_model(sensor_obs, action) 
+        rwd = self.reward_model(sim_state, sensor_obs, action)
         done = True if (self.t + 1) >= self.T else False
         info = self.observer.get_info()
         
