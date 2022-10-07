@@ -221,6 +221,7 @@ def test_sensor_simulator():
     from src.simulation.utils import create_svt_from_df
     from src.simulation.simulator import InteractionSimulator
     from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+    from src.simulation.observers import Observer
     from src.map_api.lanelet import MapReader
     from src.visualization.animation import animate, save_animation
     from src.data.data_filter import filter_segment_by_length
@@ -229,9 +230,9 @@ def test_sensor_simulator():
     map_data = MapReader(cell_len=10)
     map_data.parse(filepath, verbose=True)
     
-    filename = "vehicle_tracks_007.csv"
+    filename = "vehicle_tracks_003.csv"
     df_track = load_data(data_path, scenario, filename)
-    df_track = df_track.iloc[:5000].reset_index(drop=True)
+    # df_track = df_track.iloc[:5000].reset_index(drop=True)
     
     svt_object = create_svt_from_df(df_track, eps_id_col="track_id")
     
@@ -240,21 +241,23 @@ def test_sensor_simulator():
     lv_sensor = LeadVehicleSensor(map_data)
     lidar_sensor = LidarSensor(num_beams)
     sensors = [ego_sensor, lv_sensor, lidar_sensor]
-    # sensors = [ego_sensor, lv_sensor]
+    observer = Observer(map_data, sensors)
     
-    action_set = ["ax_ego", "ay_ego"]
-    env = InteractionSimulator(map_data, sensors, action_set, svt_object)
+    env = InteractionSimulator(map_data, sensors, observer, svt_object)
     
-    env.reset(1) # beam too sparse for eps 3
+    eps_id = np.where(svt_object.ego_track_ids == 524)[0][0] # record 3 537 stuck by merging car
+    # eps_id = 4
+    env.reset(eps_id, playback=True) # beam too sparse for eps 3
     for t in range(env.T - 1):
-        action = env.get_data_action()
-        # action = torch.randn(1, 2)
+        # action = env.get_data_action()
+        action = torch.randn(1, 2)
         obs, _, done, _ = env.step(action)
         if done:
             break
+        env.observer.push(env._state, {})
     
     ani = animate(
-        map_data, env._data, annot=True, axis_on=False
+        map_data, env.observer._data, annot=True, axis_on=False, plot_lidar=False
     )
     save_animation(ani, "/Users/hfml/Documents/test_lidar.mp4")
 
