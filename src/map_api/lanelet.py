@@ -12,6 +12,7 @@ from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
 from src.data.geometry import get_cardinal_direction, dist_two_points
+from src.data.geometry import compute_bounding_box
 from src.visualization.map_vis import (
     get_way_styling, plot_ways, plot_lanelets, plot_lanes)
 
@@ -57,19 +58,37 @@ class MapReader:
                 self._cells.append((cell.polygon, cell.heading))
         return self._cells
     
-    def match_lane(self, x, y):
+    # def match_lane(self, x, y):
+    #     """ Match a point (x, y) to a lane on the map 
+        
+    #     Returns:
+    #         lane_id (int): id of the matched lane. Return None if not matched
+    #     """
+    #     p = Point(x, y)
+    #     matched = False
+    #     for lane_id, lane in self.lanes.items():
+    #         if lane.polygon.contains(p):
+    #             matched = True
+    #             break
+    #     lane_id = None if not matched else lane_id
+    #     return lane_id
+
+    def match_lane(self, x, y, psi, l, w):
         """ Match a point (x, y) to a lane on the map 
         
         Returns:
             lane_id (int): id of the matched lane. Return None if not matched
         """
-        p = Point(x, y)
-        matched = False
+        box = compute_bounding_box(x, y, psi, l, w)
+        p = Polygon(box)
+        
+        intersection_area = np.zeros((len(self.lanes),))
         for lane_id, lane in self.lanes.items():
-            if lane.polygon.contains(p):
-                matched = True
-                break
-        lane_id = None if not matched else lane_id
+            intersection_area[lane_id] = lane.polygon.intersection(p).area
+            
+        lane_id = np.argmax(intersection_area)
+        if np.all(intersection_area == 0.):
+            lane_id = None
         return lane_id
     
     # def match(self, x, y, target_lane_id=None, max_cells=5):

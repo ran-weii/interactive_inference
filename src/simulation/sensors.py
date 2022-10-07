@@ -48,13 +48,16 @@ class EgoSensor:
             ego_measurements (np.array): ego vehicle measurements. size=[5]
             ego_pos (np.array): ego position. size=[2]
         """
-        x_ego, y_ego, vx_ego, vy_ego, psi_ego = (
-            ego_state[[self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, self.psi_idx]]
+        x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego = (
+            ego_state[[
+                self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, 
+                self.psi_idx, self.l_idx, self.w_idx
+            ]]
         )
         
         # match lanes
         if self._ref_path is None:
-            self._ref_path_id = self.map_data.match_lane(x_ego, y_ego)
+            self._ref_path_id = self.map_data.match_lane(x_ego, y_ego, psi_ego, l_ego, w_ego)
             self._ref_path = self.map_data.lanes[self._ref_path_id].centerline.frenet_path
         
         # get ego frenet coordinates
@@ -124,8 +127,11 @@ class LeadVehicleSensor:
         lv_measurements = np.array([self.max_range, 0., 0, 0., 0.]) 
         lv_pos = np.nan * np.ones(2)
 
-        x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego = (
-            ego_state[[self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, self.psi_idx, self.l_idx]]
+        x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego = (
+            ego_state[[
+                self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, 
+                self.psi_idx, self.l_idx, self.w_idx
+            ]]
         )
         relative_states = agent_states - ego_state
 
@@ -135,7 +141,7 @@ class LeadVehicleSensor:
         
         # match lanes
         if self._ref_path is None:
-            self._ref_path_id = self.map_data.match_lane(x_ego, y_ego)
+            self._ref_path_id = self.map_data.match_lane(x_ego, y_ego, psi_ego, l_ego, w_ego)
             self._ref_path = self.map_data.lanes[self._ref_path_id].centerline.frenet_path
         
         # get ego frenet coordinates
@@ -165,7 +171,11 @@ class LeadVehicleSensor:
 
         # filter agent not in the same lane
         agent_path_ids = np.array([self.map_data.match_lane(
-            agent_states[i, self.x_idx], agent_states[i, self.y_idx]
+            agent_states[i, self.x_idx], 
+            agent_states[i, self.y_idx],
+            agent_states[i, self.psi_idx],
+            agent_states[i, self.l_idx],
+            agent_states[i, self.w_idx],
         ) for i in range(len(agent_states))])
         is_same_lane = np.where(agent_path_ids == self._ref_path_id)
         agent_states = agent_states[is_same_lane].copy() 
