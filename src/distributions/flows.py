@@ -34,6 +34,21 @@ class SimpleTransformedModule(TransformedDistribution):
                 raise NotImplementedError
         return variance
     
+    @property
+    def covariance_matrix(self):
+        if self.base_dist.__class__.__name__ != "MultivariateNormal":
+            raise NotImplementedError
+        else:
+            covariance_matrix = self.base_dist.covariance_matrix
+            for transform in self.transforms:
+                if transform.__class__.__name__ == "BatchNormTransform":
+                    w = transform.moving_variance / transform.constrained_gamma**2
+                    w_mask = w.unsqueeze(-1) * w.unsqueeze(-2)
+                    covariance_matrix *= w_mask
+                else:
+                    raise NotImplementedError
+        return covariance_matrix
+
     def entropy(self):
         entropy = self.base_dist.entropy()
         for transform in self.transforms:
