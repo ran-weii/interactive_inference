@@ -91,7 +91,7 @@ def get_trajectory_segment_id(df, colnames):
             dict(zip(unique_valid_seg_labels, np.arange(len(unique_valid_seg_labels))))
         )
     )
-    seg_id = df_labels["seg_labels"].values
+    seg_id = df_labels["seg_labels"].values.astype(float)
     return seg_id
 
 def filter_segment_by_length(seg_id, min_seg_len):
@@ -113,7 +113,7 @@ def filter_segment_by_length(seg_id, min_seg_len):
     df_seg_id = pd.DataFrame(seg_id, columns=["seg_id"])
     df_seg_id = df_seg_id.merge(df_seg_len, on="seg_id", how="left")
     
-    new_seg_id = df_seg_id["seg_id"].values
+    new_seg_id = df_seg_id["seg_id"].values.astype(float)
     new_seg_id[df_seg_id["seg_len"] < min_seg_len] = np.nan
     new_seg_len = df_seg_id["seg_len"].values
     new_seg_len[df_seg_id["seg_len"] < min_seg_len] = np.nan
