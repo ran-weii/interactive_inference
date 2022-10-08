@@ -19,7 +19,7 @@ class EgoSensor:
         self.id_idx = state_keys.index("track_id")
         
         self.feature_names = [
-            "ego_d", "ego_ds", "ego_dd", "ego_psi_error_r", "ego_kappa_r"
+            "ego_d", "ego_ds", "ego_dd", "ego_psi_error_r", "ego_kappa_r", "ego_lane_id"
         ]
         self.reset()
     
@@ -39,6 +39,7 @@ class EgoSensor:
         lane lateral speed
         lane heading error
         lane curvature
+        lane id
         -----------------
         
         Args:
@@ -72,7 +73,7 @@ class EgoSensor:
         kappa_r = self._ref_path.get_curvature(s)
         psi_error_r = wrap_angles(psi_ego - psi_tan)
         
-        ego_measurements = np.array([d, ds, dd, psi_error_r, kappa_r])
+        ego_measurements = np.array([d, ds, dd, psi_error_r, kappa_r, self._ref_path_id])
         ego_pos = ego_state[[self.x_idx, self.y_idx]]
 
         self._s_condition_ego = s_condition_ego
@@ -81,9 +82,10 @@ class EgoSensor:
 
 
 class LeadVehicleSensor:
-    def __init__(self, map_data, max_range=60., state_keys=STATE_KEYS):
+    def __init__(self, map_data, max_range=60., state_keys=STATE_KEYS, track_lv=True):
         self.map_data = map_data
         self.max_range = max_range
+        self.track_lv = track_lv # whether to keep tracking a single lv
 
         self.x_idx = state_keys.index("x")
         self.y_idx = state_keys.index("y")
@@ -95,7 +97,7 @@ class LeadVehicleSensor:
         self.id_idx = state_keys.index("track_id")
         
         self.feature_names = [
-            "lv_s_rel", "lv_ds_rel", "lv_inv_tau", "lv_d", "lv_dd"
+            "lv_s_rel", "lv_ds_rel", "lv_inv_tau", "lv_d", "lv_dd", "lv_track_id"
         ]
         self.reset()
 
@@ -113,6 +115,7 @@ class LeadVehicleSensor:
         inverse ttc
         lv lane offset
         lv lane lateral speed
+        lv track id
         -----------------
 
         Args:
@@ -124,7 +127,7 @@ class LeadVehicleSensor:
             lv_pos (np.array): lead vehicle position. size=[2]
         """
         # default measurements
-        lv_measurements = np.array([self.max_range, 0., 0, 0., 0.]) 
+        lv_measurements = np.array([self.max_range, 0., 0, 0., 0., 0.]) 
         lv_pos = np.nan * np.ones(2)
 
         x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego = (
@@ -150,7 +153,7 @@ class LeadVehicleSensor:
             x_ego, y_ego, v_ego, None, psi_ego, None, order=2
         )
         
-        if self._lv_track_id is not None:
+        if self._lv_track_id is not None and self.track_lv:
             agent_states = agent_states[np.where(agent_states[:, self.id_idx] == self._lv_track_id)]
             if len(agent_states) > 0:
                 x_agent = agent_states[0, self.x_idx]
@@ -159,12 +162,13 @@ class LeadVehicleSensor:
                 psi_agent = agent_states[0, self.psi_idx]
                 l_agent = agent_states[0, self.l_idx]
                 w_agent = agent_states[0, self.w_idx]
+                id_agent = agent_states[0, self.id_idx]
                 s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
                     x_agent, y_agent, v_agent, None, psi_agent, None, order=2
                 )
                 lv_measurements = self.get_measurements(
                     s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
-                    l_ego, l_agent, w_agent
+                    l_ego, l_agent, w_agent, id_agent
                 )
                 lv_pos = agent_states[0, :2]
             return lv_measurements, lv_pos
@@ -189,6 +193,7 @@ class LeadVehicleSensor:
             psi_agent = agent_states[i, self.psi_idx]
             l_agent = agent_states[i, self.l_idx]
             w_agent = agent_states[i, self.w_idx]
+            id_agent = agent_states[i, self.id_idx]
             s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
                 x_agent, y_agent, v_agent, None, psi_agent, None, order=2
             )
@@ -197,7 +202,7 @@ class LeadVehicleSensor:
                 headway_distance_lv = headway_distance
                 lv_measurements = self.get_measurements(
                     s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
-                    l_ego, l_agent, w_agent
+                    l_ego, l_agent, w_agent, id_agent
                 )
                 lv_pos = agent_states[i, :2]
                 self._lv_track_id = agent_states[i, self.id_idx]
@@ -206,16 +211,17 @@ class LeadVehicleSensor:
 
     def get_measurements(
         self, s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
-        l_ego, l_agent, w_agent
+        l_ego, l_agent, w_agent, id_agent
         ):
         s_rel = s_condition_agent[0] - s_condition_ego[0]
         ds_rel = s_condition_agent[1] - s_condition_ego[1]
-        lv_measurements = np.zeros(5) 
+        lv_measurements = np.zeros(6) 
         lv_measurements[0] = s_rel - l_agent / 2 - l_ego / 2
         lv_measurements[1] = s_condition_agent[1] - s_condition_ego[1]
         lv_measurements[2] = calc_looming(s_rel, ds_rel, l_agent, w_agent, l_ego)
         lv_measurements[3] = d_condition_agent[0]
         lv_measurements[4] = d_condition_agent[1]
+        lv_measurements[5] = id_agent
         return lv_measurements
     
     @staticmethod
