@@ -230,7 +230,7 @@ def test_sensor_simulator():
     map_data = MapReader(cell_len=10)
     map_data.parse(filepath, verbose=True)
     
-    filename = "vehicle_tracks_003.csv"
+    filename = "vehicle_tracks_007.csv"
     df_track = load_data(data_path, scenario, filename)
     # df_track = df_track.iloc[:5000].reset_index(drop=True)
     
@@ -238,14 +238,14 @@ def test_sensor_simulator():
     
     num_beams = 20
     ego_sensor = EgoSensor(map_data)
-    lv_sensor = LeadVehicleSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data, track_lv=False)
     lidar_sensor = LidarSensor(num_beams)
     sensors = [ego_sensor, lv_sensor, lidar_sensor]
     observer = Observer(map_data, sensors)
     
     env = InteractionSimulator(map_data, sensors, observer, svt_object)
     
-    eps_id = np.where(svt_object.ego_track_ids == 524)[0][0] # record 3 537 stuck by merging car
+    eps_id = np.where(svt_object.ego_track_ids == 65)[0][0] # record 3 537 stuck by merging car
     # eps_id = 4
     env.reset(eps_id, playback=True) # beam too sparse for eps 3
     for t in range(env.T - 1):
