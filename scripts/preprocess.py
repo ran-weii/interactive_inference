@@ -43,6 +43,8 @@ def parse_args():
                         help="invalid lane ids to be filtered. str no space separated by comma default=1,6")
     parser.add_argument("--train_ratio", type=float, default=0.7, 
                         help="train ratio, default=0.7")
+    parser.add_argument("--num_cores", type=int, default=10, 
+                        help="number of parallel processing cores, default=10")
     parser.add_argument("--parallel", type=bool_, default=True, 
                         help="parallel apply, default=True")
     parser.add_argument("--seed", type=int, default=0)
@@ -145,54 +147,52 @@ def compute_features(df, map_data, min_seg_len, parallel):
     from src.simulation.sensors import STATE_KEYS
     from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
     from src.simulation.observers import Observer
+    
+    ego_sensor = EgoSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data)
+    lidar_sensor = LidarSensor()
+    feature_set = ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
 
-    seg_id = get_trajectory_segment_id(df, ["track_id", "lead_track_id"])
-    seg_id, seg_len = filter_segment_by_length(seg_id, min_seg_len)
-    df = df.assign(seg_id=seg_id)
-    df = df.assign(seg_len=seg_len)
-
-    def f_compute_features_episode(x, **kwargs):
+    def f_compute_features_episode(df_ego, **kwargs):
         ego_sensor = EgoSensor(map_data)
-        lv_sensor = LeadVehicleSensor(map_data)
+        lv_sensor = LeadVehicleSensor(map_data, track_lv=False)
         lidar_sensor = LidarSensor()
-        observer = Observer(map_data, [ego_sensor, lv_sensor, lidar_sensor])
-        
-        x_ = x.reset_index(drop=True)
-        obs = np.nan * np.ones((len(x_), len(observer.feature_set)))
-        act = np.nan * np.ones((len(x_), 2))
-        if x["seg_id"].values[0] == np.nan:
-            df_out = pd.DataFrame(
-                np.hstack([obs, act]), columns=observer.feature_set + observer.action_set,
-                index=x.index
-            )
-            return df_out
-        
-        lv_sensor_track_id = np.nan * np.ones((len(x_),))
-        for t in range(len(x_)):
-            df_ego = x_.iloc[t]
-            track_id = df_ego["track_id"]
-            frame_id = df_ego["frame_id"]
-            df_agents = df.loc[(df["frame_id"] == frame_id) & (df["track_id"] != track_id) ]
-            ego_state = df_ego[STATE_KEYS].values.astype(np.float64)
-            agent_states = df_agents[STATE_KEYS].values.astype(np.float64)
+        observer = Observer(
+            map_data, [ego_sensor, lv_sensor, lidar_sensor], 
+            feature_set=ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
+        )
 
-            sensor_obs = {}
-            sensor_obs["EgoSensor"], _ = ego_sensor.get_obs(ego_state, agent_states)
-            sensor_obs["LeadVehicleSensor"], _ = lv_sensor.get_obs(ego_state, agent_states)
-            sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
-            
-            obs[t] = observer.observe(sensor_obs)
-            lv_sensor_track_id[t] = lv_sensor._lv_track_id
-        df_out = pd.DataFrame(obs, columns=observer.feature_set,index=x.index)
-        df_out.insert(0, "lv_sensor_track_id", lv_sensor_track_id)
-        return df_out
+        track_id = df_ego["track_id"]
+        frame_id = df_ego["frame_id"]
+        df_agents = df.loc[(df["frame_id"] == frame_id) & (df["track_id"] != track_id) ]
+        ego_state = df_ego[STATE_KEYS].values.astype(np.float64)
+        agent_states = df_agents[STATE_KEYS].values.astype(np.float64)
 
-    df_features = parallel_apply(
-        df.groupby("seg_id"), f_compute_features_episode, parallel, axis=1, desc="computing features"
+        sensor_obs = {}
+        sensor_obs["EgoSensor"], _ = ego_sensor.get_obs(ego_state, agent_states)
+        sensor_obs["LeadVehicleSensor"], _ = lv_sensor.get_obs(ego_state, agent_states)
+        sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
+        obs = observer.observe(sensor_obs).numpy()
+        return obs
+    
+    features = parallel_apply(
+        df, f_compute_features_episode, parallel, axis=1, desc="computing features"
     )
-    df_features = df[["track_id", "frame_id", "seg_id", "seg_len"]].merge(
+    df_features = pd.DataFrame(np.vstack(features.values), columns=feature_set)
+    df_features = df[["track_id", "frame_id"]].merge(
         df_features, how="left", left_index=True, right_index=True
     )
+    
+    # compute drive segment id based on features
+    seg_id = get_trajectory_segment_id(df_features, ["track_id", "ego_lane_id", "lv_track_id"])
+    seg_id, seg_len = filter_segment_by_length(seg_id, min_seg_len)
+    
+    df_features.insert(2, "seg_id", seg_id)
+    df_features.insert(3, "seg_len", seg_len)
+
+    df.insert(2, "seg_id", seg_id)
+    df.insert(3, "seg_len", seg_len)
+    df.insert(4, "ego_lane_id", df_features["ego_lane_id"])
 
     def compute_trajectory_features(x):
         """ Compute features that require the entire trajectory """
@@ -205,7 +205,7 @@ def compute_features(df, map_data, min_seg_len, parallel):
                 x["ax"].values, x["ay"].values, x["psi_rad"].values
             )
             
-            ref_lane_id = x["lane_id"].values[0]
+            ref_lane_id = x["ego_lane_id"].values[0].astype(int)
             ref_path = map_data.lanes[ref_lane_id].centerline.frenet_path
             trajectory.get_frenet_trajectory(ref_path)
             
@@ -235,7 +235,7 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
     """ Return dataframe with fields 
     ["track_id", "frame_id", "is_tail", "is_tail_merging", "eps_id", "eps_len", "is_train"] 
     """
-    df_follow = df.loc[df["seg_id"].isna() == False]
+    df_follow = df.loc[(df["seg_id"].isna() == False) & (df["lv_track_id"] != 0)]
     
     feature_names = ["ego_d", "ego_dd", "ddd", "ego_psi_error_r"]
 
@@ -262,7 +262,7 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
     new_seg_id = df_follow["seg_id"].values.copy().astype(float)
     new_seg_id[df_follow["is_tail_merging"] == 1] = np.nan
     new_seg_id[df_follow["is_head_merging"] == 1] = np.nan
-    new_seg_id[df_follow["lane_id"].isin(invalid_lane_ids)] = np.nan
+    new_seg_id[df_follow["ego_lane_id"].isin(invalid_lane_ids)] = np.nan
     new_seg_id, new_seg_len = filter_segment_by_length(new_seg_id, min_seg_len)
     
     df_follow = df_follow.assign(eps_id=new_seg_id)
@@ -291,6 +291,15 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
 
 def main(arglist):
     np.random.seed(arglist.seed)
+    swifter.set_defaults(
+        npartitions=arglist.num_cores,
+        dask_threshold=1,
+        scheduler="processes",
+        progress_bar=True,
+        progress_bar_desc=None,
+        allow_dask_on_strings=False,
+        force_parallel=arglist.parallel,
+    )
     
     # make save path
     data_path = os.path.join(arglist.data_path, "processed_trackfiles")
@@ -349,7 +358,7 @@ def main(arglist):
         df_kf = pd.read_csv(kf_path)
         df_neighbor = pd.read_csv(neighbor_path)
         df = df.merge(df_kf, on=["track_id", "frame_id"], how="right")
-        df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
+        # df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
         
@@ -364,7 +373,7 @@ def main(arglist):
         )
         df_neighbor = pd.read_csv(neighbor_path)
         df_feature = pd.read_csv(feature_path)
-        df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
+        # df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
         df = df.merge(df_feature, on=["track_id", "frame_id"], how="right")
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
