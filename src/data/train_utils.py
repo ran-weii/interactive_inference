@@ -24,16 +24,13 @@ def load_data(data_path, scenario, filename, train=True):
     df_kf = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", "kalman_filter", scenario, filename)
     ).drop(columns=["track_id", "frame_id"])
-    df_neighbors = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "neighbors", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
     df_features = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", "features", scenario, filename)
     ).drop(columns=["track_id", "frame_id"])
     df_labels = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", "train_labels", scenario, filename)
     ).drop(columns=["track_id", "frame_id"])
-    df_track = pd.concat([df_track, df_kf, df_neighbors, df_features, df_labels], axis=1)
+    df_track = pd.concat([df_track, df_kf, df_features, df_labels], axis=1)
     df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
     
     if not train:
