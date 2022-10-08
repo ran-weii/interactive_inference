@@ -170,11 +170,12 @@ class EgoDataset(BaseDataset):
         self.ego_fields = [
             "x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id"
         ]
-        self.agent_id_fields = [
-            "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",
-            "left_lead_track_id", "right_lead_track_id",
-            "left_follow_track_id", "right_follow_track_id"
-        ]
+        # self.agent_id_fields = [
+        #     "lead_track_id", "follow_track_id", "left_track_id", "right_track_id",
+        #     "left_lead_track_id", "right_lead_track_id",
+        #     "left_follow_track_id", "right_follow_track_id"
+        # ]
+        self.agent_id_fields = ["lv_track_id"]
         self.act_fields = ["ax", "ay"]
         
         if create_svt:
