@@ -42,7 +42,7 @@ class SimpleTransformedModule(TransformedDistribution):
             covariance_matrix = self.base_dist.covariance_matrix
             for transform in self.transforms:
                 if transform.__class__.__name__ == "BatchNormTransform":
-                    w = transform.moving_variance / transform.constrained_gamma**2
+                    w = transform.moving_variance**0.5 / transform.constrained_gamma
                     w_mask = w.unsqueeze(-1) * w.unsqueeze(-2)
                     covariance_matrix *= w_mask
                 else:
