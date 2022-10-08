@@ -86,11 +86,8 @@ class TanhTransform(TransformModule):
         return ldj
 
 
-""" TODO
-test batch norm on multidimension input, verify log_prob accuracy
-add torch transformation class with affine mean, variance, and entropy transforms
-"""
 class BatchNormTransform(TransformModule):
+    """ Adapted from pyro's BatchNormTransform. However, we do not use sample mean in _inverse """
     domain = constraints.real
     codomain = constraints.real
     bijective = True
@@ -100,9 +97,7 @@ class BatchNormTransform(TransformModule):
         self.input_dim = input_dim
         self.momentum = momentum
         self.epsilon = epsilon
-        
-        # self.register_buffer('moving_mean', torch.zeros(input_dim))
-        # self.register_buffer('moving_variance', torch.ones(input_dim))
+         
         self.moving_mean = nn.Parameter(torch.zeros(input_dim), requires_grad=False)
         self.moving_variance = nn.Parameter(torch.ones(input_dim), requires_grad=False)
         
@@ -127,16 +122,11 @@ class BatchNormTransform(TransformModule):
             with torch.no_grad():
                 self.moving_mean.mul_(1 - self.momentum).add_(mean * self.momentum)
                 self.moving_variance.mul_(1 - self.momentum).add_(var * self.momentum)
-        else:
-            mean, var = self.moving_mean, self.moving_variance
-        return (y - mean) * self.constrained_gamma / torch.sqrt(
-            var + self.epsilon
-        ) + self.beta
+        
+        return (y - self.moving_mean) * self.constrained_gamma / torch.sqrt(
+                self.moving_variance + self.epsilon
+            ) + self.beta
     
     def log_abs_det_jacobian(self, x, y):
-        op_dims = [i for i in range(len(y.shape) - 1)]
-        if self.training:
-            var = torch.var(y, dim=op_dims, keepdim=True)
-        else:
-            var = self.moving_variance
+        var = self.moving_variance
         return -self.constrained_gamma.log() + 0.5 * torch.log(var + self.epsilon)
