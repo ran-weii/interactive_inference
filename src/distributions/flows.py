@@ -61,7 +61,7 @@ class SimpleTransformedModule(TransformedDistribution):
                 raise NotImplementedError
         return entropy
 
-""" NOTE: too unstable for certain action space """
+
 class TanhTransform(TransformModule):
     """ Adapted from Pytorch implementation """
     domain = constraints.real
@@ -87,7 +87,10 @@ class TanhTransform(TransformModule):
 
 
 class BatchNormTransform(TransformModule):
-    """ Adapted from pyro's BatchNormTransform. However, we do not use sample mean in _inverse """
+    """ Masked batchnorm transform adapted from pyro's implementation. 
+    Masks are inferred from observations assuming unmasked observations will not be exactly zero.
+    Otherwise we treat them as zero padded.
+    """
     domain = constraints.real
     codomain = constraints.real
     bijective = True
@@ -118,15 +121,25 @@ class BatchNormTransform(TransformModule):
         op_dims = [i for i in range(len(y.shape) - 1)]
         
         if self.training:
-            mean, var = y.mean(op_dims), y.var(op_dims)
+            mask = 1. - 1. * torch.all(y == 0, dim=-1, keepdim=True)
+            mean = torch.sum(mask * y, dim=op_dims) / (mask.sum(op_dims) + 1e-6)
+            var = torch.sum(mask * (y - mean)**2, dim=op_dims) / (mask.sum(op_dims) + 1e-6)
             with torch.no_grad():
                 self.moving_mean.mul_(1 - self.momentum).add_(mean * self.momentum)
                 self.moving_variance.mul_(1 - self.momentum).add_(var * self.momentum)
+        else:
+            mean, var = self.moving_mean, self.moving_variance
         
-        return (y - self.moving_mean) * self.constrained_gamma / torch.sqrt(
-                self.moving_variance + self.epsilon
-            ) + self.beta
+        return (y - mean) * self.constrained_gamma / torch.sqrt(
+            var + self.epsilon
+        ) + self.beta
     
-    def log_abs_det_jacobian(self, x, y):
-        var = self.moving_variance
+    def log_abs_det_jacobian(self, x, y, mask=None):
+        op_dims = [i for i in range(len(y.shape) - 1)]
+        if self.training:
+            mask = 1. - 1. * torch.all(y == 0, dim=-1, keepdim=True)
+            mean = torch.sum(mask * y, dim=op_dims, keepdim=True) / (mask.sum(op_dims) + 1e-6)
+            var = torch.sum(mask * (y - mean)**2, dim=op_dims, keepdim=True) / (mask.sum(op_dims) + 1e-6)
+        else:
+            var = self.moving_variance
         return -self.constrained_gamma.log() + 0.5 * torch.log(var + self.epsilon)
