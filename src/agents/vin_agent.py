@@ -15,7 +15,7 @@ class VINAgent(AbstractAgent):
     """
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
-        obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, detach=True
+        obs_cov="full", ctl_cov="full", rwd="efe", use_tanh=False, ctl_lim=None, detach=True
         ):
         super().__init__()
         self.state_dim = state_dim
@@ -25,6 +25,7 @@ class VINAgent(AbstractAgent):
         self.horizon = horizon
         self.alpha = alpha # obs entropy temperature
         self.beta = beta # policy prior temperature
+        self.rwd = rwd
         self.detach = detach
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, detach=detach)
@@ -72,7 +73,8 @@ class VINAgent(AbstractAgent):
     
     @property
     def value(self):
-        value = self.rnn.compute_value(self.transition, self.reward)
+        reward = self.compute_reward()
+        value = self.rnn.compute_value(self.transition, reward)
         return value
     
     @property
@@ -97,9 +99,8 @@ class VINAgent(AbstractAgent):
         kl = kl_divergence(torch.eye(self.state_dim), c)
         return -kl - self.alpha * entropy
     
-    @property
-    def reward(self):
-        """ State action reward """
+    def compute_efe(self):
+        """ Compute negative expected free energy """
         transition = self.rnn.transition
         entropy = self.obs_model.entropy() / self.obs_dim
 
@@ -110,8 +111,56 @@ class VINAgent(AbstractAgent):
         c = self.target_dist
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
+        r = -kl - self.alpha * eh
+        return r
+
+    def compute_ece(self, num_samples=200):
+        """ Compute expected cross entropy """
+        # sample observation
+        transition = self.rnn.transition
+        o = self.obs_model.sample((num_samples,))
+        self.obs_model.bn.training = False # temp solution to work with batch norm
+        logp_o = self.obs_model.log_prob(o)
+        self.obs_model.bn.training = self.training 
+        
+        if self.detach:
+            transition = transition.data
+            logp_o = logp_o.data
+        
+        # compute expected reward
+        logp_s = torch.log(self.target_dist + 1e-6)
+        log_r = torch.logsumexp(logp_s + logp_o, dim=-1)
+        r = torch.einsum("nkij, nj -> nki", transition, log_r.mean(0))
+        return r
+    
+    def compute_ig(self, num_samples):
+        """ Compute expected information gain """
+        # sample observation
+        transition = self.rnn.transition
+        o = self.obs_model.sample((num_samples,))
+        self.obs_model.bn.training = False
+        logp_o = self.obs_model.log_prob(o)
+        self.obs_model.bn.training = self.training 
+        
+        if self.detach:
+            transition = transition.data
+            logp_o = logp_o.data
+        
+        # second to last dim is the ancestral sampling source dim
+        log_transition = torch.log(transition + 1e-6).unsqueeze(0).unsqueeze(-2)
+        b_next = torch.softmax(
+            log_transition + logp_o.unsqueeze(2).unsqueeze(2), dim=-1
+        )
+        kl = kl_divergence(b_next, transition.unsqueeze(0).unsqueeze(-2))
+        ig = torch.einsum("nkij, nkij -> nki", transition, kl.sum(0)) / self.obs_dim
+        return ig
+    
+    def compute_reward(self):
         log_pi0 = torch.log(self.pi0 + 1e-6)
-        r = -kl - self.alpha * eh + self.beta * log_pi0
+        if self.rwd == "efe":
+            r = self.compute_efe() + self.beta * log_pi0
+        else:
+            r = self.compute_ece() + self.beta * log_pi0
         return r
 
     def forward(
@@ -135,7 +184,7 @@ class VINAgent(AbstractAgent):
 
         logp_o = self.obs_model.log_prob(o)
         logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
-        reward = self.reward
+        reward = self.compute_reward()
         alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, b)
         return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
     
