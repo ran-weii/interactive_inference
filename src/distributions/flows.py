@@ -134,7 +134,7 @@ class BatchNormTransform(TransformModule):
             var + self.epsilon
         ) + self.beta
     
-    def log_abs_det_jacobian(self, x, y, mask=None):
+    def log_abs_det_jacobian(self, x, y):
         op_dims = [i for i in range(len(y.shape) - 1)]
         if self.training:
             mask = 1. - 1. * torch.all(y == 0, dim=-1, keepdim=True)
