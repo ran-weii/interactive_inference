@@ -220,7 +220,7 @@ def test_sensor_simulator():
     from src.data.train_utils import load_data
     from src.simulation.utils import create_svt_from_df
     from src.simulation.simulator import InteractionSimulator
-    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor, FollowVehicleSensor
     from src.simulation.observers import Observer
     from src.map_api.lanelet import MapReader
     from src.visualization.animation import animate, save_animation
@@ -232,15 +232,16 @@ def test_sensor_simulator():
     
     filename = "vehicle_tracks_007.csv"
     df_track = load_data(data_path, scenario, filename)
-    # df_track = df_track.iloc[:5000].reset_index(drop=True)
+    df_track = df_track.iloc[:5000].reset_index(drop=True)
     
     svt_object = create_svt_from_df(df_track, eps_id_col="track_id")
     
     num_beams = 20
     ego_sensor = EgoSensor(map_data)
-    lv_sensor = LeadVehicleSensor(map_data, track_lv=False)
+    lv_sensor = LeadVehicleSensor(map_data, track_lv=True)
+    fv_sensor = FollowVehicleSensor(map_data, track_fv=True)
     lidar_sensor = LidarSensor(num_beams)
-    sensors = [ego_sensor, lv_sensor, lidar_sensor]
+    sensors = [ego_sensor, lv_sensor, fv_sensor, lidar_sensor]
     observer = Observer(map_data, sensors)
     
     env = InteractionSimulator(map_data, sensors, observer, svt_object)
