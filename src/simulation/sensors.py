@@ -242,6 +242,167 @@ class LeadVehicleSensor:
         return inv_tau
 
 
+class FollowVehicleSensor:
+    def __init__(self, map_data, max_range=60., state_keys=STATE_KEYS, track_fv=True):
+        self.map_data = map_data
+        self.max_range = max_range
+        self.track_fv = track_fv # whether to keep tracking a single fv
+
+        self.x_idx = state_keys.index("x")
+        self.y_idx = state_keys.index("y")
+        self.vx_idx = state_keys.index("vx")
+        self.vy_idx = state_keys.index("vy")
+        self.psi_idx = state_keys.index("psi_rad")
+        self.l_idx = state_keys.index("length")
+        self.w_idx = state_keys.index("width")
+        self.id_idx = state_keys.index("track_id")
+        
+        self.feature_names = [
+            "fv_s_rel", "fv_ds_rel", "fv_inv_tau", "fv_d", "fv_dd", "fv_track_id"
+        ]
+        self.reset()
+
+    def reset(self):
+        self._ref_path_id = None
+        self._ref_path = None
+        self._fv_track_id = None
+
+    def get_obs(self, ego_state, agent_states):
+        """ Compute the following follow vehicle related features
+        
+        -----------------
+        relative distance
+        relative speed
+        inverse ttc
+        fv lane offset
+        fv lane lateral speed
+        fv track id
+        -----------------
+
+        Args:
+            ego_state (np.array): size=[state_dim]
+            agent_states (np.array): size=[num_agents, state_dim]
+
+        Returns:
+            fv_measurements (np.array): follow vehicle measurements. size=[5]
+            fv_pos (np.array): follow vehicle position. size=[2]
+        """
+        # default measurements
+        fv_measurements = np.array([self.max_range, 0., 0, 0., 0., 0.]) 
+        fv_pos = np.nan * np.ones(2)
+
+        x_ego, y_ego, vx_ego, vy_ego, psi_ego, l_ego, w_ego = (
+            ego_state[[
+                self.x_idx, self.y_idx, self.vx_idx, self.vy_idx, 
+                self.psi_idx, self.l_idx, self.w_idx
+            ]]
+        )
+        relative_states = agent_states - ego_state
+
+        # remove out of range agents
+        distances = np.linalg.norm(relative_states[:, :2], axis=-1)
+        agent_states = agent_states[distances <= self.max_range].copy()
+        
+        # match lanes
+        if self._ref_path is None:
+            self._ref_path_id = self.map_data.match_lane(x_ego, y_ego, psi_ego, l_ego, w_ego)
+            self._ref_path = self.map_data.lanes[self._ref_path_id].centerline.frenet_path
+        
+        # get ego frenet coordinates
+        v_ego = np.sqrt(vx_ego**2 + vy_ego**2)
+        s_condition_ego, d_condition_ego = self._ref_path.cartesian_to_frenet(
+            x_ego, y_ego, v_ego, None, psi_ego, None, order=2
+        )
+        
+        if self._fv_track_id is not None and self.track_fv:
+            agent_states = agent_states[np.where(agent_states[:, self.id_idx] == self._fv_track_id)]
+            if len(agent_states) > 0:
+                x_agent = agent_states[0, self.x_idx]
+                y_agent = agent_states[0, self.y_idx]
+                v_agent = np.sqrt(agent_states[0, self.vx_idx]**2 + agent_states[0, self.vy_idx]**2)
+                psi_agent = agent_states[0, self.psi_idx]
+                l_agent = agent_states[0, self.l_idx]
+                w_agent = agent_states[0, self.w_idx]
+                id_agent = agent_states[0, self.id_idx]
+                s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
+                    x_agent, y_agent, v_agent, None, psi_agent, None, order=2
+                )
+                fv_measurements = self.get_measurements(
+                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+                    l_ego, l_agent, w_agent, id_agent
+                )
+                fv_pos = agent_states[0, :2]
+            return fv_measurements, fv_pos
+
+        # filter agent not in the same lane
+        agent_path_ids = np.array([self.map_data.match_lane(
+            agent_states[i, self.x_idx], 
+            agent_states[i, self.y_idx],
+            agent_states[i, self.psi_idx],
+            agent_states[i, self.l_idx],
+            agent_states[i, self.w_idx],
+        ) for i in range(len(agent_states))])
+        is_same_lane = np.where(agent_path_ids == self._ref_path_id)
+        agent_states = agent_states[is_same_lane].copy() 
+
+        # get agent frenet coordinates
+        tailway_distance_fv = np.inf
+        for i in range(len(agent_states)):
+            x_agent = agent_states[i, self.x_idx]
+            y_agent = agent_states[i, self.y_idx]
+            v_agent = np.sqrt(agent_states[i, self.vx_idx]**2 + agent_states[i, self.vy_idx]**2)
+            psi_agent = agent_states[i, self.psi_idx]
+            l_agent = agent_states[i, self.l_idx]
+            w_agent = agent_states[i, self.w_idx]
+            id_agent = agent_states[i, self.id_idx]
+            s_condition_agent, d_condition_agent = self._ref_path.cartesian_to_frenet(
+                x_agent, y_agent, v_agent, None, psi_agent, None, order=2
+            )
+            tailway_distance = s_condition_ego[0] - s_condition_agent[0]
+            if tailway_distance > 0 and tailway_distance < tailway_distance_fv:
+                tailway_distance_fv = tailway_distance
+                fv_measurements = self.get_measurements(
+                    s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+                    l_ego, l_agent, w_agent, id_agent
+                )
+                fv_pos = agent_states[i, :2]
+                self._fv_track_id = agent_states[i, self.id_idx]
+        
+        return fv_measurements, fv_pos 
+
+    def get_measurements(
+        self, s_condition_ego, d_condition_ego, s_condition_agent, d_condition_agent, 
+        l_ego, l_agent, w_agent, id_agent
+        ):
+        s_rel = s_condition_ego[0] - s_condition_agent[0]
+        ds_rel = s_condition_ego[1] - s_condition_agent[1]
+        fv_measurements = np.zeros(6) 
+        fv_measurements[0] = s_rel - l_agent / 2 - l_ego / 2
+        fv_measurements[1] = ds_rel
+        fv_measurements[2] = calc_looming(s_rel, ds_rel, l_agent, w_agent, l_ego)
+        fv_measurements[3] = d_condition_agent[0]
+        fv_measurements[4] = d_condition_agent[1]
+        fv_measurements[5] = id_agent
+        return fv_measurements
+    
+    @staticmethod
+    def calc_looming(s_rel, ds_rel, l, w, l0, max_val=10):
+        """ Calculate longitudinal looming 
+        
+        Args:
+            s_rel (float): relative distance
+            ds_rel (float): relative velocity
+            l (float): lead vehicle length
+            w (float): lead vehicle width
+            l0 (float): ego vehicle length
+        """
+        x = s_rel - l/2 - l0/2
+        theta = 2 * np.arctan(0.5 * w / x)
+        theta_dot = w * ds_rel / (x**2 + w**2/4)
+        inv_tau = np.clip(theta_dot / (theta + 1e-6), -max_val, max_val)
+        return inv_tau
+
+
 class LidarSensor:
     """ 
     adapted from: 

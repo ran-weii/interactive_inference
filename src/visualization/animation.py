@@ -111,6 +111,11 @@ class AnimationVisualizer:
             line, = self.ax.plot([0], [0], "ro", zorder=30)
             sensor_lines.append(line)
 
+        # init fv line
+        if "FollowVehicleSensor" in self.sensor_names:
+            line, = self.ax.plot([0], [0], "rs", zorder=30)
+            sensor_lines.append(line)
+
         self._carrects = carrects
         self._cartexts = cartexts
         self._sensor_lines = sensor_lines
@@ -170,15 +175,23 @@ class AnimationVisualizer:
             carrect.set_xy(rectpts)
         
         # plot lidar lines 
+        sensor_counter = 0
         if "LidarSensor" in self.sensor_names and self.plot_lidar:
             lidar_pos = self.sim_data[frame]["sensor_pos"]["LidarSensor"]
             for i in range(len(lidar_pos)):
                 self._sensor_lines[i].set_data(
                     [x_ego, lidar_pos[i, 0]], [y_ego, lidar_pos[i, 1]]
                 )
-
+                sensor_counter += 1
+        
         # plot lv line 
         if "LeadVehicleSensor" in self.sensor_names:
             lv_pos = self.sim_data[frame]["sensor_pos"]["LeadVehicleSensor"]
-            self._sensor_lines[-1].set_data([lv_pos[0]], [lv_pos[1]])
+            self._sensor_lines[sensor_counter].set_data([lv_pos[0]], [lv_pos[1]])
+            sensor_counter += 1
+
+        # plot fv line 
+        if "FollowVehicleSensor" in self.sensor_names:
+            fv_pos = self.sim_data[frame]["sensor_pos"]["FollowVehicleSensor"]
+            self._sensor_lines[sensor_counter].set_data([fv_pos[0]], [fv_pos[1]])
         return self.assets
