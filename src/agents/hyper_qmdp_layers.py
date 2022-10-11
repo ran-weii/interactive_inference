@@ -19,11 +19,26 @@ class HyperQMDPLayer(nn.Module):
         self.eps = 1e-6
         
         self._b0 = nn.Linear(hyper_dim, state_dim)
-        self._u = nn.Linear(hyper_dim, rank * state_dim) # source tensor
-        self._v = nn.Linear(hyper_dim, rank * state_dim) # sink tensor
-        self._w = nn.Linear(hyper_dim, rank * act_dim) # action tensor
         self._tau = nn.Linear(hyper_dim, 1)
-    
+        self._gamma = nn.Linear(hyper_dim, act_dim * state_dim) # transition precision
+
+        self._b0.weight.data = 0.1 * torch.randn(self._b0.weight.data.shape)
+        self._tau.weight.data = 0.1 * torch.randn(self._tau.weight.data.shape)
+        self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
+        
+        if rank != 0:
+            self._u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+            self._v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+            self._w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+        else:
+            self._u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+            self._v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+            self._w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # transition tensor
+        
+        nn.init.xavier_normal_(self._u, gain=1.)
+        nn.init.xavier_normal_(self._v, gain=1.)
+        nn.init.xavier_normal_(self._w, gain=1.)
+
     def __repr__(self):
         s = "{}(state_dim={}, act_dim={}, rank={}, horizon={}, hyper_dim={})".format(
             self.__class__.__name__, self.state_dim, self.act_dim, 
@@ -40,20 +55,26 @@ class HyperQMDPLayer(nn.Module):
     def parameter_entropy(self, z):
         eps = 1e-6
         b0_ent = torch.log(torch.abs(self._b0.weight) + eps).sum() / self.hyper_dim
-        u_ent = torch.log(torch.abs(self._u.weight) + eps).sum() / self.hyper_dim
-        v_ent = torch.log(torch.abs(self._v.weight) + eps).sum() / self.hyper_dim
         w_ent = torch.log(torch.abs(self._w.weight) + eps).sum() / self.hyper_dim
         tau_ent = torch.log(torch.abs(self._tau.weight) + eps).sum() / self.hyper_dim
+        ent = b0_ent + w_ent + tau_ent
         
-        ent = b0_ent + u_ent + v_ent + w_ent + tau_ent
+        if self.rank > 0:
+            u_ent = torch.log(torch.abs(self._u.weight) + eps).sum() / self.hyper_dim
+            v_ent = torch.log(torch.abs(self._v.weight) + eps).sum() / self.hyper_dim
+            ent += u_ent + v_ent
         return ent
 
     def compute_transition(self, z):
-        u = self._u(z).view(-1, self.rank, self.state_dim)
-        v = self._v(z).view(-1, self.rank, self.state_dim)
-        w = self._w(z).view(-1, self.rank, self.act_dim)
-        core = torch.einsum("nri, nrj, nrk -> nkij", u, v, w)
-        return torch.softmax(core, dim=-1)
+        # compute base transition matrix
+        if self.rank != 0:
+            w = torch.einsum("nri, nrj, nrk -> nkij", self._u, self._v, self._w)
+        else:
+            w = self._w
+        
+        # compute transition temperature
+        gamma = rectify(self._gamma(z)).view(-1, self.act_dim, self.state_dim, 1)
+        return torch.softmax(gamma * w, dim=-1)
     
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
         """ Compute expected value using value iteration
