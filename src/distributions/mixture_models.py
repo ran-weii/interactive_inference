@@ -35,9 +35,8 @@ class ConditionalGaussian(Model):
     
         if cov == "full":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
             nn.init.normal_(self.lv, mean=0, std=0.01)
-            nn.init.normal_(self.tl, mean=0, std=0.01)
         elif cov == "diag":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
             self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
@@ -70,17 +69,18 @@ class ConditionalGaussian(Model):
         
         self.mu.data = means
         self.lv.data = 0.5 * torch.log(variances)
-
-        self.bn.moving_mean.data = torch.zeros_like(self.bn.moving_mean).to(self.device)
-        self.bn.moving_variance.data = torch.ones_like(self.bn.moving_variance).to(self.device)
         
         self.mu.requires_grad = requires_grad
         self.lv.requires_grad = requires_grad
-        self.bn.momentum = 0.
+
+        # disable batch norm
+        self.batch_norm = False
+        self.bn = None
 
     def init_batch_norm(self, mean, variance):
-        self.bn.moving_mean.data = mean
-        self.bn.moving_variance.data = variance
+        if self.batch_norm:
+            self.bn.moving_mean.data = mean
+            self.bn.moving_variance.data = variance
 
     def get_distribution_class(self, requires_grad=True):
         [mu, lv, tl] = self.mu, self.lv, self.tl
@@ -207,7 +207,7 @@ class HyperConditionalGaussian(Model):
             batch_norm (bool, optional): whether to use input batch normalization. default=True
         """
         super().__init__()
-        assert cov in ["diag", "full"]
+        assert cov in ["diag", "full", "tied"]
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.hyper_dim = hyper_dim
@@ -217,12 +217,13 @@ class HyperConditionalGaussian(Model):
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
+        self._mu.weight.data = 0.1 * torch.randn(self._mu.weight.data.shape)
+        self._mu.bias.data = torch.randn(z_dim * x_dim)
         
         if cov == "full":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-            self.tl = nn.Parameter(torch.randn(1, z_dim, x_dim, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
             nn.init.normal_(self.lv, mean=0, std=0.01)
-            nn.init.normal_(self.tl, mean=0, std=0.01)
         elif cov == "diag":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
             self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
@@ -246,8 +247,9 @@ class HyperConditionalGaussian(Model):
         return s
     
     def init_batch_norm(self, mean, variance):
-        self.bn.moving_mean.data = mean
-        self.bn.moving_variance.data = variance
+        if self.batch_norm:
+            self.bn.moving_mean.data = mean
+            self.bn.moving_variance.data = variance
         
     def parameter_entropy(self, z):
         eps = 1e-6
