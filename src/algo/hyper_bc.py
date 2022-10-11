@@ -7,7 +7,7 @@ from src.distributions.nn_models import Model
 
 class HyperBehaviorCloning(Model):
     def __init__(
-        self, agent, train_mode, bptt_steps=30, 
+        self, agent, train_mode, detach=True, bptt_steps=30, 
         bc_penalty=1., obs_penalty=0., reg_penalty=0., 
         post_obs_penalty=0., kl_penalty=1.,
         lr=1e-2, lr_post=1e-3, decay=0, grad_clip=None
@@ -16,6 +16,7 @@ class HyperBehaviorCloning(Model):
         assert agent.__class__.__name__ == "HyperVINAgent"
         assert train_mode in ["prior", "post", "marginal"]
         self.train_mode = train_mode
+        self.detach = detach
         self.bptt_steps = bptt_steps
         self.bc_penalty = bc_penalty
         self.obs_penalty = obs_penalty
@@ -45,6 +46,8 @@ class HyperBehaviorCloning(Model):
             for n, p in self.named_parameters():
                 if "encoder" in n:
                     p.requires_grad = False
+                if "weight" in n:
+                    p.requires_grad = False
 
         elif self.train_mode == "post":
             for n, p in self.named_parameters():
@@ -53,9 +56,9 @@ class HyperBehaviorCloning(Model):
 
     def __repr__(self):
         s_agent = self.agent.__repr__()
-        s = "{}(train_mode={}, bptt_steps={}, bc_penalty={}, obs_penalty={}, reg_penalty={}, "\
+        s = "{}(train_mode={}, detach={}, bptt_steps={}, bc_penalty={}, obs_penalty={}, reg_penalty={}, "\
         "post_obs_penalty={}, kl_penalty={}, lr={}, lr_post={}, decay={}, grad_clip={},\nagent={})".format(
-            self.__class__.__name__, self.train_mode, self.bptt_steps, 
+            self.__class__.__name__, self.train_mode, self.detach, self.bptt_steps, 
             self.bc_penalty, self.obs_penalty, self.reg_penalty, 
             self.post_obs_penalty, self.kl_penalty,
             self.lr, self.lr_post, self.decay, self.grad_clip, s_agent
@@ -73,15 +76,11 @@ class HyperBehaviorCloning(Model):
     def compute_reg_loss(self, z):
         """ Regularization loss """
         # obs variance
-        obs_bn_vars = self.agent.obs_model.bn.moving_variance
-        obs_vars = self.agent.obs_model.variance(z).squeeze(0)
-        obs_vars = obs_vars / obs_bn_vars
+        obs_vars = self.agent.obs_model.lv.exp()
         obs_loss = torch.sum(obs_vars ** 2, dim=[-1, -2]).mean()
 
         # ctl variance
-        ctl_bn_vars = self.agent.ctl_model.bn.moving_variance
-        ctl_vars = self.agent.ctl_model.variance().squeeze(0)
-        ctl_vars = ctl_vars / ctl_bn_vars
+        ctl_vars = self.agent.ctl_model.lv.exp()
         ctl_loss = torch.sum(ctl_vars ** 2)
         
         loss = obs_loss + ctl_loss 
@@ -93,11 +92,11 @@ class HyperBehaviorCloning(Model):
         z = prior_dist.rsample()
         z = torch.repeat_interleave(z, o.shape[1], dim=0)
         
-        _, hidden = self.agent.forward(o, u, z, detach=True)
+        _, hidden = self.agent.forward(o, u, z, detach=self.detach)
         act_loss, act_stats = self.agent.act_loss(o, u, z, mask, hidden)
         obs_loss, obs_stats = self.agent.obs_loss(o, u, z, mask, hidden)
         
-        ent = self.agent.parameter_entropy(z).mean()
+        # ent = self.agent.parameter_entropy(z).mean()
         reg_loss = self.compute_reg_loss(z)
         
         avg_eps_len = torch.mean(mask.sum(0))
@@ -105,12 +104,12 @@ class HyperBehaviorCloning(Model):
             self.bc_penalty * act_loss.mean() + \
             self.obs_penalty * obs_loss.mean() + \
             self.reg_penalty * reg_loss
-        ) - ent
+        )# - ent
 
         stats = {
             "total_loss": loss.data.item(),
             **act_stats, **obs_stats,
-            "ent": ent.data.item()
+            # "ent": ent.data.item()
         }
         return loss, stats
     

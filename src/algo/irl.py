@@ -41,15 +41,11 @@ class BehaviorCloning(Model):
     
     def compute_prior_loss(self):
         # obs variance
-        obs_bn_vars = self.agent.obs_model.bn.moving_variance
-        obs_vars = self.agent.obs_model.variance().squeeze(0)
-        obs_vars = obs_vars / obs_bn_vars
+        obs_vars = self.agent.obs_model.lv.exp()
         obs_loss = torch.sum(obs_vars ** 2)
 
         # ctl variance
-        ctl_bn_vars = self.agent.ctl_model.bn.moving_variance
-        ctl_vars = self.agent.ctl_model.variance().squeeze(0)
-        ctl_vars = ctl_vars / ctl_bn_vars
+        ctl_vars = self.agent.ctl_model.lv.exp()
         ctl_loss = torch.sum(ctl_vars ** 2)
         
         loss = obs_loss + ctl_loss 
