@@ -95,10 +95,11 @@ class BatchNormTransform(TransformModule):
     codomain = constraints.real
     bijective = True
     event_dim = 0
-    def __init__(self, input_dim, momentum=0.1, epsilon=1e-5, affine=False):
+    def __init__(self, input_dim, momentum=0.1, epsilon=1e-5, affine=False, update_stats=True):
         super().__init__()
         self.input_dim = input_dim
         self.momentum = momentum
+        self.update_stats = update_stats
         self.epsilon = epsilon
          
         self.moving_mean = nn.Parameter(torch.zeros(input_dim), requires_grad=False)
@@ -120,7 +121,7 @@ class BatchNormTransform(TransformModule):
     def _inverse(self, y):
         op_dims = [i for i in range(len(y.shape) - 1)]
         
-        if self.training:
+        if self.training and self.update_stats:
             mask = 1. - 1. * torch.all(y == 0, dim=-1, keepdim=True)
             mean = torch.sum(mask * y, dim=op_dims) / (mask.sum(op_dims) + 1e-6)
             var = torch.sum(mask * (y - mean)**2, dim=op_dims) / (mask.sum(op_dims) + 1e-6)
@@ -136,7 +137,7 @@ class BatchNormTransform(TransformModule):
     
     def log_abs_det_jacobian(self, x, y):
         op_dims = [i for i in range(len(y.shape) - 1)]
-        if self.training:
+        if self.training and self.update_stats:
             mask = 1. - 1. * torch.all(y == 0, dim=-1, keepdim=True)
             mean = torch.sum(mask * y, dim=op_dims, keepdim=True) / (mask.sum(op_dims) + 1e-6)
             var = torch.sum(mask * (y - mean)**2, dim=op_dims, keepdim=True) / (mask.sum(op_dims) + 1e-6)

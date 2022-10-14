@@ -47,7 +47,7 @@ class ConditionalGaussian(Model):
             nn.init.normal_(self.lv, mean=0, std=0.01)
 
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
 
         if use_tanh:
             self.tanh_transform = TanhTransform(limits)
