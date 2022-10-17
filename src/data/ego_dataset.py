@@ -201,7 +201,7 @@ class EgoDataset(BaseDataset):
 
     
 class RelativeDataset(BaseDataset):
-    def __init__(self, df_track, feature_set, action_set, action_bins=None, train_labels_col=None, 
+    def __init__(self, df_track, feature_set, action_set, train_labels_col=None, 
         max_eps=500, max_eps_len=1000, gamma=0., state_action=False, augmentation=[], 
         device=torch.device("cpu"), seed=0):
         """
@@ -228,7 +228,6 @@ class RelativeDataset(BaseDataset):
         self.act_fields = action_set
         self.meta_fields = ["track_id", "eps_id"]
         self.augmentation = augmentation
-        self.action_bins = action_bins
         self.device = device
         
         # preload data to device for offline training
@@ -248,20 +247,17 @@ class RelativeDataset(BaseDataset):
             ).to(torch.float32).to(self.device) for i in self.unique_eps
         ] 
 
+        # semi-supervised label
+        self.data_label = [
+            torch.from_numpy(
+                self.df_track.loc[self.df_track["eps_id"] == i][["is_supervised"]].values.astype(np.float32)
+            ).to(torch.float32).to(self.device) for i in self.unique_eps
+        ]
+
         if state_action:
             self.data_ego = torch.cat(self.data_ego, dim=0)
             self.data_act = torch.cat(self.data_act, dim=0)
             self.data_meta = torch.cat(self.data_meta, dim=0)
-
-        # if action_bins is not None:
-        #     ax = df_track[action_set[0]].values.reshape(-1, 1)
-        #     ay = df_track[action_set[1]].values.reshape(-1, 1)
-
-        #     self.ax_discretizer = KBinsDiscretizer(n_bins=action_bins, encode="ordinal", strategy="quantile")
-        #     self.ay_discretizer = KBinsDiscretizer(n_bins=action_bins, encode="ordinal", strategy="quantile")
-
-        #     self.ax_discretizer.fit(np.vstack([ax, -ax]))
-        #     self.ay_discretizer.fit(np.vstack([ay, -ay]))
     
     def __len__(self):
         if self.state_action:
@@ -273,29 +269,21 @@ class RelativeDataset(BaseDataset):
         obs_meta = self.data_meta[idx]
         obs_ego = self.data_ego[idx]
         act_ego = self.data_act[idx]
+        obs_label = self.data_label[idx]
         if not self.state_action:
             sample_ids = sample_sequence(len(obs_ego), self.max_eps_len, gamma=self.gamma)
             obs_meta = obs_meta[sample_ids][0]
             obs_ego = obs_ego[sample_ids]
             act_ego = act_ego[sample_ids] 
+            obs_label = obs_label[sample_ids][0]
         
         for aug in self.augmentation:
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
-        
-        # if self.action_bins is not None:
-        #     ax = self.ax_discretizer.transform(act_ego[:, 0].reshape(-1, 1))
-        #     ay = self.ay_discretizer.transform(act_ego[:, 1].reshape(-1, 1))
-        #     act_ego = np.hstack([ax, ay])
-
-        # out_dict = {
-        #     "ego": torch.from_numpy(obs_ego).to(torch.float32),
-        #     "act": torch.from_numpy(act_ego).to(torch.float32),
-        #     "meta": torch.from_numpy(obs_meta).to(torch.float32)
-        # }
 
         out_dict = {
             "ego": obs_ego,
             "act": act_ego,
-            "meta": obs_meta
+            "meta": obs_meta,
+            "label": obs_label
         }
         return out_dict

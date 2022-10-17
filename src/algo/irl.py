@@ -67,10 +67,12 @@ class BehaviorCloning(Model):
             pad_batch, mask = batch
             o = pad_batch["ego"]
             u = pad_batch["act"]
+            label = pad_batch["label"].flatten() # semi-supervised label
 
             o = o.to(self.device)
             u = u.to(self.device)
             mask = mask.to(self.device)
+            label = label.to(self.device)
             
             hidden = None
             for t, batch_t in enumerate(zip(
@@ -92,9 +94,17 @@ class BehaviorCloning(Model):
                 
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
-                
                 loss_prior, stats_prior = self.compute_prior_loss(o_t, u_t, mask_t, hidden)
-                loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o) + self.reg_penalty * loss_prior
+                
+                # apply semi-supervised label to action loss
+                loss_u = torch.sum(loss_u * label) / label.sum()
+                loss_o = torch.mean(loss_o)
+                
+                loss = (
+                    self.bc_penalty * loss_u + \
+                    self.obs_penalty * loss_o + \
+                    self.reg_penalty * loss_prior
+                )
                     
                 if train:
                     loss.backward()
