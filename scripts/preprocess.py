@@ -8,7 +8,6 @@ from tqdm.auto import tqdm
 
 from src.map_api.lanelet import MapReader
 from src.data.kalman_filter import BatchKalmanFilter
-from src.data.agent_filter import get_neighbor_vehicle_ids
 from src.data.data_filter import (
     get_trajectory_segment_id, filter_segment_by_length,
     classify_tail_merging)
@@ -32,7 +31,7 @@ def parse_args():
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv", 
         help="track filename. default=vehicle_tracks_007.csv")
-    parser.add_argument("--task", type=str, choices=["kalman_filter", "neighbors", "features", "train_labels"])
+    parser.add_argument("--task", type=str, choices=["kalman_filter", "features", "train_labels"])
     parser.add_argument("--cell_len", type=float, default=10, 
                         help="length of drivable cells, default=10")
     parser.add_argument("--max_dist", type=float, default=50., 
@@ -116,31 +115,6 @@ def run_kalman_filter(df, dt, kf_filter):
     df_track_smooth.insert(4, "ax_ego", ax_ego)
     df_track_smooth.insert(5, "ay_ego", ay_ego)
     return df_track_smooth
-
-def find_neighbors(df, map_data, max_dist, parallel):
-    """ Return dataframe with fields
-    ["track_id", "frame_id", "lane_id", 
-    "lead_track_id", "follow_track_id", 
-    "left_track_id", "right_track_id",
-    "left_lead_track_id", "right_lead_track_id", 
-    "left_follow_track_id", "right_follow_track_id"]
-    """
-    df = df.assign(psi_rad=np.clip(df["psi_rad"], -np.pi, np.pi))
-    
-    # match lanes
-    f_match_lane = lambda x: map_data.match_lane(x["x"], x["y"])
-    lane_ids = parallel_apply(df, f_match_lane, parallel, axis=1, desc="match lane")
-    df = df.assign(lane_id=lane_ids)
-    
-    # find neighbors
-    f_neighbor_vehicle = lambda x: get_neighbor_vehicle_ids(x, df, map_data, max_dist)
-    df_neighbors = parallel_apply(
-        df, f_neighbor_vehicle, parallel, axis=1, desc="identify lead vehicle"
-    )
-    df_neighbors.insert(0, "track_id", df["track_id"])
-    df_neighbors.insert(1, "frame_id", df["frame_id"])
-    df_neighbors.insert(2, "lane_id", df["lane_id"])
-    return df_neighbors
 
 def compute_features(df, map_data, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
@@ -336,13 +310,6 @@ def main(arglist):
             dt = 0.1
         
         df = run_kalman_filter(df, dt, kf)
-    
-    elif arglist.task == "neighbors":
-        if arglist.debug:
-            df = df.loc[df["track_id"] <= 30]
-        map_data = MapReader(cell_len=arglist.cell_len)
-        map_data.parse(map_path, verbose=True)
-        df = find_neighbors(df, map_data, arglist.max_dist, arglist.parallel)
     
     elif arglist.task == "features":
         map_data = MapReader(cell_len=arglist.cell_len)
