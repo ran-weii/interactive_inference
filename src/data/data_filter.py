@@ -1,53 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.mixture import GaussianMixture
 from sklearn.metrics import confusion_matrix
-from src.data.geometry import vector_projection, wrap_angles
-
-def filter_car_follow_eps(df_track, min_eps_len):
-    """ Set car_follow_eps column to -1 if episode length is less than min_eps_len
-    
-    Args:
-        df_track (pd.dataframe): track dataframe
-        min_eps_len (int): min episode length
-
-    Returns:
-        df_track (pd.dataframe): track dataframe with filtered "eps_id" and "eps_len" fields
-    """
-    df_track = df_track.assign(
-        eps_label=df_track["scenario"] + '_' + df_track["record_id"].apply(str) + \
-        "_" + df_track["track_id"].apply(str) + "_" + df_track["car_follow_eps"].apply(str)
-    )
-    
-    df_eps_len = df_track.groupby("eps_label").size().reset_index()
-    df_eps_len.columns = ["eps_label", "eps_len"]
-    df_eps_len = df_eps_len.sort_values(by="eps_len").reset_index(drop=True)
-    
-    eps_id = np.zeros(len(df_eps_len))
-    eps_id[df_eps_len["eps_len"] < min_eps_len] = -1
-    eps_id[df_eps_len["eps_label"].str.contains("_-1")] = -1
-    eps_id[eps_id != -1] = np.arange(sum(eps_id != -1))
-    df_eps_len = df_eps_len.assign(eps_id=eps_id)
-    
-    df_track = df_track.merge(df_eps_len, how="outer", on="eps_label")
-    df_track["eps_id"].loc[df_track["lead_track_id"].isna()] = -1
-    return df_track
-
-def filter_lane(df_track, lane_ids):
-    """ Set car_follow_eps column to -1 if lane in lane_ids
-
-    Args:
-        df_track (pd.dataframe): track dataframe
-        lane_ids (list): list of lane ids to be filtered
-
-    Returns:
-        df_track_ (pd.dataframe): track dataframe with updated car_follow_eps column
-    """
-    car_follow_eps = df_track["car_follow_eps"].values.copy()
-    car_follow_eps[df_track["lane_id"].isin(lane_ids)] = -1
-    df_track = df_track.assign(car_follow_eps=car_follow_eps) 
-    return df_track
 
 def get_trajectory_segment_id(df, colnames):
     """ Divide trajectory into segments based on change in columns
