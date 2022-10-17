@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, random_split
 
-def load_data(data_path, scenario, filename, train=True):
+def load_data(data_path, scenario, filename, train=True, load_raw=True):
     """ Load processed data 
     
     Args:
@@ -14,24 +14,29 @@ def load_data(data_path, scenario, filename, train=True):
         scenario (str): scenario name. e.g. DR_CHN_Merging_ZS
         filename (str): track file name. e.g. vehicle_tracks_007.csv
         train (bool, optional): whether in training mode. If False flip is_train labels. Default=True
+        load_raw (bool, optional): whether to load the raw track file. Default=True
     
     Returns:
         df_track (pd.dataframe): concatenated processed track data
     """
-    df_track = pd.read_csv(
-        os.path.join(data_path, "recorded_trackfiles", scenario, filename)
-    )
-    df_kf = pd.read_csv(
-        os.path.join(data_path, "processed_trackfiles", "kalman_filter", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
+
     df_features = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", "features", scenario, filename)
-    ).drop(columns=["track_id", "frame_id"])
+    )
     df_labels = pd.read_csv(
         os.path.join(data_path, "processed_trackfiles", "train_labels", scenario, filename)
     ).drop(columns=["track_id", "frame_id"])
-    df_track = pd.concat([df_track, df_kf, df_features, df_labels], axis=1)
-    df_track["psi_rad"] = np.clip(df_track["psi_rad"], -np.pi, np.pi)
+
+    df_track = [df_features, df_labels]
+
+    if load_raw:
+        df_raw = pd.read_csv(
+            os.path.join(data_path, "recorded_trackfiles", scenario, filename)
+        ).drop(columns=["track_id", "frame_id"])
+        df_raw["psi_rad"] = np.clip(df_raw["psi_rad"], -np.pi, np.pi)
+        df_track.append(df_raw)
+
+    df_track = pd.concat(df_track, axis=1)
     
     if not train:
         df_track["is_train"] = 1 - df_track["is_train"]
