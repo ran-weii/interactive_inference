@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--hmm_rank", type=int, default=32, help="agent hmm rank, default=32")
     parser.add_argument("--alpha", type=float, default=1., help="agent entropy reward coefficient, default=1.")
     parser.add_argument("--beta", type=float, default=1., help="agent policy prior coefficient, default=1.")
+    parser.add_argument("--rwd", type=str, choices=["efe", "ece"], default="efe", help="agent reward function. default=efe")
     parser.add_argument("--feature_set", type=str_list_, default=["ego_ds", "lv_s_rel", "lv_ds_rel"], help="agent feature set")
     parser.add_argument("--action_set", type=str_list_, default="dds", help="agent action set, default=dds")
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
@@ -207,7 +208,7 @@ def main(arglist):
         agent = VINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
-            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, rwd=arglist.rwd, 
             use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
         )
         
@@ -227,10 +228,12 @@ def main(arglist):
         agent = HyperVINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, arglist.hyper_dim, arglist.hidden_dim, arglist.num_hidden, 
-            arglist.gru_layers, arglist.activation,
-            alpha=arglist.alpha, beta=arglist.beta, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
+            arglist.gru_layers, arglist.activation, alpha=arglist.alpha, beta=arglist.beta, 
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, rwd=arglist.rwd,
             use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, train_prior=arglist.train_prior
         )
+        agent.obs_mean.data = obs_mean
+        agent.obs_variance.data = obs_var
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
@@ -259,7 +262,7 @@ def main(arglist):
         )
     elif arglist.algo == "hbc":
         model = HyperBehaviorCloning(
-            agent, arglist.train_mode, arglist.bptt_steps, 
+            agent, arglist.train_mode, arglist.detach, arglist.bptt_steps, 
             arglist.bc_penalty, arglist.obs_penalty, arglist.reg_penalty, 
             arglist.post_obs_penalty, arglist.kl_penalty,
             lr=arglist.lr, lr_post=arglist.lr_post, decay=arglist.decay, grad_clip=arglist.grad_clip
