@@ -116,12 +116,17 @@ def run_kalman_filter(df, dt, kf_filter):
     df_track_smooth.insert(5, "ay_ego", ay_ego)
     return df_track_smooth
 
-def compute_features(df, map_data, min_seg_len, parallel):
+def compute_features(df, map_data, dt, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
     from src.simulation.sensors import STATE_KEYS
     from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
     from src.simulation.observers import Observer
     
+    # compute actions
+    df = derive_acc(df, dt)
+    df = df.assign(ax=df["vx_grad"].values)
+    df = df.assign(ay=df["vy_grad"].values)
+
     ego_sensor = EgoSensor(map_data)
     lv_sensor = LeadVehicleSensor(map_data)
     lidar_sensor = LidarSensor()
@@ -203,6 +208,10 @@ def compute_features(df, map_data, min_seg_len, parallel):
     df_features = df_features.merge(
         df_traj_features, on=["track_id", "frame_id"], how="left"
     )
+    
+    # append actions 
+    df_features = df_features.assign(ax=df["vx_grad"].values)
+    df_features = df_features.assign(ay=df["vy_grad"].values)
     return df_features
 
 def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
@@ -316,20 +325,16 @@ def main(arglist):
         map_data.parse(map_path, verbose=True)
         
         # load neighbor df
-        kf_path = os.path.join(
-            data_path, "kalman_filter", arglist.scenario, arglist.filename
-        )
-        neighbor_path = os.path.join(
-            data_path, "neighbors", arglist.scenario, arglist.filename
-        )
-        df_kf = pd.read_csv(kf_path)
-        df_neighbor = pd.read_csv(neighbor_path)
-        df = df.merge(df_kf, on=["track_id", "frame_id"], how="right")
-        # df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
+        # kf_path = os.path.join(
+        #     data_path, "kalman_filter", arglist.scenario, arglist.filename
+        # )
+        # df_kf = pd.read_csv(kf_path)
+        # df = df.merge(df_kf, on=["track_id", "frame_id"], how="right")
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
         
-        df = compute_features(df, map_data, arglist.min_seg_len, arglist.parallel)
+        dt = 0.1
+        df = compute_features(df, map_data, dt, arglist.min_seg_len, arglist.parallel)
     
     elif arglist.task == "train_labels":
         neighbor_path = os.path.join(
@@ -338,9 +343,7 @@ def main(arglist):
         feature_path = os.path.join(
             data_path, "features", arglist.scenario, arglist.filename
         )
-        df_neighbor = pd.read_csv(neighbor_path)
         df_feature = pd.read_csv(feature_path)
-        # df = df.merge(df_neighbor, on=["track_id", "frame_id"], how="right")
         df = df.merge(df_feature, on=["track_id", "frame_id"], how="right")
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
