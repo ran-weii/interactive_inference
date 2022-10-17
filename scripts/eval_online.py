@@ -76,7 +76,9 @@ def compute_latent(data, agent):
     mask = torch.ones(len(o), 1)
     
     with torch.no_grad():
-        z = agent.encode(o, u, mask)
+        # z = agent.encode(o, u, mask)
+        z_dist = agent.get_posterior_dist(o, u, mask)
+        z = z_dist.mean
     return z
 
 def main(arglist):
@@ -113,7 +115,7 @@ def main(arglist):
     
     # define feature set
     ego_sensor = EgoSensor(map_data)
-    lv_sensor = LeadVehicleSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data, track_lv=True)
     lidar_sensor = LidarSensor()
     sensors = [ego_sensor, lv_sensor, lidar_sensor]
 
@@ -149,7 +151,8 @@ def main(arglist):
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
             config["horizon"], config["hyper_dim"], config["hidden_dim"], config["num_hidden"],
             config["gru_layers"], config["activation"], alpha=config["alpha"], beta=config["beta"],
-            obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+            obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], rwd=config["rwd"],
+            use_tanh=config["use_tanh"], ctl_lim=ctl_lim
         )
     elif arglist.agent == "idm":
         agent = IDM()
@@ -167,7 +170,8 @@ def main(arglist):
     if arglist.rollout_idm:
         env.observer = Observer(map_data, env.sensors, action_set=action_set)
         agent = IDM(env.observer.feature_set)
-
+    
+    agent.eval()
     print(agent)
     
     # sample eval episodes
@@ -213,8 +217,9 @@ def main(arglist):
     
     # save results
     if arglist.save_data or arglist.save_video:
+        post_fix = "_post" if arglist.test_posterior else ""
         eval_path = os.path.join(exp_path, "eval_online")
-        save_path = os.path.join(eval_path, f"{arglist.seed}_{arglist.sample_method}")
+        save_path = os.path.join(eval_path, f"{arglist.seed}_{arglist.sample_method}{post_fix}")
         if not os.path.exists(eval_path):
             os.mkdir(eval_path)
         if not os.path.exists(save_path):
