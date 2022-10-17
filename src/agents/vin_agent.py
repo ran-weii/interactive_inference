@@ -3,7 +3,7 @@ import torch.nn as nn
 from src.agents.core import AbstractAgent
 from src.agents.qmdp_layers import QMDPLayer, QMDPLayer2
 from src.distributions.mixture_models import ConditionalGaussian
-from src.distributions.utils import kl_divergence
+from src.distributions.utils import kl_divergence, rectify
 
 from typing import Union, Tuple, Optional
 from torch import Tensor
@@ -38,17 +38,10 @@ class VINAgent(AbstractAgent):
             use_tanh=use_tanh, limits=ctl_lim
         )
         self.c = nn.Parameter(torch.randn(1, state_dim))
-        self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
+        self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim)) 
         
         nn.init.xavier_normal_(self.c, gain=1.)
         nn.init.xavier_normal_(self._pi0, gain=1.)
-
-        # self.parameter_size = [
-        #     self.c.shape, self._pi0.shape,
-        #     self.rnn.b0.shape, self.rnn.u.shape, self.rnn.v.shape, self.rnn.w.shape, self.rnn.tau.shape,
-        #     self.obs_model.mu.shape, self.obs_model.lv.shape, self.obs_model.tl.shape,
-        #     self.ctl_model.mu.shape, self.ctl_model.lv.shape, self.ctl_model.tl.shape
-        # ]
     
     def reset(self):
         """ Reset internal states for online inference """
@@ -101,7 +94,7 @@ class VINAgent(AbstractAgent):
     
     def compute_efe(self):
         """ Compute negative expected free energy """
-        transition = self.rnn.transition
+        transition = self.rnn.compute_transition()
         entropy = self.obs_model.entropy() / self.obs_dim
 
         if self.detach:
@@ -117,7 +110,7 @@ class VINAgent(AbstractAgent):
     def compute_ece(self, num_samples=200):
         """ Compute expected cross entropy """
         # sample observation
-        transition = self.rnn.transition
+        transition = self.rnn.compute_transition()
         o = self.obs_model.sample((num_samples,))
         self.obs_model.bn.training = False # temp solution to work with batch norm
         logp_o = self.obs_model.log_prob(o)
@@ -136,7 +129,7 @@ class VINAgent(AbstractAgent):
     def compute_ig(self, num_samples):
         """ Compute expected information gain """
         # sample observation
-        transition = self.rnn.transition
+        transition = self.rnn.compute_transition()
         o = self.obs_model.sample((num_samples,))
         self.obs_model.bn.training = False
         logp_o = self.obs_model.log_prob(o)
@@ -188,8 +181,33 @@ class VINAgent(AbstractAgent):
         alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, b)
         return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
     
+    # def act_loss(self, o, u, mask, hidden):
+    #     """ Compute action loss 
+        
+    #     Args:
+    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+    #         mask (torch.tensor): binary mask sequence. size=[T, batch_size]
+    #         hidden (list): hidden outputs of forward method
+
+    #     Returns:
+    #         loss (torch.tensor): action loss. size=[batch_size]
+    #         stats (dict): action loss stats
+    #     """
+    #     _, alpha_pi = hidden
+    #     logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
+    #     loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+
+    #     # compute stats
+    #     nan_mask = mask.clone()
+    #     nan_mask[nan_mask != 0] = 1.
+    #     nan_mask[nan_mask == 0] = torch.nan
+    #     logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
+    #     stats = {"loss_u": logp_u_mean}
+    #     return loss, stats
+
     def act_loss(self, o, u, mask, hidden):
-        """ Compute action loss 
+        """ Compute action loss by matching forward kl of discrete actions
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
@@ -202,19 +220,51 @@ class VINAgent(AbstractAgent):
             stats (dict): action loss stats
         """
         _, alpha_pi = hidden
-        logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
+        logp_u = self.ctl_model.log_prob(u)
+        pi_target = torch.softmax(logp_u, dim=-1)
+        logp_pi = kl_divergence(pi_target, alpha_pi)
+        loss = torch.sum(logp_pi * mask, dim=0) / (mask.sum(0) + 1e-6)
 
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask != 0] = 1.
         nan_mask[nan_mask == 0] = torch.nan
-        logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
+        logp_u_mean = torch.nanmean((nan_mask * logp_pi)).cpu().data
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
+    # def obs_loss(self, o, u, mask, hidden):
+    #     """ Compute observation loss 
+        
+    #     Args:
+    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+    #         mask (torch.tensor): binary mask tensor. size=[T, batch_size]
+    #         hidden (list): hidden outputs of forward method
+
+    #     Returns:
+    #         loss (torch.tensor): observation loss. size=[batch_size]
+    #         stats (dict): observation loss stats
+    #     """
+    #     alpha_b, _ = hidden
+        
+    #     # one step transition
+    #     logp_u = self.ctl_model.log_prob(u)
+    #     s_next = self.rnn.predict_one_step(logp_u, alpha_b)
+        
+    #     logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
+    #     loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
+
+    #     # compute stats
+    #     nan_mask = mask[1:].clone()
+    #     nan_mask[nan_mask != 0] = 1.
+    #     nan_mask[nan_mask == 0] = torch.nan
+    #     logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
+    #     stats = {"loss_o": logp_o_mean}
+    #     return loss, stats
+
     def obs_loss(self, o, u, mask, hidden):
-        """ Compute observation loss 
+        """ Compute elbo observation loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
@@ -228,21 +278,50 @@ class VINAgent(AbstractAgent):
         """
         alpha_b, _ = hidden
         
-        # one step transition
+        # compute posterior predictive
+        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
+        
+        # compute variational prior
         logp_u = self.ctl_model.log_prob(u)
         s_next = self.rnn.predict_one_step(logp_u, alpha_b)
         
-        logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
-        loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-
+        # compute kl
+        kl = kl_divergence(s_next[:-1], alpha_b[1:])
+        
+        elbo = logp_o[1:] - kl
+        loss = -torch.sum(elbo * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
+        
         # compute stats
         nan_mask = mask[1:].clone()
         nan_mask[nan_mask != 0] = 1.
         nan_mask[nan_mask == 0] = torch.nan
-        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
-        stats = {"loss_o": logp_o_mean}
+        elbo_mean = -torch.nanmean((nan_mask * elbo)).cpu().data
+        stats = {"loss_o": elbo_mean}
         return loss, stats
     
+    def compute_mutual_information(self, o, u, mask, hidden):
+        """ Compute mutual information between state and observation """
+        alpha_b, _ = hidden
+
+        # compute variational prior
+        logp_u = self.ctl_model.log_prob(u)
+        s_next = self.rnn.predict_one_step(logp_u, alpha_b)
+        logp_s = torch.log(s_next + 1e-6)
+
+        # sample observation
+        o_sample = self.obs_model.ancestral_sample(s_next).squeeze(0)
+        
+        # compute posterior
+        logp_o = self.obs_model.log_prob(o_sample)
+        log_b_next = torch.log_softmax(logp_o + logp_s, dim=-1)
+        
+        cross_ent = torch.sum(s_next * log_b_next, dim=-1)
+        ent = -torch.sum(s_next * logp_s, dim=-1)
+        
+        mi = cross_ent + ent
+        mi = torch.sum(mi * mask, dim=0) / (mask.sum(0) + 1e-6)
+        return mi
+
     def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
         

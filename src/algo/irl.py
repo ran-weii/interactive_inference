@@ -39,7 +39,7 @@ class BehaviorCloning(Model):
         )
         return s
     
-    def compute_prior_loss(self):
+    def compute_prior_loss(self, o, u, mask, hidden):
         # obs variance
         obs_vars = self.agent.obs_model.lv.exp()
         obs_loss = torch.sum(obs_vars ** 2)
@@ -48,8 +48,13 @@ class BehaviorCloning(Model):
         ctl_vars = self.agent.ctl_model.lv.exp()
         ctl_loss = torch.sum(ctl_vars ** 2)
         
-        loss = obs_loss + ctl_loss 
-        return loss
+        loss = obs_loss + ctl_loss
+
+        stats = {
+            "obs_var": obs_vars.mean().data.item(),
+            "ctl_var": ctl_vars.mean().data.item(),
+        }
+        return loss, stats
 
     def run_epoch(self, loader, train=True):
         if train:
@@ -88,7 +93,7 @@ class BehaviorCloning(Model):
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
                 
-                loss_prior = self.compute_prior_loss()
+                loss_prior, stats_prior = self.compute_prior_loss(o_t, u_t, mask_t, hidden)
                 loss = torch.mean(self.bc_penalty * loss_u + self.obs_penalty * loss_o) + self.reg_penalty * loss_prior
                     
                 if train:
@@ -102,7 +107,7 @@ class BehaviorCloning(Model):
                 epoch_stats.append({
                     "train": 1 if train else 0,
                     "loss": loss.cpu().data.item(),
-                    **stats_u, **stats_o,
+                    **stats_u, **stats_o, **stats_prior
                 })
         
         stats = pd.DataFrame(epoch_stats).mean().to_dict()

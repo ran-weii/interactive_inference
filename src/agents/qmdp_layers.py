@@ -12,6 +12,7 @@ def poisson_pdf(rate: Tensor, K: int) -> Tensor:
     Args:
         rate (torch.tensor): poission arrival rate [batch_size, 1]
         K (int): number of bins
+        beta (torch.tensor): precision parameter. Default=1.
 
     Returns:
         pdf (torch.tensor): truncated poisson pdf [batch_size, K]
@@ -62,7 +63,10 @@ class QMDPLayer(jit.ScriptModule):
 
     @property
     def transition(self):
-        """ Return transition matrix. size=[1, act_dim, state_dim, state_dim] """
+        return self.compute_transition()
+    
+    @jit.script_method
+    def compute_transition(self):
         if self.rank != 0:
             w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
         else:
@@ -118,7 +122,6 @@ class QMDPLayer(jit.ScriptModule):
         Returns:
             a_post (torch.tensor): action posterior. size=[batch_size, act_dim]
         """ 
-        # a_post = torch.softmax(self.a0 + logp_u, dim=-1)
         a_post = torch.softmax(logp_u, dim=-1)
         return a_post
 
@@ -177,12 +180,13 @@ class QMDPLayer(jit.ScriptModule):
             alpha_a (torch.tensor): sequence of policies. size=[T, batch_size, act_dim]
         """
         batch_size = logp_o.shape[1]
-        transition = self.transition
+        transition = self.compute_transition()
         value = self.compute_value(transition, reward)
         T = len(logp_o)
         
         if b is None:
             b = self.init_hidden()
+            b = torch.repeat_interleave(b, batch_size, dim=0)
             logp_u = torch.cat([torch.zeros(1, batch_size, self.act_dim).to(self.b0.device), logp_u], dim=0)
         
         alpha_a = self.update_action(logp_u) # action posterior
