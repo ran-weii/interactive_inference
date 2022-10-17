@@ -90,7 +90,7 @@ class Observer:
         "lv_s_rel", "lv_ds_rel", "lv_inv_tau", "lv_d", "lv_dd"
     ]
     default_action_set = ["dds", "ddd"]
-    def __init__(self, map_data, sensors, feature_set=default_feature_set, action_set=default_action_set):
+    def __init__(self, map_data, sensors, feature_set=None, action_set=default_action_set):
         """
         Args:
             map_data (MapReader): map data object
@@ -100,7 +100,10 @@ class Observer:
         """
         self.map_data = map_data
         self.sensors = sensors
-        self.feature_set = feature_set
+        if feature_set is None:
+            self.feature_set = sum([s.feature_names for s in sensors], [])
+        else:
+            self.feature_set = feature_set
         self.action_set = action_set
         
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
@@ -219,7 +222,7 @@ class CarfollowObserver:
     """ Car following observer """
     default_feature_set = ["ego_ds", "lv_s_rel", "lv_ds_rel"]
     default_action_set = ["dds"]
-    def __init__(self, map_data, sensors, feature_set=default_feature_set, action_set=default_action_set):
+    def __init__(self, map_data, sensors, feature_set=None, action_set=default_action_set):
         """
         Args:
             map_data (MapReader): map data object
@@ -229,7 +232,10 @@ class CarfollowObserver:
         """
         self.map_data = map_data
         self.sensors = sensors
-        self.feature_set = feature_set
+        if feature_set is None:
+            self.feature_set = sum([s.feature_names for s in sensors], [])
+        else:
+            self.feature_set = feature_set
         self.action_set = action_set
         
         self.sensor_names = [s.__class__.__name__ for s in self.sensors]
