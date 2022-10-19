@@ -45,52 +45,29 @@ class VINAgent(AbstractAgent):
     
     def reset(self):
         """ Reset internal states for online inference """
-        self._prev_ctl = None
+        self._prev_ctl = None # previous control
+        self._value = None # precomputed value
         self._state = {
             "b": None, # previous belief distribution
             "pi": None, # previous policy/action prior
         }
-
-    @property
-    def target_dist(self):
+    
+    def compute_target_dist(self):
         return torch.softmax(self.c, dim=-1)
-    
-    @property
-    def pi0(self):
-        """ Prior policy """
+
+    def compute_pi0(self):
         return torch.softmax(self._pi0, dim=-2)
-    
-    @property
-    def transition(self):
-        return self.rnn.transition
-    
-    @property
-    def value(self):
+
+    def compute_value(self):
+        transition = self.rnn.compute_transition()
         reward = self.compute_reward()
-        value = self.rnn.compute_value(self.transition, reward)
+        value = self.rnn.compute_value(transition, reward)
         return value
-    
-    @property
-    def policy(self):
-        """ Optimal planned policy """
-        b = torch.eye(self.state_dim)
-        pi = self.rnn.plan(b, self.value)
+
+    def compute_policy(self, b):
+        value = self.compute_value()
+        pi = self.rnn.plan(b, value)
         return pi
-    
-    @property
-    def passive_dynamics(self):
-        """ Optimal controlled dynamics """
-        policy = self.policy.T.unsqueeze(-1)
-        transition = self.transition.squeeze(0)
-        return torch.sum(transition * policy, dim=-3)
-    
-    @property
-    def efe(self):
-        """ Negative expected free energy """
-        entropy = self.obs_model.entropy() / self.obs_dim
-        c = self.target_dist
-        kl = kl_divergence(torch.eye(self.state_dim), c)
-        return -kl - self.alpha * entropy
     
     def compute_efe(self):
         """ Compute negative expected free energy """
@@ -101,7 +78,7 @@ class VINAgent(AbstractAgent):
             transition = transition.data
             entropy = entropy.data
         
-        c = self.target_dist
+        c = self.compute_target_dist()
         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1)
         r = -kl - self.alpha * eh
@@ -121,7 +98,7 @@ class VINAgent(AbstractAgent):
             logp_o = logp_o.data
         
         # compute expected reward
-        logp_s = torch.log(self.target_dist + 1e-6)
+        logp_s = torch.log(self.compute_target_dist() + 1e-6)
         log_r = torch.logsumexp(logp_s + logp_o, dim=-1)
         r = torch.einsum("nkij, nj -> nki", transition, log_r.mean(0))
         return r
@@ -149,7 +126,7 @@ class VINAgent(AbstractAgent):
         return ig
     
     def compute_reward(self):
-        log_pi0 = torch.log(self.pi0 + 1e-6)
+        log_pi0 = torch.log(self.compute_pi0() + 1e-6)
         if self.rwd == "efe":
             r = self.compute_efe() + self.beta * log_pi0
         else:
@@ -158,56 +135,42 @@ class VINAgent(AbstractAgent):
 
     def forward(
         self, o: Tensor, u: Union[Tensor, None], 
-        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None, **kwargs
+        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None, 
+        value: Optional[Union[Tensor, None]]=None, **kwargs
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
             hidden ([tuple[torch.tensor, torch.tensor], None], optional). initial hidden state.
+            value (tuple[torch.tensor, None], optional): precomputed value matrix. 
+                size=[horizon, batch_size, act_dim, state_dim]. Default=None
         
         Returns:
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
+            value (torch.tensor): value matrix. size=[horizon, batch_size, act_dim, state_dim]
         """
         batch_size = o.shape[1]
-        b, pi = None, None
-        if hidden is not None:
-            b, pi = hidden
-
-        logp_o = self.obs_model.log_prob(o)
-        logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
-        reward = self.compute_reward()
-        alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, b)
-        return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
-    
-    # def act_loss(self, o, u, mask, hidden):
-    #     """ Compute action loss 
         
-    #     Args:
-    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-    #         mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-    #         hidden (list): hidden outputs of forward method
-
-    #     Returns:
-    #         loss (torch.tensor): action loss. size=[batch_size]
-    #         stats (dict): action loss stats
-    #     """
-    #     _, alpha_pi = hidden
-    #     logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
-    #     loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
-
-    #     # compute stats
-    #     nan_mask = mask.clone()
-    #     nan_mask[nan_mask != 0] = 1.
-    #     nan_mask[nan_mask == 0] = torch.nan
-    #     logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
-    #     stats = {"loss_u": logp_u_mean}
-    #     return loss, stats
-
+        if value is None:
+            value = self.compute_value()
+        
+        if None in hidden:
+            b, pi = self.rnn.init_hidden(batch_size, value)
+        else:
+            b, pi = hidden
+        
+        logp_o = self.obs_model.log_prob(o)
+        logp_u = torch.log(pi + 1e-6).unsqueeze(0)
+        if u is not None:
+            logp_u = torch.cat([logp_u, self.ctl_model.log_prob(u)])
+        
+        alpha_b, alpha_pi = self.rnn.forward(logp_o, logp_u, value, b)
+        return [alpha_b, alpha_pi, value], [alpha_b, alpha_pi] # second tuple used in bptt
+    
     def act_loss(self, o, u, mask, hidden):
-        """ Compute action loss by matching forward kl of discrete actions
+        """ Compute action loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
@@ -220,51 +183,19 @@ class VINAgent(AbstractAgent):
             stats (dict): action loss stats
         """
         _, alpha_pi = hidden
-        logp_u = self.ctl_model.log_prob(u)
-        pi_target = torch.softmax(logp_u, dim=-1)
-        logp_pi = kl_divergence(pi_target, alpha_pi)
-        loss = torch.sum(logp_pi * mask, dim=0) / (mask.sum(0) + 1e-6)
+        logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
+        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
 
         # compute stats
         nan_mask = mask.clone()
         nan_mask[nan_mask != 0] = 1.
         nan_mask[nan_mask == 0] = torch.nan
-        logp_u_mean = torch.nanmean((nan_mask * logp_pi)).cpu().data
+        logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
         stats = {"loss_u": logp_u_mean}
         return loss, stats
     
-    # def obs_loss(self, o, u, mask, hidden):
-    #     """ Compute observation loss 
-        
-    #     Args:
-    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-    #         mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-    #         hidden (list): hidden outputs of forward method
-
-    #     Returns:
-    #         loss (torch.tensor): observation loss. size=[batch_size]
-    #         stats (dict): observation loss stats
-    #     """
-    #     alpha_b, _ = hidden
-        
-    #     # one step transition
-    #     logp_u = self.ctl_model.log_prob(u)
-    #     s_next = self.rnn.predict_one_step(logp_u, alpha_b)
-        
-    #     logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
-    #     loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-
-    #     # compute stats
-    #     nan_mask = mask[1:].clone()
-    #     nan_mask[nan_mask != 0] = 1.
-    #     nan_mask[nan_mask == 0] = torch.nan
-    #     logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
-    #     stats = {"loss_o": logp_o_mean}
-    #     return loss, stats
-
     def obs_loss(self, o, u, mask, hidden):
-        """ Compute elbo observation loss 
+        """ Compute observation loss 
         
         Args:
             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
@@ -278,26 +209,83 @@ class VINAgent(AbstractAgent):
         """
         alpha_b, _ = hidden
         
-        # compute posterior predictive
-        logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
-        
-        # compute variational prior
+        # one step transition
         logp_u = self.ctl_model.log_prob(u)
         s_next = self.rnn.predict_one_step(logp_u, alpha_b)
         
-        # compute kl
-        kl = kl_divergence(s_next[:-1], alpha_b[1:])
-        
-        elbo = logp_o[1:] - kl
-        loss = -torch.sum(elbo * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-        
+        logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
+        loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
+
         # compute stats
         nan_mask = mask[1:].clone()
         nan_mask[nan_mask != 0] = 1.
         nan_mask[nan_mask == 0] = torch.nan
-        elbo_mean = -torch.nanmean((nan_mask * elbo)).cpu().data
-        stats = {"loss_o": elbo_mean}
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
+        stats = {"loss_o": logp_o_mean}
         return loss, stats
+    
+    # def act_loss(self, o, u, mask, hidden):
+    #     """ Compute action loss by matching forward kl of discrete actions
+        
+    #     Args:
+    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+    #         mask (torch.tensor): binary mask sequence. size=[T, batch_size]
+    #         hidden (list): hidden outputs of forward method
+
+    #     Returns:
+    #         loss (torch.tensor): action loss. size=[batch_size]
+    #         stats (dict): action loss stats
+    #     """
+    #     _, alpha_pi = hidden
+    #     logp_u = self.ctl_model.log_prob(u)
+    #     pi_target = torch.softmax(logp_u, dim=-1)
+    #     logp_pi = kl_divergence(pi_target, alpha_pi)
+    #     loss = torch.sum(logp_pi * mask, dim=0) / (mask.sum(0) + 1e-6)
+
+    #     # compute stats
+    #     nan_mask = mask.clone()
+    #     nan_mask[nan_mask != 0] = 1.
+    #     nan_mask[nan_mask == 0] = torch.nan
+    #     logp_u_mean = torch.nanmean((nan_mask * logp_pi)).cpu().data
+    #     stats = {"loss_u": logp_u_mean}
+    #     return loss, stats
+
+    # def obs_loss(self, o, u, mask, hidden):
+    #     """ Compute elbo observation loss 
+        
+    #     Args:
+    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+    #         mask (torch.tensor): binary mask tensor. size=[T, batch_size]
+    #         hidden (list): hidden outputs of forward method
+
+    #     Returns:
+    #         loss (torch.tensor): observation loss. size=[batch_size]
+    #         stats (dict): observation loss stats
+    #     """
+    #     alpha_b, _ = hidden
+        
+    #     # compute posterior predictive
+    #     logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
+        
+    #     # compute variational prior
+    #     logp_u = self.ctl_model.log_prob(u)
+    #     s_next = self.rnn.predict_one_step(logp_u, alpha_b)
+        
+    #     # compute kl
+    #     kl = kl_divergence(s_next[:-1], alpha_b[1:])
+        
+    #     elbo = logp_o[1:] - kl
+    #     loss = -torch.sum(elbo * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
+        
+    #     # compute stats
+    #     nan_mask = mask[1:].clone()
+    #     nan_mask[nan_mask != 0] = 1.
+    #     nan_mask[nan_mask == 0] = torch.nan
+    #     elbo_mean = -torch.nanmean((nan_mask * elbo)).cpu().data
+    #     stats = {"loss_o": elbo_mean}
+    #     return loss, stats
     
     def compute_mutual_information(self, o, u, mask, hidden):
         """ Compute mutual information between state and observation """
@@ -337,8 +325,8 @@ class VINAgent(AbstractAgent):
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
         b_t, pi_t = self._state["b"], self._state["pi"]
-        [alpha_b, alpha_pi], _ = self.forward(
-            o.unsqueeze(0), self._prev_ctl, [b_t, pi_t]
+        [alpha_b, alpha_pi, value], _ = self.forward(
+            o.unsqueeze(0), self._prev_ctl, [b_t, pi_t], self._value
         )
         b_t, pi_t = alpha_b[0], alpha_pi[0]
         
@@ -352,6 +340,7 @@ class VINAgent(AbstractAgent):
             logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
         
         self._prev_ctl = u_sample
+        self._value = value
         self._state["b"] = b_t
         self._state["pi"] = pi_t
         return u_sample, logp
@@ -373,7 +362,7 @@ class VINAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
-        [alpha_b, alpha_pi], hidden = self.forward(o, u)
+        [alpha_b, alpha_pi, _], hidden = self.forward(o, u)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_pi)
@@ -390,7 +379,7 @@ class VINAgent(AbstractAgent):
 
     def predict(self, o, u, sample_method="ace", num_samples=1):
         """ Offline prediction observations and control """
-        [alpha_b, alpha_pi], _ = self.forward(o, u)
+        [alpha_b, alpha_pi, _], _ = self.forward(o, u)
         
         # one step transition
         logp_u = self.ctl_model.log_prob(u)

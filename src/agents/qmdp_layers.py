@@ -150,44 +150,37 @@ class QMDPLayer(jit.ScriptModule):
         """ Compute action and state posterior. Then compute the next action distribution """
         b_post = self.update_belief(logp_o, a, b, transition)
         return b_post
-    
+
     @jit.script_method
-    def init_hidden(self) -> Tensor:
+    def init_hidden(self, batch_size, value: Tensor) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self.b0, dim=-1)
-        return b0
+        b0 = torch.repeat_interleave(b0, batch_size, dim=-2)
+        a0 = self.plan(b0, value)
+        return b0, a0
     
     def predict_one_step(self, logp_u, b):
         transition = self.transition
         a = self.update_action(logp_u)
         s_next = torch.einsum("...kij, ...i, ...k -> ...j", transition, b, a)
         return s_next
-
+    
     def forward(
-        self, logp_o: Tensor, logp_u: Union[Tensor, None], reward: Tensor,
-        b: Union[Tensor, None], 
+        self, logp_o: Tensor, logp_u: Union[Tensor, None], value: Tensor, b: Union[Tensor, None], 
         ) -> Tuple[Tensor, Tensor]:
         """
         Args:
             logp_o (torch.tensor): sequence of observation probabilities. size=[T, batch_size, state_dim]
             logp_u (torch.tensor): sequence of control probabilities. Should be offset -1 if b is None.
                 size=[T, batch_size, act_dim]
-            reward (torch.tensor): reward matrix. size=[batch_size, act_dim, state_dim]
+            value (torch.tensor): value matrix. size=[horizon, batch_size, act_dim, state_dim]
             b ([torch.tensor, None], optional): prior belief. size=[batch_size, state_dim]
-            pi ([torch.tensor, None], optional): policy. size=[batch_size, act_dim]
         
         Returns:
             alpha_b (torch.tensor): sequence of posterior belief. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): sequence of policies. size=[T, batch_size, act_dim]
         """
-        batch_size = logp_o.shape[1]
         transition = self.compute_transition()
-        value = self.compute_value(transition, reward)
         T = len(logp_o)
-        
-        if b is None:
-            b = self.init_hidden()
-            b = torch.repeat_interleave(b, batch_size, dim=0)
-            logp_u = torch.cat([torch.zeros(1, batch_size, self.act_dim).to(self.b0.device), logp_u], dim=0)
         
         alpha_a = self.update_action(logp_u) # action posterior
         alpha_b = [b] + [torch.empty(0)] * (T) # state posterior
