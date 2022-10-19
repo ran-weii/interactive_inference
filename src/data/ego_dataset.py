@@ -247,12 +247,12 @@ class RelativeDataset(BaseDataset):
             ).to(torch.float32).to(self.device) for i in self.unique_eps
         ] 
 
-        # semi-supervised label
-        self.data_label = [
-            torch.from_numpy(
-                self.df_track.loc[self.df_track["eps_id"] == i][["is_supervised"]].values.astype(np.float32)
-            ).to(torch.float32).to(self.device) for i in self.unique_eps
-        ]
+        # # semi-supervised label
+        # self.data_label = [
+        #     torch.from_numpy(
+        #         self.df_track.loc[self.df_track["eps_id"] == i][["is_supervised"]].values.astype(np.float32)
+        #     ).to(torch.float32).to(self.device) for i in self.unique_eps
+        # ]
 
         if state_action:
             self.data_ego = torch.cat(self.data_ego, dim=0)
@@ -269,13 +269,13 @@ class RelativeDataset(BaseDataset):
         obs_meta = self.data_meta[idx]
         obs_ego = self.data_ego[idx]
         act_ego = self.data_act[idx]
-        obs_label = self.data_label[idx]
+        # obs_label = self.data_label[idx]
         if not self.state_action:
             sample_ids = sample_sequence(len(obs_ego), self.max_eps_len, gamma=self.gamma)
             obs_meta = obs_meta[sample_ids][0]
             obs_ego = obs_ego[sample_ids]
             act_ego = act_ego[sample_ids] 
-            obs_label = obs_label[sample_ids][0]
+            # obs_label = obs_label[sample_ids][0]
         
         for aug in self.augmentation:
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
@@ -284,6 +284,6 @@ class RelativeDataset(BaseDataset):
             "ego": obs_ego,
             "act": act_ego,
             "meta": obs_meta,
-            "label": obs_label
+            # "label": obs_label
         }
         return out_dict

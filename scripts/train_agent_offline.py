@@ -166,12 +166,6 @@ def main(arglist):
     for filename in arglist.filenames:
         df_track.append(load_data(arglist.data_path, arglist.scenario, filename, load_raw=False))
     df_track = pd.concat(df_track, axis=0)
-    df_track = df_track.assign(is_supervised=1)
-    
-    # load unlabeled random dataset
-    df_track_random = load_data(arglist.data_path, arglist.scenario, "vehicle_tracks_015.csv", load_raw=False)
-    df_track_random = df_track_random.assign(is_supervised=0)
-    df_track = df_track.merge(df_track_random, how="outer")
 
     df_track = df_track.assign(eps_id=get_new_eps_id(df_track))
 
