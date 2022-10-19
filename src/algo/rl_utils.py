@@ -38,7 +38,7 @@ class Logger():
 
 
 def train(
-    env, model, epochs, steps_per_epoch=1000, 
+    env, model, epochs, max_steps=500, steps_per_epoch=1000, 
     update_after=3000, update_every=50, log_test_every=10,
     verbose=False, callback=None
     ):
@@ -61,29 +61,36 @@ def train(
     
     model.reset()
     eps_id = np.random.choice(np.arange(env.num_eps))
-    obs, eps_return, eps_len = env.reset(eps_id), 0, 0
+    obs, eps_return, eps_len, terminate = env.reset(eps_id), 0, 0, False
     for t in range(total_steps):
         ctl = model.choose_action(obs)
         next_obs, reward, done, info = env.step(ctl)
+        next_terminate = info["terminate"]
         eps_return += reward
         eps_len += 1
 
         # env done handeling
-        done = True if info["terminated"] == True else done
+        done = True if next_terminate else done
         
-        state = model.agent._b.cpu()
-        model.replay_buffer(obs, ctl, state, reward, done)
+        state = model.ref_agent._state["b"].cpu()
+        model.replay_buffer(obs.numpy(), ctl.numpy(), state.numpy(), reward, terminate)
         obs = next_obs
+        terminate = next_terminate
 
         # end of trajectory handeling
-        if done:
+        if done or (eps_len + 1) >= max_steps:
+            # collect termianl step
+            ctl = model.choose_action(obs)
+            state = model.ref_agent._state["b"].cpu()
+            model.replay_buffer(obs.numpy(), ctl.numpy(), state.numpy(), reward, terminate)
+
             model.replay_buffer.push()
             logger.push({"eps_return": eps_return/eps_len})
             logger.push({"eps_len": eps_len})
             
             model.reset()
             eps_id = np.random.choice(np.arange(env.num_eps))
-            obs, eps_return, eps_len = env.reset(eps_id), 0, 0
+            obs, eps_return, eps_len, terminate = env.reset(eps_id), 0, 0, False
 
         # train model
         if t >= update_after and t % update_every == 0:
@@ -105,7 +112,7 @@ def train(
             model.on_epoch_end()
             if t > update_after and epoch % log_test_every == 0:
                 eval_eps_id = np.random.choice(np.arange(env.num_eps))
-                sim_data, rewards = eval_episode(env, model.agent, eval_eps_id)
+                sim_data, rewards = eval_episode(env, model.ref_agent, eval_eps_id)
                 logger.log_test_episode(sim_data)
                 print(f"test id: {eval_eps_id}, mean reward: {np.mean(rewards)}\n")
             
@@ -114,7 +121,7 @@ def train(
     
     # final test episode
     eval_eps_id = np.random.choice(np.arange(env.num_eps))
-    sim_data, rewards = eval_episode(env, model.agent, eval_eps_id)
+    sim_data, rewards = eval_episode(env, model.ref_agent, eval_eps_id)
     logger.log_test_episode(sim_data)
 
     # final callback
