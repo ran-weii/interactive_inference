@@ -11,13 +11,26 @@ STATE_KEYS = [
 ]
 
 class InteractionSimulator:
+    """ Single agent simulator for the INTERACTION dataset 
+    
+    The simulator propagates ego agent dynamics using the constant acceleration model. 
+    Other agents are playback of the dataset
+
+    Attributes:
+        _state (dict): simulator state data with the following fields:
+            sim_state: 
+            sim_act:
+            sensor_obs:
+            sensor_pos:
+            rwd: 
+    """
     def __init__(self, map_data, sensors, observer, svt_object):
         """
         Args:
             map_data (MapReader):
             sensor (List): list of sensors
             observer (Observer): observer object
-            svt_object (VehicleTrajectories):
+            svt_object (VehicleTrajectories): vehicle trajectories object
         """
         self.state_keys = STATE_KEYS
         self.svt = svt_object.svt # stack vehicle trajectories per frame
@@ -84,6 +97,17 @@ class InteractionSimulator:
         return obs
     
     def step(self, action):
+        """ Propagates simulator forward
+        
+        Args:
+            action (torch.tensor): agent action. size[1, act_dim]
+
+        Returns:
+            obs (torch.tensor): observation vector processed by the observer. size=[1, obs_dim]
+            rwd (float): scalar reward computed by the reward model
+            done (bool): whether the end of a data trajectory has been reached. 
+            info (dict): environment termination information. 
+        """
         self.t += 1
         
         # convert action to global
@@ -143,7 +167,7 @@ class InteractionSimulator:
         obs = self.observer.observe(sensor_obs)
         rwd = self.reward_model(sim_state, sensor_obs, action)
         done = True if (self.t + 1) >= self.T else False
-        info = self.observer.get_info()
+        info = self.observer.get_info(self.ego_state)
         
         self._state = {
             "sim_state": sim_state, 

@@ -5,6 +5,7 @@ from src.data.geometry import wrap_angles, coord_transformation
 from src.data.geometry import angle_to_vector
 from src.map_api.frenet_utils import compute_normal_from_kappa
 from src.map_api.frenet_utils import compute_acceleration_vector
+from src.simulation.simulator import STATE_KEYS
 
 """ TODO: 
 make lane feature calculation a part of the observer 
@@ -230,6 +231,7 @@ class CarfollowObserver:
             feature_set (list): list of feature variable names
             action_set (list): list of action variable names
         """
+        self.state_key = STATE_KEYS
         self.map_data = map_data
         self.sensors = sensors
         if feature_set is None:
@@ -247,6 +249,13 @@ class CarfollowObserver:
         sensor_feature_names = np.hstack([s.feature_names for s in sensors]).tolist()
         self.feature_idx = [sensor_feature_names.index(f) for f in self.feature_set]
         
+        # map limits
+        self.x_lim = map_data.x_lim
+        self.y_lim = map_data.y_lim
+
+        self.x_idx = self.state_key.index("x")
+        self.y_idx = self.state_key.index("y")
+
         self.reset()
     
     def reset(self):
@@ -339,11 +348,25 @@ class CarfollowObserver:
         ).flatten()
         return act_env
     
-    def get_info(self):
+    def get_info(self, ego_state):
         """ Get simulator info. Return terminated=True if d > max_d (3.8) """
+        # check if ego state reach map boundary
+        x = ego_state[self.x_idx]
+        y = ego_state[self.y_idx]
+        
+        terminate = any([
+            x <= self.x_lim[0],
+            x >= self.x_lim[1],
+            y <= self.y_lim[0],
+            y >= self.y_lim[1],
+        ])
+
+        # check ego lane deviation
         max_d = 3.8
+        terminate = any([terminate, np.abs(self._d_condition_ego[0]) > max_d])
+        
         info = {
-            "terminated": np.abs(self._d_condition_ego[0]) > max_d,
+            "terminate": terminate,
             "s": self._s_condition_ego[0],
             "d": self._d_condition_ego[0]
         }
