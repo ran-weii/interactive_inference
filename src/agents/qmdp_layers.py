@@ -23,7 +23,7 @@ def poisson_pdf(rate: Tensor, K: int) -> Tensor:
     return pdf
 
 
-class QMDPLayer(jit.ScriptModule):
+class QMDPLayer(nn.Module):
     """ Causal qmdp layer using global action prior """
     def __init__(self, state_dim, act_dim, rank, horizon, detach=True):
         super().__init__()
@@ -60,12 +60,7 @@ class QMDPLayer(jit.ScriptModule):
             self.__class__.__name__, self.state_dim, self.act_dim, self.rank, self.horizon, self.detach
         )
         return s
-
-    @property
-    def transition(self):
-        return self.compute_transition()
     
-    @jit.script_method
     def compute_transition(self):
         if self.rank != 0:
             w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
@@ -73,7 +68,6 @@ class QMDPLayer(jit.ScriptModule):
             w = self.w
         return torch.softmax(w, dim=-1)
     
-    @jit.script_method
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
         """ Compute expected value using value iteration
 
@@ -91,7 +85,6 @@ class QMDPLayer(jit.ScriptModule):
             q[t+1] = reward + torch.einsum("nkij, nkj -> nki", transition, v_next)
         return torch.stack(q)
     
-    @jit.script_method
     def plan(self, b: Tensor, value: Tensor) -> Tensor:
         """ Compute the belief policy distribution 
         
@@ -111,7 +104,6 @@ class QMDPLayer(jit.ScriptModule):
         pi = torch.einsum("hnk, nh -> nk", pi, tau)
         return pi
     
-    @jit.script_method
     def update_action(self, logp_u: Tensor) -> Tensor:
         """ Compute action posterior 
         
@@ -125,7 +117,6 @@ class QMDPLayer(jit.ScriptModule):
         a_post = torch.softmax(logp_u, dim=-1)
         return a_post
 
-    @jit.script_method
     def update_belief(self, logp_o: Tensor, a: Tensor, b: Tensor, transition: Tensor) -> Tensor:
         """ Compute state posterior
         
@@ -143,7 +134,6 @@ class QMDPLayer(jit.ScriptModule):
         b_post = torch.softmax(logp_s + logp_o, dim=-1)
         return b_post
 
-    @jit.script_method
     def update_cell(
         self, logp_o: Tensor, a: Tensor, b: Tensor, transition: Tensor
         ) -> Tensor:
@@ -151,7 +141,6 @@ class QMDPLayer(jit.ScriptModule):
         b_post = self.update_belief(logp_o, a, b, transition)
         return b_post
 
-    @jit.script_method
     def init_hidden(self, batch_size, value: Tensor) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self.b0, dim=-1)
         b0 = torch.repeat_interleave(b0, batch_size, dim=-2)
@@ -159,7 +148,7 @@ class QMDPLayer(jit.ScriptModule):
         return b0, a0
     
     def predict_one_step(self, logp_u, b):
-        transition = self.transition
+        transition = self.compute_transition()
         a = self.update_action(logp_u)
         s_next = torch.einsum("...kij, ...i, ...k -> ...j", transition, b, a)
         return s_next

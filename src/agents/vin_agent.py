@@ -135,7 +135,7 @@ class VINAgent(AbstractAgent):
 
     def forward(
         self, o: Tensor, u: Union[Tensor, None], 
-        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None, 
+        hidden: Optional[Union[Tuple[Tensor, Tensor], list]]=[None], 
         value: Optional[Union[Tensor, None]]=None, **kwargs
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
