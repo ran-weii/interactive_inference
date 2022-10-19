@@ -89,7 +89,7 @@ def main(arglist):
     exp_path = os.path.join(arglist.exp_path, "agents", arglist.agent, arglist.exp_name)
     print(f"evalusting online exp: {arglist.agent}/{arglist.exp_name}")
     
-    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename)
+    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, load_raw=True)
     df_track["is_train"] = 1 - df_track["is_train"]
 
     # filter episode length
