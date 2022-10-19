@@ -9,15 +9,14 @@ import matplotlib.pyplot as plt
 import torch 
 
 # setup imports
-from src.simulation.observers import ACTION_SET, FEATURE_SET
 from src.data.train_utils import load_data, count_parameters
 from src.data.data_filter import filter_segment_by_length
-from src.data.ego_dataset import EgoDataset, RelativeDataset
 from src.map_api.lanelet import MapReader
+from src.data.ego_dataset import RelativeDataset
 from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 from src.simulation.simulator import InteractionSimulator
+from src.simulation.observers import Observer, CarfollowObserver
 from src.simulation.utils import create_svt_from_df
-# from src.simulation.observers import Observer
 
 # model imports
 from src.agents.vin_agent import VINAgent
@@ -36,6 +35,7 @@ warnings.filterwarnings("ignore")
 
 def parse_args():
     bool_ = lambda x: x if isinstance(x, bool) else x == "True"
+    str_list_ = lambda x: x.split(",")
     
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -48,7 +48,6 @@ def parse_args():
         help="if entered train agent from check point")
     # agent args
     parser.add_argument("--agent", type=str, choices=["vin", "hvin", "mlp"], default="vin", help="agent type, default=vin")
-    parser.add_argument("--action_set", type=str, choices=["ego", "frenet"], default="frenet", help="agent action set, default=frenet")
     parser.add_argument("--state_dim", type=int, default=30, help="vin agent hidden state dim, default=30")
     parser.add_argument("--act_dim", type=int, default=60, help="vin agent action dim, default=60")
     parser.add_argument("--hmm_rank", type=int, default=32, help="vin agent hmm rank, default=32")
@@ -56,7 +55,12 @@ def parse_args():
     parser.add_argument("--obs_cov", type=str, default="full", help="vin agent observation covariance, default=full")
     parser.add_argument("--ctl_cov", type=str, default="full", help="vin agent control covariance, default=full")
     parser.add_argument("--use_tanh", type=bool_, default=False, help="whether to use tanh transformation, default=False")
-    parser.add_argument("--use_lidar", type=bool_, default=False)
+    parser.add_argument("--alpha", type=float, default=1., help="agent entropy reward coefficient, default=1.")
+    parser.add_argument("--epsilon", type=float, default=1., help="agent policy prior coefficient, default=1.")
+    parser.add_argument("--rwd", type=str, choices=["efe", "ece"], default="efe", help="agent reward function. default=efe")
+    parser.add_argument("--feature_set", type=str_list_, default=["ego_ds", "lv_s_rel", "lv_ds_rel"], help="agent feature set")
+    parser.add_argument("--action_set", type=str_list_, default=["dds"], help="agent action set, default=dds")
+    parser.add_argument("--discretize_ctl", type=bool_, default=True, help="whether to discretize ctl using gmm, default=True")
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of hyper factor, default=4")
     # trainer model args
     parser.add_argument("--algo", type=str, choices=["dac", "rdac"], default="dac", help="training algorithm, default=dac")
@@ -74,12 +78,6 @@ def parse_args():
     parser.add_argument("--create_svt", type=bool_, default=True, help="create svt to speed up rollout, default=True")
     parser.add_argument("--min_eps_len", type=int, default=50, help="min track length, default=50")
     parser.add_argument("--max_eps_len", type=int, default=500, help="max track length, default=200")
-    # rollout args
-    parser.add_argument("--epochs", type=int, default=10, help="number of training epochs, default=10")
-    parser.add_argument("--steps_per_epoch", type=int, default=1000, help="number of env steps per epoch, default=1000")
-    parser.add_argument("--update_after", type=int, default=1000, help="burn-in env steps, default=1000")
-    parser.add_argument("--update_every", type=int, default=50, help="update every env steps, default=50")
-    parser.add_argument("--log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
     # training args
     parser.add_argument("--buffer_size", type=int, default=1e5, help="agent replay buffer size, default=1e5")
     parser.add_argument("--d_batch_size", type=int, default=100, help="discriminator batch size, default=100")
@@ -92,10 +90,18 @@ def parse_args():
     parser.add_argument("--lr_c", type=float, default=0.001, help="critic learning rate, default=0.001")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=1000., help="gradient clipping, default=1000.")
-    parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient penalty, default=1.")
-    parser.add_argument("--grad_target", type=float, default=0., help="discriminator gradient target, default=0.")
+    parser.add_argument("--grad_penalty", type=float, default=1., help="discriminator gradient norm penalty, default=1.")
+    parser.add_argument("--grad_target", type=float, default=1., help="discriminator gradient norm target, default=0.")
     parser.add_argument("--bc_penalty", type=float, default=1., help="behavior cloning penalty, default=1.")
     parser.add_argument("--obs_penalty", type=float, default=1., help="observation penalty, default=1.")
+    parser.add_argument("--reg_penalty", type=float, default=1., help="agent regularization penalty, default=1.")
+    # rollout args
+    parser.add_argument("--epochs", type=int, default=10, help="number of training epochs, default=10")
+    parser.add_argument("--max_steps", type=int, default=400, help="max rollout steps, default=400")
+    parser.add_argument("--steps_per_epoch", type=int, default=1000, help="number of env steps per epoch, default=1000")
+    parser.add_argument("--update_after", type=int, default=1000, help="burn-in env steps, default=1000")
+    parser.add_argument("--update_every", type=int, default=50, help="update every env steps, default=50")
+    parser.add_argument("--log_test_every", type=int, default=10, help="steps between logging test episodes, default=10")
     parser.add_argument("--verbose", type=bool_, default=False, help="whether to verbose during training, default=False")
     parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
     parser.add_argument("--save_buffer", type=bool_, default=False, help="whether to save buffer, default=False")
@@ -138,6 +144,8 @@ class SaveCallback:
         self.iter = 0
 
     def __call__(self, model, logger):        
+        self.iter += 1
+
         # save history
         df_history = pd.DataFrame(logger.history)
         df_history = df_history.assign(train=1)
@@ -148,14 +156,13 @@ class SaveCallback:
         df_history.to_csv(os.path.join(self.save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ =plot_history(df_history, model.plot_keys, plot_std=True)
+        fig_history, _ = plot_history(df_history, model.plot_keys, plot_std=True)
         fig_history.savefig(os.path.join(self.save_path, "history.png"), dpi=100)
         
         # save test episode
         if len(logger.test_episodes) > self.num_test_eps:
-            # ani = animate(self.map_data, logger.test_episodes[-1]["sim_states"], logger.test_episodes[-1]["track_data"])
-            ani = animate(self.map_data, logger.test_episodes[-1], annot=True)
-            save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.iter+1}_ani.mp4"))
+            ani = animate(self.map_data, logger.test_episodes[-1], plot_lidar=False)
+            save_animation(ani, os.path.join(self.test_eps_path, f"epoch_{self.iter}_ani.mp4"))
             self.num_test_eps += 1
         
         plt.clf()
@@ -166,7 +173,6 @@ class SaveCallback:
             cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
             torch.save(cpu_state_dict, os.path.join(self.model_path, f"model_{self.iter}.pt"))
             print(f"\ncheckpoint saved at: {self.save_path}\n")
-        self.iter += 1
     
     def save_model(self, model):
         cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -180,7 +186,7 @@ def main(arglist):
     np.random.seed(arglist.seed)
     torch.manual_seed(arglist.seed)
     
-    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, train=True)
+    df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, train=True, load_raw=True)
     df_track.loc[df_track["is_train"] != 1]["is_train"] = np.nan
     
     # filter episode length
@@ -197,20 +203,19 @@ def main(arglist):
     
     # init sensors
     ego_sensor = EgoSensor(map_data)
-    lv_sensor = LeadVehicleSensor(map_data)
+    lv_sensor = LeadVehicleSensor(map_data, track_lv=True)
     lidar_sensor = LidarSensor()
-    sensors = [ego_sensor, lv_sensor]
-    if arglist.use_lidar:
-        sensors.append(lidar_sensor)
+    sensors = [ego_sensor, lv_sensor, lidar_sensor]
 
-    # define action set
-    if arglist.action_set == "frenet":
-        action_set = ["dds", "ddd"]
+    feature_set = arglist.feature_set
+    action_set = arglist.action_set
+
+    if arglist.action_set == ["dds"]:
+        observer = CarfollowObserver(map_data, sensors, feature_set=feature_set)
     else:
-        action_set = ["ax_ego", "ay_ego"]
+        observer = Observer(map_data, sensors, feature_set=feature_set, action_set=action_set)
 
-    env = InteractionSimulator(map_data, sensors, action_set, svt)
-    feature_set = env.observer.feature_names
+    env = InteractionSimulator(map_data, sensors, observer, svt)
     
     # compute obs and ctl mean and variance stats
     obs_mean = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][feature_set].mean().values).to(torch.float32)
@@ -241,12 +246,22 @@ def main(arglist):
     elif arglist.agent == "vin":
         agent = VINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
-            arglist.horizon, obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, 
-            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim
+            arglist.horizon, alpha=arglist.alpha, beta=arglist.epsilon, 
+            obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, rwd=arglist.rwd, 
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=False
         )
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
         if not arglist.use_tanh:
             agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
+        
+        if arglist.action_set == ["dds"] and arglist.discretize_ctl:
+            # load ctl gmm parameters
+            with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
+                [ctl_means, ctl_covs, weights] = pickle.load(f)
+
+            agent.ctl_model.init_params(ctl_means, ctl_covs)
+            print("action model loaded")
+
     elif arglist.agent == "hvin":
         agent = HyperVINAgent(
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
@@ -279,7 +294,8 @@ def main(arglist):
             buffer_size=arglist.buffer_size, d_batch_size=arglist.d_batch_size, a_batch_size=arglist.a_batch_size,
             rnn_len=arglist.rnn_len, d_steps=arglist.d_steps, a_steps=arglist.a_steps, 
             lr_d=arglist.lr_d, lr_a=arglist.lr_a, lr_c=arglist.lr_c, decay=arglist.decay, grad_clip=arglist.grad_clip, 
-            grad_penalty=arglist.grad_penalty, bc_penalty=arglist.bc_penalty, obs_penalty=arglist.obs_penalty
+            grad_penalty=arglist.grad_penalty, bc_penalty=arglist.bc_penalty, 
+            obs_penalty=arglist.obs_penalty, reg_penalty=arglist.reg_penalty
         )
         model.fill_real_buffer(rel_dataset)
     
@@ -308,7 +324,7 @@ def main(arglist):
         callback = SaveCallback(arglist, map_data, cp_history=cp_history)
 
     model, logger = train(
-        env, model, arglist.epochs, arglist.steps_per_epoch, 
+        env, model, arglist.epochs, arglist.max_steps, arglist.steps_per_epoch, 
         arglist.update_after, arglist.update_every, 
         log_test_every=arglist.log_test_every, verbose=arglist.verbose,
         callback=callback
