@@ -75,6 +75,10 @@ class RecurrentDAC(Model):
         self.agent = agent
         self.ref_agent = deepcopy(agent)
 
+        # freeze ref agent parameters
+        for param in self.ref_agent.parameters():
+            param.requires_grad = False
+
         # discriminator and critic input dims
         # extra dimension for absorbing state flag
         disc_input_dim = agent.obs_dim + agent.ctl_dim + 1
@@ -146,7 +150,7 @@ class RecurrentDAC(Model):
 
             if self.use_state:
                 with torch.no_grad():
-                    _, [state, _] = self.agent(obs.unsqueeze(1), ctl.unsqueeze(1))
+                    _, [state, _] = self.ref_agent(obs.unsqueeze(1), ctl.unsqueeze(1))
                     state = state.squeeze(1).cpu()
             else:
                 state = torch.zeros(len(obs), self.agent.state_dim)
@@ -294,8 +298,8 @@ class RecurrentDAC(Model):
         return r
 
     def compute_critic_loss(self):
-        real_batch = self.real_buffer.sample_episodes(int(self.a_batch_size/2), self.rnn_len, prioritize=False)
-        fake_batch = self.replay_buffer.sample_episodes(int(self.a_batch_size/2), self.rnn_len, prioritize=True)
+        real_batch = self.real_buffer.sample_episodes(self.a_batch_size, self.rnn_len, prioritize=False)
+        fake_batch = self.replay_buffer.sample_episodes(self.a_batch_size, self.rnn_len, prioritize=True)
         real_pad_batch, real_mask = real_batch
         fake_pad_batch, fake_mask = fake_batch
         
@@ -338,7 +342,7 @@ class RecurrentDAC(Model):
 
         # mask absorbing state observation with zeros
         obs_norm *= 1 - absorb
-        next_obs_norm *= 1 - absorb
+        next_obs_norm *= 1 - next_absorb
         
         # sample next action
         with torch.no_grad():
@@ -397,16 +401,18 @@ class RecurrentDAC(Model):
         fake_mask = fake_mask.to(self.device)
         
         # sample from actor
-        real_ctl_sample, _, real_hidden = self.agent.choose_action_batch(
+        real_ctl_sample, real_logp, real_hidden = self.agent.choose_action_batch(
             real_obs, real_ctl, tau=0.1, hard=True, sample_z=True, return_hidden=True
         )
         real_ctl_sample = real_ctl_sample.squeeze(0)
+        real_logp = real_logp.squeeze(0)
         real_state = real_hidden[0]
 
-        fake_ctl_sample, _, fake_hidden = self.agent.choose_action_batch(
+        fake_ctl_sample, fake_logp, fake_hidden = self.agent.choose_action_batch(
             fake_obs, fake_ctl, tau=0.1, hard=True, sample_z=True, return_hidden=True
         )
         fake_ctl_sample = fake_ctl_sample.squeeze(0)
+        fake_logp = fake_logp.squeeze(0)
         fake_state = fake_hidden[0]
 
         # concat real and fake
@@ -414,6 +420,7 @@ class RecurrentDAC(Model):
         obs = torch.cat([real_obs, fake_obs], dim=1)
         absorb = torch.cat([real_absorb, fake_absorb], dim=1)
         ctl_sample = torch.cat([real_ctl_sample, fake_ctl_sample], dim=1)
+        logp = torch.cat([real_logp, fake_logp], dim=1)
         mask = torch.cat([real_mask, fake_mask], dim=1)
 
         # normalize observation
@@ -425,7 +432,8 @@ class RecurrentDAC(Model):
         q = torch.min(q1, q2).squeeze(-1)
         ent = self.agent.ctl_model.entropy().mean()
         
-        a_loss = (-self.beta * ent - q) * mask
+        a_loss = (self.beta * logp - q) * mask
+        # a_loss = (-self.beta * ent - q) * mask
         a_loss = a_loss.sum() / (mask.sum() + 1e-6)
         
         # compute obs loss on both data
