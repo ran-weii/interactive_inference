@@ -348,18 +348,24 @@ class CarfollowObserver:
         ).flatten()
         return act_env
     
-    def get_info(self, ego_state):
-        """ Get simulator info. Return terminated=True if d > max_d (3.8) """
-        # check if ego state reach map boundary
-        x = ego_state[self.x_idx]
-        y = ego_state[self.y_idx]
+    def get_info(self, ego_state, obs):
+        """ Get simulator info. Return terminate flag """
+        # # check if ego state reach map boundary
+        # x = ego_state[self.x_idx]
+        # y = ego_state[self.y_idx]
         
-        terminate = any([
-            x <= self.x_lim[0],
-            x >= self.x_lim[1],
-            y <= self.y_lim[0],
-            y >= self.y_lim[1],
-        ])
+        # terminate = any([
+        #     x <= self.x_lim[0],
+        #     x >= self.x_lim[1],
+        #     y <= self.y_lim[0],
+        #     y >= self.y_lim[1],
+        # ])
+
+        # check if ego is ahead of lv
+        max_s_rel = 10.
+        lv_s_rel_idx = self.feature_set.index("lv_s_rel")
+        lv_s_rel = obs[:, lv_s_rel_idx]
+        terminate = lv_s_rel < -max_s_rel
 
         # check ego lane deviation
         max_d = 3.8
