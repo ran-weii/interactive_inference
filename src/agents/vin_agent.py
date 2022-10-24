@@ -15,7 +15,8 @@ class VINAgent(AbstractAgent):
     """
     def __init__(
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
-        obs_cov="full", ctl_cov="full", rwd="efe", use_tanh=False, ctl_lim=None, detach=True
+        obs_cov="full", ctl_cov="full", rwd="efe", use_tanh=False, ctl_lim=None, 
+        detach=True, pred_steps=1
         ):
         super().__init__()
         self.state_dim = state_dim
@@ -27,6 +28,7 @@ class VINAgent(AbstractAgent):
         self.beta = beta # policy prior temperature
         self.rwd = rwd
         self.detach = detach
+        self.pred_steps = pred_steps
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, detach=detach)
         self.obs_model = ConditionalGaussian(
@@ -223,6 +225,29 @@ class VINAgent(AbstractAgent):
         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
         return loss, stats
+
+    def compute_prediction_loss(self, o, u, mask, hidden):
+        """ Multi-step prediction loss """
+        pred_steps = self.pred_steps
+        alpha_b, _ = hidden
+        
+        # multi step prediction
+        logp_u = self.ctl_model.log_prob(u)
+        s_pred = [alpha_b[:-pred_steps]] + [torch.empty(0)] * pred_steps
+        for i in range(pred_steps):
+            s_pred[i+1] = self.rnn.predict_one_step(logp_u[i:-pred_steps+i], s_pred[i])
+        
+        logp_o = self.obs_model.mixture_log_prob(s_pred[-1], o[pred_steps:])
+        loss = -torch.sum(logp_o * mask[pred_steps:], dim=0) / (mask[pred_steps:].sum(0) + 1e-6)
+
+        # compute stats
+        nan_mask = mask[pred_steps:].clone()
+        nan_mask[nan_mask != 0] = 1.
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
+        stats = {"loss_pred": logp_o_mean}
+        return loss, stats
+
     
     # def act_loss(self, o, u, mask, hidden):
     #     """ Compute action loss by matching forward kl of discrete actions

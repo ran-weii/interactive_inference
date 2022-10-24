@@ -109,13 +109,15 @@ class BehaviorCloning(Model):
                 
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
+                loss_pred, stats_pred = self.agent.compute_prediction_loss(o_t, u_t, mask_t, hidden)
                 loss_prior, stats_prior = self.compute_prior_loss(o_t, u_t, mask_t, hidden)
                 loss_semi, stats_semi = self.compute_semisupervised_loss(o_t, u_t, mask_t, hidden)
-                
+
                 # # apply semi-supervised label to action loss
                 loss_u = torch.sum(loss_u * label) / (label.sum() + 1e-6)
                 # loss_u = torch.mean(loss_u)
                 loss_o = torch.mean(loss_o)
+                loss_pred = torch.mean(loss_pred)
 
                 loss_semi = torch.sum(loss_semi * (1 - label)) / torch.sum(1 - label + 1e-6)
                 
@@ -123,7 +125,8 @@ class BehaviorCloning(Model):
                     self.bc_penalty * loss_u + \
                     self.obs_penalty * loss_o + \
                     self.reg_penalty * loss_prior + \
-                    self.reg_penalty * loss_semi
+                    self.reg_penalty * loss_semi + \
+                    self.obs_penalty * self.reg_penalty * loss_pred
                 )
                     
                 if train:
@@ -137,7 +140,7 @@ class BehaviorCloning(Model):
                 epoch_stats.append({
                     "train": 1 if train else 0,
                     "loss": loss.cpu().data.item(),
-                    **stats_u, **stats_o, **stats_prior, **stats_semi
+                    **stats_u, **stats_o, **stats_prior, **stats_semi, **stats_pred
                 })
         
         stats = pd.DataFrame(epoch_stats).mean().to_dict()

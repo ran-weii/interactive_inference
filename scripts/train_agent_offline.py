@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument("--action_set", type=str_list_, default="dds", help="agent action set, default=dds")
     parser.add_argument("--use_tanh", type=bool_, default=True, help="whether to use tanh transform, default=True")
     parser.add_argument("--detach", type=bool_, default=True, help="whether to detach dynamics model, default=True")
+    parser.add_argument("--pred_steps", type=int, default=1, help="number of forward prediction steps, default=1")
     parser.add_argument("--discretize_ctl", type=bool_, default=True, help="whether to discretize ctl using gmm, default=True")
     parser.add_argument("--hyper_dim", type=int, default=4, help="number of latent factor, default=4")
     parser.add_argument("--train_prior", type=bool_, default=False, help="whether to train hvin prior, default=False")
@@ -218,7 +219,8 @@ def main(arglist):
             arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, arglist.hmm_rank,
             arglist.horizon, alpha=arglist.alpha, beta=arglist.beta, 
             obs_cov=arglist.obs_cov, ctl_cov=arglist.ctl_cov, rwd=arglist.rwd, 
-            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, detach=arglist.detach
+            use_tanh=arglist.use_tanh, ctl_lim=ctl_lim, 
+            detach=arglist.detach, pred_steps=arglist.pred_steps
         )
         
         agent.obs_model.init_batch_norm(obs_mean, obs_var)
