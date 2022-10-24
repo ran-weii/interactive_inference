@@ -188,6 +188,7 @@ def main(arglist):
     
     df_track = load_data(arglist.data_path, arglist.scenario, arglist.filename, train=True, load_raw=True)
     df_track.loc[df_track["is_train"] != 1]["is_train"] = np.nan
+    df_track = df_track.assign(is_supervised=1)
     
     # filter episode length
     df_track["eps_id"], df_track["eps_len"] = filter_segment_by_length(

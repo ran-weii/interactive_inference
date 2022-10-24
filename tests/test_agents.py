@@ -608,9 +608,10 @@ def test_vin_agent_2():
     print("test_vin_agent_2 passed")
 
 def test_hyper_vin_agent():
+    torch.manual_seed(seed)
     from src.agents.hyper_vin_agent import HyperVINAgent
 
-    state_dim = 10
+    state_dim = 2
     act_dim = 5
     obs_dim = 12
     ctl_dim = 3
@@ -625,8 +626,10 @@ def test_hyper_vin_agent():
 
     agent = HyperVINAgent(
         state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, hyper_dim,
-        hidden_dim, num_hidden, gru_layers, activation
+        hidden_dim, num_hidden, gru_layers, activation, alpha=1., beta=1.
     )
+    agent.obs_model.batch_norm = False
+    agent.ctl_model.batch_norm = False
     print(agent)
     
     # synthetic data
@@ -635,7 +638,31 @@ def test_hyper_vin_agent():
     o = torch.randn(T, batch_size, obs_dim)
     u = torch.randn(T, batch_size, ctl_dim)
     
-    [alpha_b, alpha_a], _ = agent(o, u, sample_z=False)
+    [alpha_b, alpha_pi], hidden = agent(o, u, sample_z=True)
+
+    # test sequential
+    prev_u = None
+    hidden = None
+    
+    z_seq = []
+    alpha_b_seq = []
+    alpha_pi_seq = []
+    for t in range(T):
+        _, hidden = agent.forward(o[t].unsqueeze(0), prev_u, hidden, sample_z=True)
+        hidden = [h[-1].detach() if isinstance(h, torch.Tensor) else h for h in hidden]
+        prev_u = u[t].unsqueeze(0)
+        
+        alpha_b_seq.append(hidden[0])
+        alpha_pi_seq.append(hidden[1])
+        z_seq.append(hidden[2])
+        
+
+    alpha_b_seq = torch.stack(alpha_b_seq)
+    alpha_pi_seq = torch.stack(alpha_pi_seq)
+    z_seq = torch.stack(z_seq)
+    
+    # assert torch.all(torch.isclose(alpha_b, alpha_b_seq, atol=1e-5))
+    # assert torch.all(torch.isclose(alpha_pi, alpha_pi_seq, atol=1e-5))
     print("test_hyper_vin_agent passed")
 
 if __name__ == "__main__":
@@ -653,6 +680,6 @@ if __name__ == "__main__":
     # test_factored_value_iteration()
     # test_factored_agent()
     # test_embedded_agent()
-    test_vin_agent()
-    test_vin_agent_2()
-    # test_hyper_vin_agent()
+    # test_vin_agent()
+    # test_vin_agent_2()
+    test_hyper_vin_agent()

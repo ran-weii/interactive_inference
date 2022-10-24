@@ -223,7 +223,7 @@ class CarfollowObserver:
     """ Car following observer """
     default_feature_set = ["ego_ds", "lv_s_rel", "lv_ds_rel"]
     default_action_set = ["dds"]
-    def __init__(self, map_data, sensors, feature_set=None, action_set=default_action_set):
+    def __init__(self, map_data, sensors, feature_set=None, action_set=default_action_set, max_s_rel=-1.):
         """
         Args:
             map_data (MapReader): map data object
@@ -255,6 +255,8 @@ class CarfollowObserver:
 
         self.x_idx = self.state_key.index("x")
         self.y_idx = self.state_key.index("y")
+
+        self.max_s_rel = max_s_rel
 
         self.reset()
     
@@ -362,10 +364,10 @@ class CarfollowObserver:
         # ])
 
         # check if ego is ahead of lv
-        max_s_rel = 10.
+        # max_s_rel = 10.
         lv_s_rel_idx = self.feature_set.index("lv_s_rel")
         lv_s_rel = obs[:, lv_s_rel_idx]
-        terminate = lv_s_rel < -max_s_rel
+        terminate = lv_s_rel < -self.max_s_rel
 
         # check ego lane deviation
         max_d = 3.8

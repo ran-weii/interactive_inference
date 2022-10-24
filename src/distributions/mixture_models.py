@@ -18,11 +18,11 @@ class ConditionalGaussian(Model):
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
-            cov (str): covariance type. choices=["diag", "full", "tied"]
+            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full]
             batch_norm (bool, optional): whether to use input batch normalization. default=True
         """
         super().__init__()
-        assert cov in ["diag", "full", "tied"]
+        assert cov in ["diag", "full", "tied", "tied_full"]
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.cov = cov
@@ -31,7 +31,8 @@ class ConditionalGaussian(Model):
         self.eps = 1e-6
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
-        nn.init.normal_(self.mu, mean=0, std=1)
+        # nn.init.normal_(self.mu, mean=0, std=1)
+        nn.init.uniform_(self.mu, a=-1, b=1)
     
         if cov == "full":
             self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
@@ -43,7 +44,11 @@ class ConditionalGaussian(Model):
             nn.init.normal_(self.lv, mean=0, std=0.01)
         elif cov == "tied":
             self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            self.tl = nn.Parameter(torch.zeros(1, 1, x_dim, x_dim), requires_grad=False)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "tied_full":
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, 1, x_dim, x_dim))
             nn.init.normal_(self.lv, mean=0, std=0.01)
 
         if batch_norm:
@@ -86,6 +91,10 @@ class ConditionalGaussian(Model):
         [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
+        # handle tied covariance case
+        if L.shape[1] != mu.shape[1]:
+            L = torch.repeat_interleave(L, mu.shape[1], dim=1)
+
         if requires_grad is False:
             mu, L = mu.data, L.data
 

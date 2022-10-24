@@ -119,7 +119,7 @@ def run_kalman_filter(df, dt, kf_filter):
 def compute_features(df, map_data, dt, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
     from src.simulation.sensors import STATE_KEYS
-    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, FollowVehicleSensor, LidarSensor
     from src.simulation.observers import Observer
     
     # compute actions
@@ -129,16 +129,18 @@ def compute_features(df, map_data, dt, min_seg_len, parallel):
 
     ego_sensor = EgoSensor(map_data)
     lv_sensor = LeadVehicleSensor(map_data)
+    fv_sensor = FollowVehicleSensor(map_data)
     lidar_sensor = LidarSensor()
-    feature_set = ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
+    feature_set = ego_sensor.feature_names + lv_sensor.feature_names + fv_sensor.feature_names + lidar_sensor.feature_names
 
     def f_compute_features_episode(df_ego, **kwargs):
         ego_sensor = EgoSensor(map_data)
         lv_sensor = LeadVehicleSensor(map_data, track_lv=False)
+        fv_sensor = FollowVehicleSensor(map_data, track_fv=False)
         lidar_sensor = LidarSensor()
         observer = Observer(
-            map_data, [ego_sensor, lv_sensor, lidar_sensor], 
-            feature_set=ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
+            map_data, [ego_sensor, lv_sensor, fv_sensor, lidar_sensor], 
+            feature_set=ego_sensor.feature_names + lv_sensor.feature_names + fv_sensor.feature_names + lidar_sensor.feature_names
         )
 
         track_id = df_ego["track_id"]
@@ -150,6 +152,7 @@ def compute_features(df, map_data, dt, min_seg_len, parallel):
         sensor_obs = {}
         sensor_obs["EgoSensor"], _ = ego_sensor.get_obs(ego_state, agent_states)
         sensor_obs["LeadVehicleSensor"], _ = lv_sensor.get_obs(ego_state, agent_states)
+        sensor_obs["FollowVehicleSensor"], _ = fv_sensor.get_obs(ego_state, agent_states)
         sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
         obs = observer.observe(sensor_obs).numpy()
         return obs

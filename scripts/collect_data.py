@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument("--action_set", type=int, default=["dds"])
     parser.add_argument("--num_eps", type=int, default=1, help="number of episodes to collect, default=3")
     parser.add_argument("--max_steps", type=int, default=300, help="max episode steps, default=300")
+    parser.add_argument("--out_filename", type=str, default="vehicle_tracks_015.csv")
     parser.add_argument("--seed", type=int, default=0)
     arglist = parser.parse_args()
     return arglist
@@ -50,6 +51,41 @@ def get_new_eps_id(df_track):
     num_digits = len(str(np.nanmax(df_track["eps_id"]).astype(int)))
     new_eps_id = df_track["record_id"] * 10**num_digits + df_track["eps_id"]
     return new_eps_id
+
+def episode(env, agent, eps_id, max_steps=1000, sample_method="ace"):
+    """ Evaluate episode
+    
+    Args:
+        env (Env): gym style simulator
+        agent (Agent): agent class
+        eps_id (int): episode id
+        max_steps (int, optional): maximum number of steps. Default=1000
+        sample_method (str, optional): 
+
+    Returns:
+        sim_states (np.array): simulated states [T, num_agents, 5]
+        sim_acts (np.array): simulated actions [T, 2]
+        track_data (dict): recorded track data
+    """
+    agent.eval()
+    agent.reset()
+    obs = env.reset(eps_id)
+    env.observer.push(env._state, agent._state)
+
+    rewards = []
+    for t in range(max_steps):
+        with torch.no_grad():
+            ctl, _ = agent.choose_action(obs.to(agent.device), sample_method=sample_method)
+            ctl = ctl.cpu().data.view(1, -1)
+            
+        obs, r, done, info = env.step(ctl)
+        
+        if done or t >= max_steps or info["terminate"]:
+            break
+        rewards.append(r)
+        env.observer.push(env._state, agent._state)
+    
+    return env.observer._data, rewards
 
 def main(arglist):
     np.random.seed(arglist.seed)
@@ -85,7 +121,7 @@ def main(arglist):
     action_set = arglist.action_set
     full_feature_set = ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
     
-    observer = CarfollowObserver(map_data, sensors, feature_set=feature_set)
+    observer = CarfollowObserver(map_data, sensors, feature_set=feature_set, max_s_rel=-2.)
     print(observer.feature_set)
 
     env = InteractionSimulator(map_data, sensors, observer, svt)
@@ -100,15 +136,15 @@ def main(arglist):
     obs_dim = len(observer.feature_set)
     ctl_dim = 1
     agent = VINAgent(
-        arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 0,
+        arglist.state_dim, arglist.act_dim, obs_dim, ctl_dim, 10,
         5, alpha=1, beta=1, obs_cov="full", ctl_cov="diag", use_tanh=False
     )
     agent.obs_model.init_batch_norm(obs_mean, obs_var)
     agent.ctl_model.init_batch_norm(ctl_mean, ctl_var)
     
-    # add more weights to large actions in pi0
-    c = 4
-    agent._pi0.data += torch.linspace(-c, c, agent.act_dim).abs().view(1, agent.act_dim, 1)
+    # # add more weights to large actions in pi0
+    # c = 4
+    # agent._pi0.data += torch.linspace(-c, c, agent.act_dim).abs().view(1, agent.act_dim, 1)
 
     # load ctl gmm parameters
     with open(os.path.join("../exp", "agents", "ctl_model", "model.p"), "rb") as f:
@@ -120,9 +156,9 @@ def main(arglist):
     agent.eval()
     print(agent)
     
-    # sample eval episodes
-    test_eps_id = np.random.choice(np.arange(env.num_eps), arglist.num_eps)
-    print(test_eps_id)
+    # # sample eval episodes
+    # test_eps_id = np.random.choice(np.arange(env.num_eps), arglist.num_eps)
+    # print(test_eps_id)
     
     def pack_obs(episode):
         o = []
@@ -137,53 +173,67 @@ def main(arglist):
             sim_act = e["sim_state"]["sim_act"]["act_local"]
             a.append(sim_act)
         return np.stack(a)
+    
+    # accept sample based on max lv_inv_tau value 
+    min_lv_inv_tau = 1.
 
     df_features = []
     df_labels = []
-    for i, eps_id in enumerate(test_eps_id):
-        sim_data, rewards = eval_episode(
-            env, agent, eps_id, sample_method="ace", playback=False
+    # for i, eps_id in enumerate(test_eps_id):
+    while len(df_features) < arglist.num_eps:
+        # sim_data, rewards = eval_episode(
+        #     env, agent, eps_id, sample_method="ace", playback=False
+        # )
+        test_id = np.random.choice(np.arange(env.num_eps))
+        sim_data, rewards = episode(
+            env, agent, test_id, sample_method="ace"
         )
-        print(f"test eps: {i}, mean reward: {np.mean(rewards)}")
+        print(f"test eps: {test_id}, mean reward: {np.mean(rewards)}, len: {len(rewards)}")
         
         # pack dataframe
-        obs = pack_obs(sim_data)
-        act = pack_act(sim_data)
-        df_eps_features = pd.DataFrame(np.hstack([obs[:-1], act]), columns=full_feature_set + action_set)
-        df_eps_features.insert(0, "track_id", i * np.ones((len(act),)))
-        df_eps_features.insert(1, "frame_id", np.arange(len(act)))
-        
-        labels = np.stack([
-            i * np.ones(len(act)),
-            np.arange(len(act)),
-            i * np.ones(len(act)),
-            len(act) * np.ones(len(act)),
-            np.ones(len(act))
-        ]).T
-        df_eps_labels = pd.DataFrame(
-            labels, columns=["track_id", "frame_id", "eps_id", "eps_len", "is_train"]
-        )
+        if len(rewards) > 50:
+            track_id = len(df_features)
+            obs = pack_obs(sim_data)
+            act = pack_act(sim_data)
+            df_eps_features = pd.DataFrame(np.hstack([obs[:-1], act]), columns=full_feature_set + action_set)
+            df_eps_features.insert(0, "track_id", track_id * np.ones((len(act),)))
+            df_eps_features.insert(1, "frame_id", np.arange(len(act)))
+            
+            labels = np.stack([
+                track_id * np.ones(len(act)),
+                np.arange(len(act)),
+                track_id * np.ones(len(act)),
+                len(act) * np.ones(len(act)),
+                np.ones(len(act))
+            ]).T
+            df_eps_labels = pd.DataFrame(
+                labels, columns=["track_id", "frame_id", "eps_id", "eps_len", "is_train"]
+            )
 
-        df_features.append(df_eps_features)
-        df_labels.append(df_eps_labels)
+            if df_eps_features["lv_inv_tau"].abs().max() >= min_lv_inv_tau:
+                df_features.append(df_eps_features)
+                df_labels.append(df_eps_labels)
+                print(f"accepted trajectories: {len(df_features)}")
     
+    print(f"num trajectories accepted: {len(df_features)}")
+
     df_features = pd.concat(df_features)
     df_labels = pd.concat(df_labels)
-    
+
     # save 
     feature_save_path = os.path.join(
         arglist.data_path, 
         "processed_trackfiles", 
         "features", 
         arglist.scenario,
-        "vehicle_tracks_015.csv"
+        arglist.out_filename
     )
     label_save_path = os.path.join(
         arglist.data_path, 
         "processed_trackfiles", 
         "train_labels", 
         arglist.scenario,
-        "vehicle_tracks_015.csv"
+        arglist.out_filename
     )
     df_features.to_csv(feature_save_path, index=False)
     df_labels.to_csv(label_save_path, index=False)

@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,19 +10,18 @@ from torch.utils.data import DataLoader
 
 # setup imports
 from src.simulation.observers import FEATURE_SET, ACTION_SET
+from src.simulation.observers import Observer, CarfollowObserver
 from src.data.train_utils import load_data
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
+from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 
 # model imports
-from src.agents.vin_agent import VINAgent
+from src.agents.vin_agent import VINAgent, VINAgent2
 from src.agents.hyper_vin_agent import HyperVINAgent
 from src.agents.mlp_agents import MLPAgent
-from src.algo.irl import BehaviorCloning, HyperBehaviorCloning
-from src.algo.irl import ReverseBehaviorCloning
-from src.algo.recurrent_airl import RecurrentDAC
 
 # eval imports
-from src.evaluation.offline import eval_actions_episode, sample_action_components
+from src.evaluation.offline import eval_actions_episode, sample_action_components, transform_action
 from src.visualization.utils import set_plotting_style, plot_time_series, plot_scatter
 
 import warnings
@@ -39,17 +39,29 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "mlp"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "mlp", "tvin"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--max_eps_len", type=int, default=200, 
         help="max episode length, default=200")
     parser.add_argument("--num_eps", type=int, default=5, 
         help="number of episodes to evaluate, default=5")
+    parser.add_argument("--num_sample", type=int, default=30, 
+        help="number of sample to draw, default=30")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
     arglist = parser.parse_args()
     return arglist
+
+# def transform_action(u, discretizers):
+#     u_split = torch.chunk(u, 2, dim=-1)
+#     u_shape = list(u_split[0].shape)
+#     ux = discretizers[0].inverse_transform(u_split[0].view(-1, 1)).reshape(u_shape)
+#     uy = discretizers[1].inverse_transform(u_split[1].view(-1, 1)).reshape(u_shape)
+#     ux = torch.from_numpy(ux).to(torch.float32)
+#     uy = torch.from_numpy(uy).to(torch.float32)
+#     u = torch.cat([ux, uy], dim=-1)
+#     return u
 
 def main(arglist):
     np.random.seed(arglist.seed)
@@ -67,21 +79,27 @@ def main(arglist):
     with open(os.path.join(exp_path, "args.json"), "r") as f:
         config = json.load(f)
 
-    """ TODO: add code to adapt input feature set """
-    # define feature set
-    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
-    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
-    feature_set = ego_features + relative_features
-    assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
-    assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
-    
     # define action set
     if config["action_set"] == "frenet":
         action_set = ["dds", "ddd"]
-    else:
+    elif config["action_set"] == "ego":
         action_set = ["ax_ego", "ay_ego"]
-    assert set(action_set).issubset(set(ACTION_SET))
     
+    # define feature set
+    ego_sensor = EgoSensor(None)
+    lv_sensor = LeadVehicleSensor(None)
+    lidar_sensor = LidarSensor()
+    sensors = [ego_sensor, lv_sensor]
+    if config["use_lidar"]:
+        sensors.append(lidar_sensor)
+    
+    if config["observer"] == "full":
+        observer = Observer(None, sensors, action_set)
+    elif config["observer"] == "car_follow":
+        observer = CarfollowObserver(None, sensors)
+    feature_set = observer.feature_names
+    action_set = observer.action_set
+
     # compute empirical control limits
     ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
     ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
@@ -89,22 +107,31 @@ def main(arglist):
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
-        max_eps_len=arglist.max_eps_len, augmentation=[aug_flip_lr]
+        max_eps_len=arglist.max_eps_len, augmentation=[]
     )
     loader = DataLoader(dataset, len(dataset), shuffle=False, collate_fn=collate_fn)
-    obs_dim, ctl_dim = len(feature_set), 2 
-
+    obs_dim, ctl_dim = len(feature_set), len(action_set)
+    
     print(f"feature set: {feature_set}")
     print(f"test size: {len(loader.dataset)}")
 
     # init agent
     if arglist.agent == "vin":
+        alpha = config["alpha"] if "alpha" in config else 0.
+        beta = config["beta"] if "beta" in config else 1.
         agent = VINAgent(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
-            config["horizon"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
+            config["horizon"], alpha=alpha, beta=beta, obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
             use_tanh=config["use_tanh"], ctl_lim=ctl_lim
         )
-    if arglist.agent == "hvin":
+        if "causal" in config.keys():
+            if config["causal"] == False:
+                agent = VINAgent2(
+                    config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
+                    config["horizon"], alpha=alpha, obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"],            
+                    use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+                )
+    elif arglist.agent == "hvin":
         agent = HyperVINAgent(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
             config["horizon"], config["hyper_dim"], config["hidden_dim"], config["num_hidden"], 
@@ -117,25 +144,11 @@ def main(arglist):
             obs_dim, ctl_dim, config["hidden_dim"], config["num_hidden"],
             use_tanh=True, ctl_limits=torch.tensor([5.5124, 0.0833])
         )
-    
-    # init model
-    if config["algo"] == "bc":
-        model = BehaviorCloning(agent)
-    elif config["algo"] == "hbc":
-        model = HyperBehaviorCloning(agent)
-    elif config["algo"] == "rbc":
-        model = ReverseBehaviorCloning(
-            agent, config["hidden_dim"], config["num_hidden"], config["activation"],
-            use_state=config["use_state"]
-        )
-    elif config["algo"] == "rdac":
-        model = RecurrentDAC(
-            agent, config["hidden_dim"], config["num_hidden"], config["activation"]
-        )
+
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
-    model.load_state_dict(state_dict, strict=True)
-    agent = model.agent
+    state_dict = {k.replace("agent.", ""): v for (k, v) in state_dict.items() if "agent." in k}
+    agent.load_state_dict(state_dict, strict=True)
     print(agent)
 
     # sample eval episodes
@@ -148,13 +161,21 @@ def main(arglist):
         meta = dataset[eps_id]["meta"]
         title = f"track {meta[0]} eps {meta[1]}"
 
-        u_sample = eval_actions_episode(agent, obs, ctl)
+        u_sample, loss = eval_actions_episode(agent, obs, ctl, num_samples=arglist.num_sample)
+        
+        print("loss", loss)
+
+        # if config["discrete_action"]:
+        #     u_sample = transform_action(u_sample, discretizers)
+        #     ctl = transform_action(ctl, discretizers)
         
         fig_u, ax = plot_time_series(
-            ctl, ["ax_ego", "ay_ego"], x_sample=u_sample, 
-            num_cols=2, figsize=(6, 2), title=title
+            ctl, action_set, x_sample=u_sample, 
+            num_cols=2, figsize=(4, 2.5), title=None
+            # num_cols=2, figsize=(6, 4), title=title
         )
-
+        plt.show()
+        # exit()
         figs_u.append(fig_u)
     
     # save results

@@ -56,6 +56,20 @@ class BehaviorCloning(Model):
         }
         return loss, stats
 
+    def compute_semisupervised_loss(self, o, u, mask, hidden):
+        # compute action entropy loss
+        alpha_pi, _ = hidden
+        
+        log_pi = torch.log(alpha_pi + 1e-6)
+        ent = -torch.sum(alpha_pi * log_pi, dim=-1)
+
+        loss = torch.sum(ent * mask, dim=0) / (mask.sum(0) + 1e-6)
+
+        stats = {
+            "semi_loss": loss.mean().data.item()
+        }
+        return loss, stats
+
     def run_epoch(self, loader, train=True):
         if train:
             self.agent.train()
@@ -67,12 +81,12 @@ class BehaviorCloning(Model):
             pad_batch, mask = batch
             o = pad_batch["ego"]
             u = pad_batch["act"]
-            # label = pad_batch["label"].flatten() # semi-supervised label
+            label = pad_batch["label"].flatten() # semi-supervised label
 
             o = o.to(self.device)
             u = u.to(self.device)
             mask = mask.to(self.device)
-            # label = label.to(self.device)
+            label = label.to(self.device)
             
             hidden = [None]
             for t, batch_t in enumerate(zip(
@@ -96,16 +110,20 @@ class BehaviorCloning(Model):
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)
                 loss_o, stats_o = self.agent.obs_loss(o_t, u_t, mask_t, hidden)
                 loss_prior, stats_prior = self.compute_prior_loss(o_t, u_t, mask_t, hidden)
+                loss_semi, stats_semi = self.compute_semisupervised_loss(o_t, u_t, mask_t, hidden)
                 
                 # # apply semi-supervised label to action loss
-                # loss_u = torch.sum(loss_u * label) / label.sum()
-                loss_u = torch.mean(loss_u)
+                loss_u = torch.sum(loss_u * label) / (label.sum() + 1e-6)
+                # loss_u = torch.mean(loss_u)
                 loss_o = torch.mean(loss_o)
+
+                loss_semi = torch.sum(loss_semi * (1 - label)) / torch.sum(1 - label + 1e-6)
                 
                 loss = (
                     self.bc_penalty * loss_u + \
                     self.obs_penalty * loss_o + \
-                    self.reg_penalty * loss_prior
+                    self.reg_penalty * loss_prior + \
+                    self.reg_penalty * loss_semi
                 )
                     
                 if train:
@@ -119,7 +137,7 @@ class BehaviorCloning(Model):
                 epoch_stats.append({
                     "train": 1 if train else 0,
                     "loss": loss.cpu().data.item(),
-                    **stats_u, **stats_o, **stats_prior
+                    **stats_u, **stats_o, **stats_prior, **stats_semi
                 })
         
         stats = pd.DataFrame(epoch_stats).mean().to_dict()

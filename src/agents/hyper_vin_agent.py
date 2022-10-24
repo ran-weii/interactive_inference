@@ -185,9 +185,15 @@ class HyperVINAgent(AbstractAgent):
         gamma = rectify(self._gamma(z)).unsqueeze(-1)
         return torch.softmax(gamma * self._pi0, dim=-2)
     
+    def compute_value(self, z):
+        transition = self.rnn.compute_transition(z)
+        value = self.rnn.compute_value(transition, self.compute_reward(z))
+        return value
+    
     def compute_policy(self, z):        
+        value = self.compute_value(z)
         b = torch.eye(self.state_dim).to(self.device)
-        pi = self.rnn.plan(b, z, self.value)
+        pi = self.rnn.plan(b, z, value)
         return pi
 
     def compute_reward(self, z, detach=False):

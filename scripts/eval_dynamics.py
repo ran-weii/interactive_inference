@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,13 +11,13 @@ from torch.utils.data import DataLoader
 
 # setup imports
 from src.simulation.observers import FEATURE_SET, ACTION_SET
+from src.simulation.observers import Observer, CarfollowObserver
 from src.data.train_utils import load_data
 from src.data.ego_dataset import RelativeDataset, aug_flip_lr, collate_fn
+from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 
 # model imports
-from src.agents.vin_agents import VINAgent
-from src.algo.irl import BehaviorCloning
-from src.algo.recurrent_airl import RecurrentDAC
+from src.agents.vin_agent import VINAgent
 
 # eval imports
 from src.evaluation.offline import eval_dynamics_episode
@@ -38,7 +39,7 @@ def parse_args():
     parser.add_argument("--exp_path", type=str, default="../exp")
     parser.add_argument("--scenario", type=str, default="DR_CHN_Merging_ZS")
     parser.add_argument("--filename", type=str, default="vehicle_tracks_007.csv")
-    parser.add_argument("--agent", type=str, choices=["vin"], default="vin", 
+    parser.add_argument("--agent", type=str, choices=["vin", "tvin"], default="vin", 
         help="agent type, default=vin")
     parser.add_argument("--load_from_agent", type=bool_, default=False,
         help="whether to load dynamics model from agent, default=False")
@@ -85,21 +86,33 @@ def main(arglist):
     with open(os.path.join(exp_path, "args.json"), "r") as f:
         config = json.load(f)
 
-    """ TODO: add code to adapt input feature set """
-    # define feature set
-    ego_features = ["d", "ds", "dd", "kappa_r", "psi_error_r", ]
-    relative_features = ["s_rel", "d_rel", "ds_rel", "dd_rel", "loom_s"]
-    feature_set = ego_features + relative_features
-    assert set(ego_features).issubset(set(FEATURE_SET["ego"]))
-    assert set(relative_features).issubset(set(FEATURE_SET["relative"]))
-    
     # define action set
     if config["action_set"] == "frenet":
         action_set = ["dds", "ddd"]
-    else:
+    elif config["action_set"] == "ego":
         action_set = ["ax_ego", "ay_ego"]
-    assert set(action_set).issubset(set(ACTION_SET))
     
+    # define feature set
+    ego_sensor = EgoSensor(None)
+    lv_sensor = LeadVehicleSensor(None)
+    lidar_sensor = LidarSensor()
+    sensors = [ego_sensor, lv_sensor]
+    if config["use_lidar"]:
+        sensors.append(lidar_sensor)
+    
+    if config["observer"] == "full":
+        observer = Observer(None, sensors, action_set)
+    elif config["observer"] == "car_follow":
+        observer = CarfollowObserver(None, sensors)
+    feature_set = observer.feature_names
+    action_set = observer.action_set
+    
+    """ debug car following only """
+    # if config["car_follow_only"] == True:
+    #     action_set = ["dds"]
+    #     feature_set = ["ego_ds"] + lv_sensor.feature_names[:3]
+    """ debug car follow only """
+
     # compute ctl limits
     ctl_max = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].max().values).to(torch.float32)
     ctl_min = torch.from_numpy(df_track.loc[df_track["is_train"] == 1][action_set].min().values).to(torch.float32)
@@ -107,36 +120,29 @@ def main(arglist):
 
     dataset = RelativeDataset(
         df_track, feature_set, action_set, train_labels_col="is_train",
-        max_eps_len=arglist.max_eps_len, augmentation=[aug_flip_lr],
+        max_eps_len=arglist.max_eps_len, augmentation=[],
         seed=arglist.seed
     )
     loader = DataLoader(dataset, len(dataset), shuffle=False, collate_fn=collate_fn)
-    obs_dim, ctl_dim = len(feature_set), 2 
+    obs_dim, ctl_dim = len(feature_set), len(action_set)
 
     print(f"feature set: {feature_set}")
     print(f"test size: {len(loader.dataset)}")
     
     # init agent
+    alpha = config["alpha"] if "alpha" in config else 1.
     if config["agent"] == "vin":
         agent = VINAgent(
             config["state_dim"], config["act_dim"], obs_dim, ctl_dim, config["hmm_rank"],
-            config["horizon"], obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
-            use_tanh=config["use_tanh"], ctl_lim=ctl_lim
+            config["horizon"], alpha=alpha, obs_cov=config["obs_cov"], ctl_cov=config["ctl_cov"], 
+            use_tanh=config["use_tanh"], ctl_lim=ctl_lim, detach=config["detach"]
         )
-    
-    # init model
-    if config["algo"] == "bc":
-        model = BehaviorCloning(agent)
-    elif config["algo"] == "rdac":
-        model = RecurrentDAC(agent, config["hidden_dim"], config["num_hidden"])
 
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
-    model.load_state_dict(state_dict, strict=True)
-    agent = model.agent
-    print(model)
-
-    inspector = Inspector(agent)
+    state_dict = {k.replace("agent.", ""): v.cpu() for (k, v) in state_dict.items() if "agent." in k}
+    agent.load_state_dict(state_dict, strict=False)
+    print(agent)
 
     # sample eval episodes
     test_eps_id = np.random.choice(np.arange(len(dataset)), arglist.num_eps)
@@ -147,13 +153,15 @@ def main(arglist):
         ctl = dataset[eps_id]["act"]
         meta = dataset[eps_id]["meta"]
         title = f"track {meta[0]} eps {meta[1]}"
-
+        
         o_sample = eval_dynamics_episode(agent, obs, ctl)
         fig_o, ax = plot_time_series(
-            obs, feature_set, x_sample=o_sample, 
-            num_cols=5, figsize=(12, 4), title=title
+            obs[1:], feature_set, x_sample=o_sample[:, :-1], 
+            num_cols=5, figsize=(8, 2.5), title=None
+            # num_cols=5, figsize=(12, 4), title=None
         )
-
+        plt.show()
+        # exit()
         figs_o.append(fig_o)
 
     """ TODO: plot marginal samples """
@@ -167,6 +175,7 @@ def main(arglist):
         for i, f in enumerate(figs_o):
             f.savefig(os.path.join(save_path, f"test_scene_{i}_dynamics.png"), dpi=100)
         
+        inspector = Inspector(agent)
         fig_dynamics, _ = plot_passive_dynamics(inspector.passive_dynamics)
         fig_obs, _ = plot_observations(inspector.obs_mean, inspector.obs_variance, feature_set)
         fig_dynamics.savefig(os.path.join(save_path, f"passive_dynamics.png"), dpi=100)

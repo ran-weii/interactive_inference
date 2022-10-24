@@ -42,14 +42,20 @@ class QMDPLayer(nn.Module):
         nn.init.xavier_normal_(self.a0, gain=1.)
         nn.init.uniform_(self.tau, a=-1, b=1)
         
-        if rank != 0:
-            self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
-            self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
-            self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
-        else:
-            self.u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
-            self.v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
-            self.w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # action tensor 
+        # if rank != 0:
+        #     self.u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+        #     self.v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+        #     self.w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+        # else:
+        #     self.u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+        #     self.v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+        #     self.w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # action tensor 
+
+        # embedding method
+        self.u = nn.Parameter(torch.randn(state_dim, rank)) # state embedding
+        self.v = nn.Parameter(torch.randn(act_dim, rank)) # action embedding
+        self.w = nn.Parameter(torch.randn(rank + rank, rank)) # weight matrix
+        self.bias = nn.Parameter(torch.zeros(1, rank))
         
         nn.init.xavier_normal_(self.u, gain=1.)
         nn.init.xavier_normal_(self.v, gain=1.)
@@ -61,12 +67,28 @@ class QMDPLayer(nn.Module):
         )
         return s
     
+    # def compute_transition(self):
+    #     if self.rank != 0:
+    #         w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
+    #     else:
+    #         w = self.w
+    #     return torch.softmax(w, dim=-1)
+
     def compute_transition(self):
-        if self.rank != 0:
-            w = torch.einsum("nri, nrj, nrk -> nkij", self.u, self.v, self.w)
-        else:
-            w = self.w
-        return torch.softmax(w, dim=-1)
+        act_index = torch.repeat_interleave(
+            torch.eye(self.act_dim).unsqueeze(0), self.state_dim, 0
+        ).transpose(0, 1).flatten(0, 1)
+        state_index = torch.tile(torch.eye(self.state_dim), (self.act_dim, 1))
+
+        # compute concatenated act-state embedding
+        e_a = act_index.matmul(self.v)
+        e_s = state_index.matmul(self.u)
+        e_sa = torch.cat([e_a, e_s], dim=-1)
+        e_sa = e_sa.matmul(self.w) + self.bias
+
+        w = e_sa.matmul(self.u.T)
+        w_ = torch.stack(torch.chunk(w, self.act_dim, dim=0)).unsqueeze(0)
+        return torch.softmax(w_, dim=-1)
     
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
         """ Compute expected value using value iteration

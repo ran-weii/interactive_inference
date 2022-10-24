@@ -134,4 +134,4 @@ if __name__ == "__main__":
     arglist = parse_args()
     # test_data(arglist)
     # test_filter_lane()
-    test_filter_tail_merging()
+    # test_filter_tail_merging()

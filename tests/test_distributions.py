@@ -3,7 +3,7 @@ from src.distributions.models import (
     ConditionalDistribution, GeneralizedLinearModel, 
     MixtureDensityNetwork, HiddenMarkovModel)
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
-from src.distributions.utils import poisson_pdf
+from src.distributions.utils import poisson_pdf, rectify
 
 """ TODO: finish all test cases """
 def test_conditional_distribution():
@@ -114,6 +114,19 @@ def test_hidden_markov_model():
     b_t = hmm(logp_o, a, b, B=B)
     
     assert torch.all(torch.abs(b_t - b_t_true) < 1e-4)
+
+    # test embedded hmm
+    state_dim = 12
+    act_dim = 5
+    hmm = HiddenMarkovModel(state_dim, act_dim, use_embedding=True)
+
+    # synthetic data
+    batch_size = 32
+    logp_o = torch.softmax(torch.randn(batch_size, state_dim), dim=-1).log()
+    a = torch.softmax(torch.randn(batch_size, act_dim), dim=-1)
+    b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+    b_t = hmm(logp_o, a, b, B=B)
+    assert b_t.shape == b.shape
     print("test_hidden_markov_model passed")
 
 def test_poisson_pdf():
@@ -274,6 +287,180 @@ def test_mixture_density_network():
     assert list(samples_ace.shape) == [num_samples, T, batch_size, x_dim]
     print("test_mixture_density_network passed")
 
+# def test_factored_hidden_markov_model():
+#     from src.distributions.models import FactoredHiddenMarkovModel
+#     torch.manual_seed(0)
+#     state_dim = 10
+#     act_dim = 5
+#     obs_dim = 12
+#     ctl_dim = 3
+#     fhmm = FactoredHiddenMarkovModel(state_dim, act_dim, ctl_dim)
+
+#     # create synthetic data
+#     batch_size = 32
+#     logp_o = torch.randn(batch_size, state_dim)
+#     a = torch.softmax(torch.randn(batch_size, ctl_dim, act_dim), dim=-1)
+#     b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+    
+#     b_t = fhmm(logp_o, a, b)
+#     assert b_t.shape == b.shape
+
+#     # test value iteration
+#     from src.agents.reward import ExpectedFreeEnergy
+#     from src.agents.planners import factored_value_iteration, FactoredQMDP
+#     R = torch.randn(1, act_dim, act_dim, act_dim, state_dim)
+#     B = torch.softmax(fhmm.B, dim=-1)
+#     H = 2
+#     Q = factored_value_iteration(R, B, H)
+
+#     # test reward
+#     obs_model = ConditionalDistribution(obs_dim, state_dim)
+#     rwd_model = ExpectedFreeEnergy(fhmm, obs_model)
+#     R = rwd_model(B, B)
+
+#     # test planner
+#     H = 10
+#     planner = FactoredQMDP(fhmm, obs_model, rwd_model, H)
+#     Q = planner.plan()
+#     pi = planner(b)
+
+#     print("test_factored_hidden_markov_model passed")
+
+def test_factored_hidden_markov_model():
+    torch.manual_seed(0)
+    from src.distributions.factored_models import FactoredHiddenMarkovModel
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    batch_size = 24
+
+    hmm = FactoredHiddenMarkovModel(state_dim, act_dim, ctl_dim)
+    print(hmm)
+    logp_o = torch.randn(batch_size, state_dim)
+    a = torch.softmax(torch.randn([batch_size, ctl_dim, act_dim]), dim=-1)
+    b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+    b_t = hmm(logp_o, a, b)
+    assert list(b_t.shape) == [batch_size, state_dim]
+    print("test_factored_hidden_markov_model passed")
+
+def test_factored_conditional_distribution():
+    from src.distributions.factored_models import FactoredConditionalDistribution
+    state_dim = 10
+    act_dim = 5
+    obs_dim = 12
+    ctl_dim = 3
+    batch_size = 24
+
+    ctl_model = FactoredConditionalDistribution(
+        ctl_dim, act_dim, dist="mvsn"
+    )
+
+    # create synthetic data
+    u = torch.randn(batch_size, ctl_dim)
+    a = torch.softmax(torch.randn(batch_size, ctl_dim, act_dim), dim=-1)
+    logp = ctl_model.log_prob(u)
+    samples = ctl_model.sample()
+    samples_bma = ctl_model.bayesian_average(a)
+    samples_ace = ctl_model.ancestral_sample(a, 1)
+    logp_mix = ctl_model.mixture_log_prob(a, u)
+    a_post = ctl_model.infer(a, u)
+    
+    assert list(logp.shape) == [batch_size, act_dim, ctl_dim]
+    assert list(samples.shape) == [1, act_dim, ctl_dim]
+    assert list(samples_bma.shape) == [1, batch_size, ctl_dim]
+    assert list(samples_ace.shape) == [1, batch_size, ctl_dim]
+    assert list(logp_mix.shape) == [batch_size, ctl_dim]
+    assert list(a_post.shape) == list(a.shape)
+    print("test_factored_conditional_distribution passed")
+
+def test_embedded_distributions():
+    torch.manual_seed(0)
+    from src.distributions.embedded_models import LMDPLayer, EmbeddedHiddenMarkovModel
+    
+    state_dim = 10
+    act_dim = 5
+    ctl_dim = 3
+
+    # create synthetic data
+    batch_size = 32
+    a = torch.softmax(torch.randn(batch_size, ctl_dim, act_dim), dim=-1)
+    b = torch.softmax(torch.randn(batch_size, state_dim), dim=-1)
+    logp_o = torch.randn(batch_size, state_dim)
+    
+    # test LMDP 
+    lmdp = LMDPLayer(state_dim, act_dim, ctl_dim)
+    transition = lmdp(a)
+    assert list(transition.shape) == [batch_size, state_dim, state_dim]
+
+    # test embedded hmm
+    hmm = EmbeddedHiddenMarkovModel(state_dim, act_dim, ctl_dim)
+    b_t = hmm(logp_o, a, b)
+    assert list(b_t.shape) == [batch_size, state_dim]
+
+    print("test_embedded_distributions")
+
+def test_skew_normal():
+    torch.manual_seed(0)
+    import numpy as np
+    from src.distributions.distributions import SkewNormal
+    from scipy.stats import skewnorm
+    
+    # compare with scipy 
+    batch_size = 32
+    loc = torch.randn(batch_size)
+    scale = rectify(torch.randn(batch_size))
+    skew = torch.randn(batch_size)
+    x = torch.randn(batch_size)
+    
+    sn = SkewNormal(skew, loc, scale)
+    sn_scipy = skewnorm(skew.numpy(), loc.numpy(), scale.numpy())
+    
+    mean = sn.mean.numpy()
+    variance = sn.variance.numpy()
+    pdf = sn.log_prob(x).exp().numpy()
+
+    mean_scipy = sn_scipy.mean()
+    variance_scipy = sn_scipy.var()
+    pdf_scipy = sn_scipy.pdf(x.numpy())
+    
+    assert np.all(np.abs(mean - mean_scipy) < 1e-4)
+    assert np.all(np.abs(variance - variance_scipy) < 1e-4)
+    assert np.all(np.abs(pdf - pdf_scipy) < 1e-4)
+    
+    # test multidimensional operations
+    act_dim = 5
+    ctl_dim = 3
+    batch_size = 32
+    loc = torch.randn(batch_size, ctl_dim, act_dim)
+    scale = rectify(torch.randn(batch_size, ctl_dim, act_dim))
+    skew = torch.randn(batch_size, ctl_dim, act_dim)
+    x = torch.randn(batch_size, ctl_dim, act_dim)
+
+    sn = SkewNormal(skew, loc, scale)
+    
+    mean = sn.mean
+    variance = sn.variance
+    logp = sn.log_prob(x)
+    samples = sn.rsample()
+    
+    # visualize one example
+    # import matplotlib.pyplot as plt
+    # loc = torch.tensor([-10])
+    # scale = torch.tensor([1])
+    # skew = torch.tensor([-10])
+    # grid = torch.linspace(-20, 0, 200)
+    
+    # sn = SkewNormal(skew, loc, scale)
+    # pdf = sn.log_prob(grid).exp()
+    # samples = sn.rsample((100, )).view(-1).numpy()
+    
+    # plt.plot(grid, pdf)
+    # plt.hist(samples, bins="fd", density=True, alpha=0.4)
+    # plt.show()
+
+    print("test_skew_normal passed")
+
 if __name__ == "__main__":
     # test_conditional_distribution()
     test_hidden_markov_model()
@@ -282,3 +469,7 @@ if __name__ == "__main__":
     # test_conditional_distribution_with_flow()
     # test_generalized_linear_model()
     # test_mixture_density_network()
+    # test_factored_hidden_markov_model()
+    # test_factored_conditional_distribution()
+    # test_embedded_distributions()
+    # test_skew_normal()
