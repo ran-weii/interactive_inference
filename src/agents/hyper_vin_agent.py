@@ -20,7 +20,8 @@ class HyperVINAgent(AbstractAgent):
         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon,
         hyper_dim, hidden_dim, num_hidden, gru_layers, activation,
         alpha=1., beta=1., obs_cov="full", ctl_cov="full", rwd="efe",
-        use_tanh=False, ctl_lim=None, train_prior=False
+        use_tanh=False, ctl_lim=None, use_embedding=False, 
+        hyper_cov=False, pred_steps=1, train_prior=False
         ):
         super().__init__()
         self.state_dim = state_dim
@@ -32,16 +33,23 @@ class HyperVINAgent(AbstractAgent):
         self.beta = beta # policy prior temperature
         self.rwd = rwd
         self.hyper_dim = hyper_dim
+        self.use_embedding = use_embedding
+        self.hyper_cov = hyper_cov
+        self.pred_steps = pred_steps
         
-        self.rnn = HyperQMDPLayer(state_dim, act_dim, rank, horizon, hyper_dim)
+        self.rnn = HyperQMDPLayer(
+            state_dim, act_dim, rank, horizon, hyper_dim, use_embedding=use_embedding
+        )
         self.obs_model = HyperConditionalGaussian(
             obs_dim, state_dim, hyper_dim, cov=obs_cov, batch_norm=True, 
-            use_tanh=False, limits=None
+            use_tanh=False, limits=None, hyper_cov=hyper_cov
         )
         self.ctl_model = ConditionalGaussian(
             ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
             use_tanh=use_tanh, limits=ctl_lim
         )
+
+        """ option 1: unconstrained target """
         self._c = nn.Linear(hyper_dim, state_dim)
         self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
         self._gamma = nn.Linear(hyper_dim, 1)
@@ -49,6 +57,18 @@ class HyperVINAgent(AbstractAgent):
         self._c.weight.data = 0.1 * torch.randn(self._c.weight.data.shape)
         self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
         nn.init.xavier_normal_(self._pi0, gain=1.)
+
+        """ option 2: constrained target """
+        # self._c = nn.Parameter(torch.randn(1, state_dim))
+        # self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
+        # self._gamma = nn.Linear(hyper_dim, 1)
+        # self._epsilon = nn.Linear(hyper_dim, 1) # reward precision
+        
+        # self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
+        # self._epsilon.weight.data = 0.1 * torch.randn(self._epsilon.weight.data.shape)
+        # self._epsilon.bias.data = torch.zeros(self._epsilon.bias.data.shape)
+        # nn.init.xavier_normal_(self._pi0, gain=1.)
+        # nn.init.xavier_normal_(self._c, gain=1.)
         
         # hyper prior
         self.mu = nn.Parameter(torch.zeros(1, hyper_dim), requires_grad=train_prior)
@@ -77,61 +97,12 @@ class HyperVINAgent(AbstractAgent):
             z = self.sample_z()
             
         self._prev_ctl = None # previous control
+        self._value = None # precomputed value
         self._state = {
             "b": None, # previous belief distribution
             "pi": None, # previous policy/action prior
             "z": z, # hyper vector
         }
-
-    @property
-    def target_dist(self):
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        return self.compute_target_dist(z)
-    
-    @property
-    def pi0(self):
-        """ Prior policy """
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        return self.compute_prior_policy(z)
-    
-    @property
-    def transition(self):
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        return self.rnn.compute_transition(z)
-    
-    @property
-    def value(self):
-        value = self.rnn.compute_value(self.transition, self.reward)
-        return value
-    
-    @property
-    def policy(self):
-        """ Optimal planned policy """
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        b = torch.eye(self.state_dim).to(self.device)
-        pi = self.rnn.plan(b, z, self.value)
-        return pi
-    
-    @property
-    def passive_dynamics(self):
-        """ Optimal controlled dynamics """
-        policy = self.policy.T.unsqueeze(-1)
-        transition = self.transition.squeeze(0)
-        return torch.sum(transition * policy, dim=-3)
-    
-    @property
-    def efe(self):
-        """ Negative expected free energy """
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        entropy = self.obs_model.entropy(z)
-        c = self.target_dist
-        kl = kl_divergence(torch.eye(self.state_dim), c)
-        return -kl - entropy
-    
-    @property
-    def reward(self):
-        z = torch.zeros(1, self.hyper_dim).to(self.device)
-        return self.compute_reward(z)
     
     def parameter_entropy(self, z):
         eps = 1e-6
@@ -145,6 +116,11 @@ class HyperVINAgent(AbstractAgent):
 
     def compute_target_dist(self, z):
         return torch.softmax(self._c(z), dim=-1)
+
+    # def compute_target_dist(self, z):
+    # """ compute constrained target """
+    #     epsilon = rectify(self._epsilon(z))
+    #     return torch.softmax(epsilon * self._c, dim=-1)
     
     def compute_efe(self, z, detach=False):
         """ Compute expected free energy """
@@ -230,8 +206,9 @@ class HyperVINAgent(AbstractAgent):
     
     def forward(
         self, o: Tensor, u: Union[Tensor, None], z: Tensor,
-        hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None,
-        detach: Optional[bool]=False
+        hidden: Optional[Union[Tuple[Tensor, Tensor], list]]=[None],
+        value: Optional[Union[Tensor, None]]=None, 
+        detach: Optional[bool]=False, **kwargs
         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
         """ 
         Args:
@@ -245,16 +222,21 @@ class HyperVINAgent(AbstractAgent):
             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
         """
-        batch_size = o.shape[1]
-        b, pi = None, None
-        if hidden is not None:
+        if value is None:
+            value = self.compute_value(z)
+        
+        if None in hidden:
+            b, pi = self.rnn.init_hidden(z, value)
+        else:
             b, pi = hidden
-
+        
         logp_o = self.obs_model.log_prob(o, z)
-        logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
-        reward = self.compute_reward(z)
-        alpha_b, alpha_pi = self.rnn.forward(logp_o, logp_u, reward, z, b, detach=detach)
-        return [alpha_b, alpha_pi], [alpha_b, alpha_pi] # second tuple used in bptt
+        logp_u = torch.log(pi + 1e-6).unsqueeze(0)
+        if u is not None:
+            logp_u = torch.cat([logp_u, self.ctl_model.log_prob(u)])
+
+        alpha_b, alpha_pi = self.rnn.forward(logp_o, logp_u, value, z, b, detach=detach)
+        return [alpha_b, alpha_pi, value], [alpha_b, alpha_pi]
     
     def act_loss(self, o, u, z, mask, hidden):
         """ Compute action loss 
@@ -311,6 +293,28 @@ class HyperVINAgent(AbstractAgent):
         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
         return loss, stats
+
+    def compute_prediction_loss(self, o, u, z, mask, hidden):
+        """ Multi-step prediction loss """
+        pred_steps = self.pred_steps
+        alpha_b, _ = hidden
+        
+        # multi step prediction
+        logp_u = self.ctl_model.log_prob(u)
+        s_pred = [alpha_b[:-pred_steps]] + [torch.empty(0)] * pred_steps
+        for i in range(pred_steps):
+            s_pred[i+1] = self.rnn.predict_one_step(logp_u[i:-pred_steps+i], s_pred[i], z)
+        
+        logp_o = self.obs_model.mixture_log_prob(s_pred[-1], o[pred_steps:], z)
+        loss = -torch.sum(logp_o * mask[pred_steps:], dim=0) / (mask[pred_steps:].sum(0) + 1e-6)
+
+        # compute stats
+        nan_mask = mask[pred_steps:].clone()
+        nan_mask[nan_mask != 0] = 1.
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
+        stats = {"loss_pred": logp_o_mean}
+        return loss, stats
     
     def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
@@ -326,7 +330,7 @@ class HyperVINAgent(AbstractAgent):
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
         b_t, pi_t = self._state["b"], self._state["pi"]
-        [alpha_b, alpha_pi], _ = self.forward(
+        [alpha_b, alpha_pi, value], _ = self.forward(
             o.unsqueeze(0), self._prev_ctl, self._state["z"], [b_t, pi_t]
         )
         b_t, pi_t = alpha_b[0], alpha_pi[0]
@@ -341,6 +345,7 @@ class HyperVINAgent(AbstractAgent):
             logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
         
         self._prev_ctl = u_sample
+        self._value = value
         self._state["b"] = b_t
         self._state["pi"] = pi_t
         return u_sample, logp
@@ -369,7 +374,7 @@ class HyperVINAgent(AbstractAgent):
         if z is None:
             z = self.sample_z(o.shape[1])
 
-        [alpha_b, alpha_a], hidden = self.forward(o, u, z)
+        [alpha_b, alpha_a, _], hidden = self.forward(o, u, z)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_a)

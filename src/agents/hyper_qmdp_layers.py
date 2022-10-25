@@ -9,13 +9,14 @@ from src.distributions.utils import rectify
 
 class HyperQMDPLayer(nn.Module):
     """ Causal hypernet version of qmdp layer """
-    def __init__(self, state_dim, act_dim, rank, horizon, hyper_dim):
+    def __init__(self, state_dim, act_dim, rank, horizon, hyper_dim, use_embedding=False):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.rank = rank
         self.horizon = horizon
         self.hyper_dim = hyper_dim
+        self.use_embedding = use_embedding
         self.eps = 1e-6
         
         self._b0 = nn.Linear(hyper_dim, state_dim)
@@ -26,31 +27,31 @@ class HyperQMDPLayer(nn.Module):
         self._tau.weight.data = 0.1 * torch.randn(self._tau.weight.data.shape)
         self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
         
-        if rank != 0:
-            self._u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
-            self._v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
-            self._w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+        if not use_embedding:
+            if rank != 0:
+                self._u = nn.Parameter(torch.randn(1, rank, state_dim)) # source tensor
+                self._v = nn.Parameter(torch.randn(1, rank, state_dim)) # sink tensor
+                self._w = nn.Parameter(torch.randn(1, rank, act_dim)) # action tensor 
+            else:
+                self._u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+                self._v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
+                self._w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # transition tensor
         else:
-            self._u = nn.Parameter(torch.randn(1, 1)) # dummy tensor
-            self._v = nn.Parameter(torch.randn(1, 1)) # dummy tensor
-            self._w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim)) # transition tensor
-        
+            self._u = nn.Parameter(torch.randn(state_dim, rank)) # state embedding
+            self._v = nn.Parameter(torch.randn(act_dim, rank)) # action embedding
+            self._w = nn.Parameter(torch.randn(rank + rank, rank)) # weight matrix
+            self._bias = nn.Parameter(torch.zeros(1, rank))
+
         nn.init.xavier_normal_(self._u, gain=1.)
         nn.init.xavier_normal_(self._v, gain=1.)
         nn.init.xavier_normal_(self._w, gain=1.)
 
     def __repr__(self):
-        s = "{}(state_dim={}, act_dim={}, rank={}, horizon={}, hyper_dim={})".format(
+        s = "{}(state_dim={}, act_dim={}, rank={}, horizon={}, hyper_dim={}, use_embedding={})".format(
             self.__class__.__name__, self.state_dim, self.act_dim, 
-            self.rank, self.horizon, self.hyper_dim
+            self.rank, self.horizon, self.hyper_dim, self.use_embedding
         )
         return s
-
-    @property
-    def transition(self):
-        """ Return transition matrix. size=[1, act_dim, state_dim, state_dim] """
-        z = torch.zeros(1, self.hyper_dim).to(self._b0.bias.device)
-        return self.compute_transition(z)
     
     def parameter_entropy(self, z):
         eps = 1e-6
@@ -64,13 +65,32 @@ class HyperQMDPLayer(nn.Module):
             v_ent = torch.log(torch.abs(self._v.weight) + eps).sum() / self.hyper_dim
             ent += u_ent + v_ent
         return ent
+    
+    def compute_base_transition(self):
+        if not self.use_embedding:
+            if self.rank != 0:
+                w_ = torch.einsum("nri, nrj, nrk -> nkij", self._u, self._v, self._w)
+            else:
+                w_ = self._w
+        else:
+            act_index = torch.repeat_interleave(
+                torch.eye(self.act_dim).unsqueeze(0), self.state_dim, 0
+            ).transpose(0, 1).flatten(0, 1).to(self._b0.weight.device)
+            state_index = torch.tile(torch.eye(self.state_dim), (self.act_dim, 1)).to(self._b0.weight.device)
+
+            # compute concatenated act-state embedding
+            e_a = act_index.matmul(self._v)
+            e_s = state_index.matmul(self._u)
+            e_sa = torch.cat([e_a, e_s], dim=-1)
+            e_sa = e_sa.matmul(self._w) + self._bias
+
+            w = e_sa.matmul(self._u.T)
+            w_ = torch.stack(torch.chunk(w, self.act_dim, dim=0)).unsqueeze(0)
+        return w_
 
     def compute_transition(self, z):
         # compute base transition matrix
-        if self.rank != 0:
-            w = torch.einsum("nri, nrj, nrk -> nkij", self._u, self._v, self._w)
-        else:
-            w = self._w
+        w = self.compute_base_transition()
         
         # compute transition temperature
         gamma = rectify(self._gamma(z)).view(-1, self.act_dim, self.state_dim, 1)
@@ -150,19 +170,20 @@ class HyperQMDPLayer(nn.Module):
         """ Compute action and state posterior. Then compute the next action distribution """
         b_post = self.update_belief(logp_o, a, b, transition)
         return b_post
-    
-    def init_hidden(self, z: Tensor) -> Tensor:
+
+    def init_hidden(self, z: Tensor, value: Tensor) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self._b0(z), dim=-1)
-        return b0
+        a0 = self.plan(b0, z, value)
+        return b0, a0
     
     def predict_one_step(self, logp_u, b, z):
         transition = self.compute_transition(z)
         a = self.update_action(logp_u)
         s_next = torch.einsum("...kij, ...i, ...k -> ...j", transition, b, a)
         return s_next
-
+    
     def forward(
-        self, logp_o: Tensor, logp_u: Union[Tensor, None], reward: Tensor, 
+        self, logp_o: Tensor, logp_u: Union[Tensor, None], value: Tensor, 
         z: Tensor, b: Union[Tensor, None], detach: Optional[bool]=False
         ) -> Tuple[Tensor, Tensor]:
         """
@@ -170,7 +191,7 @@ class HyperQMDPLayer(nn.Module):
             logp_o (torch.tensor): sequence of observation probabilities. size=[T, batch_size, state_dim]
             logp_u (torch.tensor): sequence of control probabilities. Should be offset -1 if b is None.
                 size=[T, batch_size, act_dim]
-            reward (torch.tensor): reward matrix. size=[batch_size, act_dim, state_dim]
+            value (torch.tensor): value matrix. size=[horizon, batch_size, act_dim, state_dim]
             z (torch.tensor): hyper vector, size=[batch_size, hyper_dim]
             b ([torch.tensor, None], optional): prior belief. size=[batch_size, state_dim]
             detach (bool, optional): whether to detach model training. Default=False
@@ -179,14 +200,8 @@ class HyperQMDPLayer(nn.Module):
             alpha_b (torch.tensor): sequence of posterior belief. size=[T, batch_size, state_dim]
             alpha_a (torch.tensor): sequence of action distribution. size=[T, batch_size, act_dim]
         """
-        batch_size = logp_o.shape[1]
         transition = self.compute_transition(z)
-        value = self.compute_value(transition, reward)
         T = len(logp_o)
-        
-        if b is None:
-            b = self.init_hidden(z)
-            logp_u = torch.cat([torch.zeros(1, batch_size, self.act_dim).to(self._b0.weight.device), logp_u], dim=0)
 
         alpha_a = self.update_action(logp_u)
         alpha_b = [b] + [torch.empty(0)] * (T)

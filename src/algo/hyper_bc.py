@@ -76,7 +76,7 @@ class HyperBehaviorCloning(Model):
     def compute_reg_loss(self, z):
         """ Regularization loss """
         # obs variance
-        obs_vars = self.agent.obs_model.lv.exp()
+        obs_vars = self.agent.obs_model.lv(z).exp()
         obs_loss = torch.sum(obs_vars ** 2, dim=[-1, -2]).mean()
 
         # ctl variance
@@ -157,6 +157,7 @@ class HyperBehaviorCloning(Model):
         act_loss_post, act_stats_post = self.agent.act_loss(o, u, z_post, mask, hidden_post)
         obs_loss_post, obs_stats_post = self.agent.obs_loss(o, u, z_post, mask, hidden_post)
         kl = torch_dist.kl.kl_divergence(post_dist, prior_dist).sum(-1)
+        pred_loss_post, pred_stats_post = self.agent.compute_prediction_loss(o, u, z_post, mask, hidden_post)
         reg_loss_post = self.compute_reg_loss(z_post)
         
         avg_eps_len = torch.mean(mask.sum(0))
@@ -167,6 +168,7 @@ class HyperBehaviorCloning(Model):
         post_loss = num_total_eps * (
             torch.mean(act_loss_post * mask.sum(0)) + \
             self.post_obs_penalty * torch.mean(obs_loss_post * mask.sum(0)) + \
+            self.post_obs_penalty * self.reg_penalty * torch.mean(pred_loss_post * mask.sum(0)) + \
             self.kl_penalty * torch.mean(kl) + self.reg_penalty * reg_loss_post
         )
         loss = prior_loss + post_loss
@@ -180,7 +182,8 @@ class HyperBehaviorCloning(Model):
             "total_loss": post_loss.data.item(),
             **act_stats_post, **obs_stats_post,
             "kl": kl.data.mean().item(),
-            "reg_loss": reg_loss_post.data.item()
+            "reg_loss": reg_loss_post.data.item(),
+            **pred_stats_post
         }
         post_stats = {f"post_{k}": v for (k, v) in post_stats.items()}
         stats = {
