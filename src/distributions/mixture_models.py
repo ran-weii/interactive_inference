@@ -205,7 +205,7 @@ class HyperConditionalGaussian(Model):
     """
     def __init__(
         self, x_dim, z_dim, hyper_dim, cov="full", batch_norm=True, 
-        use_tanh=False, limits=None
+        use_tanh=False, limits=None, hyper_cov=False
         ):
         """
         Args:
@@ -213,7 +213,8 @@ class HyperConditionalGaussian(Model):
             z_dim (int): latent conditonal dimension
             hyper_dim (int): hyper dimension
             cov (str): covariance type ["diag", "full"]
-            batch_norm (bool, optional): whether to use input batch normalization. default=True
+            batch_norm (bool, optional): whether to use input batch normalization. Default=True
+            hyper_cov (bool, optional): whether to use hyper variable for cov. Default=False
         """
         super().__init__()
         assert cov in ["diag", "full", "tied"]
@@ -223,35 +224,53 @@ class HyperConditionalGaussian(Model):
         self.cov = cov
         self.batch_norm = batch_norm
         self.use_tanh = use_tanh
+        self.hyper_cov = hyper_cov
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
         self._mu.weight.data = 0.1 * torch.randn(self._mu.weight.data.shape)
-        self._mu.bias.data = torch.randn(z_dim * x_dim)
+        self._mu.bias.data = torch.rand(self._mu.bias.data.shape).uniform_(-1, 1)
         
-        if cov == "full":
-            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
-            nn.init.normal_(self.lv, mean=0, std=0.01)
-        elif cov == "diag":
-            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-            nn.init.normal_(self.lv, mean=0, std=0.01)
-        elif cov == "tied":
-            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
-            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-            nn.init.normal_(self.lv, mean=0, std=0.01)
+        if not hyper_cov:
+            if cov == "full":
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+            elif cov == "diag":
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+            elif cov == "tied":
+                self._lv = nn.Parameter(torch.randn(1, 1, x_dim))
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+        else:
+            if cov == "full":
+                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
+                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
+                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+            elif cov == "diag":
+                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
+                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+            elif cov == "tied":
+                self._lv = nn.Linear(hyper_dim, x_dim)
+                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
+                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
 
         if batch_norm:
-            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False)
+            self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
 
         if use_tanh:
             self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, cov={}, batch_norm={}, use_tanh={})".format(
+        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, cov={}, batch_norm={}, use_tanh={}, hyper_cov={})".format(
             self.__class__.__name__, self.x_dim, self.z_dim, self.hyper_dim, self.cov, 
-            self.batch_norm, self.use_tanh
+            self.batch_norm, self.use_tanh, self.hyper_cov
         )
         return s
     
@@ -267,10 +286,17 @@ class HyperConditionalGaussian(Model):
 
     def mu(self, z):
         return self._mu(z).view(-1, self.z_dim, self.x_dim)
+    
+    def lv(self, z):
+        if not self.hyper_cov:
+            lv = torch.repeat_interleave(self._lv, len(z), dim=0)
+        else:
+            lv = self._lv(z).view(len(z), -1, self.x_dim)
+        return lv
 
     def get_distribution_class(self, z, requires_grad=True):
-        [mu, lv, tl] = self.mu(z), self.lv, self.tl
-        lv = torch.repeat_interleave(lv, len(mu), dim=0)
+        [mu, lv, tl] = self.mu(z), self.lv(z), self._tl
+        
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
         if requires_grad is False:
