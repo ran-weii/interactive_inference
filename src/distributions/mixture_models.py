@@ -1,11 +1,14 @@
-from statistics import variance
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as torch_dist
+
+import pyro.nn as pyro_nn
+import pyro.distributions.transforms as pyro_transform
+
 from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
 from src.distributions.flows import TanhTransform
-from src.distributions.utils import make_covariance_matrix, rectify
+from src.distributions.utils import make_covariance_matrix
 from src.distributions.nn_models import Model
 
 class ConditionalGaussian(Model):
@@ -19,7 +22,7 @@ class ConditionalGaussian(Model):
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
             cov (str): covariance type. choices=["diag", "full", "tied", "tied_full]
-            batch_norm (bool, optional): whether to use input batch normalization. default=True
+            batch_norm (bool, optional): whether to use input batch normalization. Default=True
         """
         super().__init__()
         assert cov in ["diag", "full", "tied", "tied_full"]
@@ -31,7 +34,6 @@ class ConditionalGaussian(Model):
         self.eps = 1e-6
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
-        # nn.init.normal_(self.mu, mean=0, std=1)
         nn.init.uniform_(self.mu, a=-1, b=1)
     
         if cov == "full":
@@ -198,69 +200,55 @@ class ConditionalGaussian(Model):
         return x
 
 
-class HyperConditionalGaussian(Model):
-    """ Hypernet version of conditional gaussian distribution
-    
-    Hyper vector parameterizes mu, lv and tl are shared
-    """
+class ConditionalFlow(Model):
+    """ Conditional autoregressive flow distribution with used to create mixture distributions """
     def __init__(
-        self, x_dim, z_dim, hyper_dim, cov="full", batch_norm=True, 
-        use_tanh=False, limits=None, hyper_cov=False
+        self, x_dim, z_dim, hidden_dim=None, cov="diag", batch_norm=True, 
+        use_tanh=False, limits=None
         ):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
-            hyper_dim (int): hyper dimension
-            cov (str): covariance type ["diag", "full"]
+            hidden_dim (int): hidden layer dimension in autoregressive network. 
+                If None hidden_dim=10*x_dim Default=None
+            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full]
             batch_norm (bool, optional): whether to use input batch normalization. Default=True
-            hyper_cov (bool, optional): whether to use hyper variable for cov. Default=False
         """
         super().__init__()
-        assert cov in ["diag", "full", "tied"]
+        assert cov in ["diag", "full", "tied", "tied_full"]
         self.x_dim = x_dim
         self.z_dim = z_dim
-        self.hyper_dim = hyper_dim
+        self.hidden_dim = hidden_dim if hidden_dim is not None else 10 * x_dim
         self.cov = cov
         self.batch_norm = batch_norm
         self.use_tanh = use_tanh
-        self.hyper_cov = hyper_cov
         self.eps = 1e-6
         
-        self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
-        self._mu.weight.data = 0.1 * torch.randn(self._mu.weight.data.shape)
-        self._mu.bias.data = torch.rand(self._mu.bias.data.shape).uniform_(-1, 1)
+        self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
+        nn.init.uniform_(self.mu, a=-1, b=1)
+    
+        if cov == "full":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "diag":
+            self.lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "tied":
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, 1, x_dim, x_dim), requires_grad=False)
+            nn.init.normal_(self.lv, mean=0, std=0.01)
+        elif cov == "tied_full":
+            self.lv = nn.Parameter(torch.randn(1, 1, x_dim))
+            self.tl = nn.Parameter(torch.zeros(1, 1, x_dim, x_dim))
+            nn.init.normal_(self.lv, mean=0, std=0.01)
         
-        if not hyper_cov:
-            if cov == "full":
-                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
-                nn.init.normal_(self._lv, mean=0, std=0.01)
-            elif cov == "diag":
-                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                nn.init.normal_(self._lv, mean=0, std=0.01)
-            elif cov == "tied":
-                self._lv = nn.Parameter(torch.randn(1, 1, x_dim))
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                nn.init.normal_(self._lv, mean=0, std=0.01)
-        else:
-            if cov == "full":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
-            elif cov == "diag":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
-            elif cov == "tied":
-                self._lv = nn.Linear(hyper_dim, x_dim)
-                self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
-
+        self.flow = pyro_transform.AffineAutoregressive(
+            pyro_nn.AutoRegressiveNN(x_dim, [self.hidden_dim, self.hidden_dim])
+        )
+        
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
 
@@ -268,43 +256,49 @@ class HyperConditionalGaussian(Model):
             self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, cov={}, batch_norm={}, use_tanh={}, hyper_cov={})".format(
-            self.__class__.__name__, self.x_dim, self.z_dim, self.hyper_dim, self.cov, 
-            self.batch_norm, self.use_tanh, self.hyper_cov
+        s = "{}(x_dim={}, z_dim={}, hidden_dim={}, cov={}, batch_norm={}, use_tanh={})".format(
+            self.__class__.__name__, self.x_dim, self.z_dim, self.hidden_dim, self.cov, 
+            self.batch_norm, self.use_tanh
         )
         return s
     
+    def init_params(self, means, covariances, requires_grad=False):
+        """ initialize mean and covariance, set bn momentum to 0 """
+        assert self.cov != "full"
+        assert means.shape[-2] == self.z_dim
+        means = torch.from_numpy(means).unsqueeze(0).to(torch.float32).to(self.device)
+        covs = torch.from_numpy(covariances).unsqueeze(0).to(torch.float32).to(self.device)
+        variances = torch.diagonal(covs, dim1=-2, dim2=-1) 
+        
+        self.mu.data = means
+        self.lv.data = 0.5 * torch.log(variances)
+        
+        self.mu.requires_grad = requires_grad
+        self.lv.requires_grad = requires_grad
+
+        # disable batch norm
+        self.batch_norm = False
+        self.bn = None
+
     def init_batch_norm(self, mean, variance):
         if self.batch_norm:
             self.bn.moving_mean.data = mean
             self.bn.moving_variance.data = variance
-        
-    def parameter_entropy(self, z):
-        eps = 1e-6
-        mu_ent = torch.log(torch.abs(self._mu.weight) + eps).sum() / self.hyper_dim
-        return mu_ent
 
-    def mu(self, z):
-        return self._mu(z).view(-1, self.z_dim, self.x_dim)
-    
-    def lv(self, z):
-        if not self.hyper_cov:
-            lv = torch.repeat_interleave(self._lv, len(z), dim=0)
-        else:
-            lv = self._lv(z).view(len(z), -1, self.x_dim)
-        return lv
-
-    def get_distribution_class(self, z, requires_grad=True):
-        [mu, lv, tl] = self.mu(z), self.lv(z), self._tl
-        
+    def get_distribution_class(self, requires_grad=True):
+        [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
+        # handle tied covariance case
+        if L.shape[1] != mu.shape[1]:
+            L = torch.repeat_interleave(L, mu.shape[1], dim=1)
+
         if requires_grad is False:
             mu, L = mu.data, L.data
-        
+
         distribution = torch_dist.MultivariateNormal(mu, scale_tril=L)
         
-        transforms = []
+        transforms = [self.flow]
         if self.batch_norm:
             transforms.append(self.bn)
         if self.use_tanh:
@@ -312,57 +306,72 @@ class HyperConditionalGaussian(Model):
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
-    def mean(self, z):
-        distribution = self.get_distribution_class(z)
+    def mean(self):
+        distribution = self.get_distribution_class()
         return distribution.mean
     
-    def variance(self, z):
-        distribution = self.get_distribution_class(z)
+    def variance(self):
+        distribution = self.get_distribution_class()
         return distribution.variance
     
-    def entropy(self, z):
-        distribution = self.get_distribution_class(z)
+    def entropy(self):
+        distribution = self.get_distribution_class()
         return distribution.entropy()
     
-    def log_prob(self, x, z):
+    def log_prob(self, x):
         """ Component log probabilities 
 
         Args:
-            x (torch.tensor): observation vector. size=[batch_size, x_dim]
-            z (torch.tensor): hyper vector. size=[batch_size, hyper_dim]
+            x (torch.tensor): size=[batch_size, x_dim]
         """
-        distribution = self.get_distribution_class(z)
+        distribution = self.get_distribution_class()
         return distribution.log_prob(x.unsqueeze(-2))
     
-    def mixture_log_prob(self, pi, x, z):
+    def mixture_log_prob(self, pi, x):
         """ Compute mixture log probabilities 
         
         Args:
             pi (torch.tensor): mixing weights. size=[..., z_dim]
             x (torch.tensor): observervations. size[..., x_dim]
-            z (torch.tensor): hyper vector. size=[batch_size, hyper_dim]
         """
         logp_pi = torch.log(pi + self.eps)
-        logp_x = self.log_prob(x, z)
+        logp_x = self.log_prob(x)
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, z, sample_shape=torch.Size()):
+    def sample(self, sample_shape=torch.Size()):
         """ Sample components """
-        distribution = self.get_distribution_class(z)
+        distribution = self.get_distribution_class()
         return distribution.rsample(sample_shape)
+    
+    def infer(self, prior, x, logp_x=None):
+        """ Compute posterior distributions
 
-    def bayesian_average(self, pi, z):
+        Args:
+            prior (torch.tensor): prior probabilities. size=[..., z_dim]
+            x (torch.tensor): observations. size=[..., x_dim]
+            logp_x (torch.tensor, None, optional): log likelihood to avoid
+                computing again. default=None
+
+        Returns:
+            post (torch.tensor): posterior probabilities. size=[..., z_dim]
+        """
+        if logp_x is None:
+            logp_x = self.log_prob(x)
+        post = torch.softmax(torch.log(prior + self.eps) + logp_x, dim=-1)
+        return post
+
+    def bayesian_average(self, pi):
         """ Compute weighted average of component means 
         
         Args:
             pi (torch.tensor): mixing weights. size=[..., z_dim]
         """
-        mu = self.mean(z)
+        mu = self.mean()
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
         return x
     
-    def ancestral_sample(self, pi, z, num_samples=1, sample_mean=False, tau=0.1, hard=True):
+    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, tau=0.1, hard=True):
         """ Ancestral sampling
         
         Args:
@@ -380,8 +389,8 @@ class HyperConditionalGaussian(Model):
         
         # sample component
         if sample_mean:
-            x_ = self.mean(z)
+            x_ = self.mean()
         else:
-            x_ = self.sample(z, (num_samples, pi.shape[0])).squeeze(1)
+            x_ = self.sample((num_samples, pi.shape[0])).squeeze(1)
         x = torch.sum(z_ * x_, dim=-2)
         return x

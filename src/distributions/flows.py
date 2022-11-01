@@ -58,7 +58,7 @@ class SimpleTransformedModule(TransformedDistribution):
             elif transform.__class__.__name__ == "TanhTransform": # skip tanh transform
                 pass
             else:
-                raise NotImplementedError
+                pass
         return entropy
 
 
