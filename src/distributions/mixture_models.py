@@ -6,22 +6,18 @@ import torch.distributions as torch_dist
 import pyro.nn as pyro_nn
 import pyro.distributions.transforms as pyro_transform
 
-from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
-from src.distributions.flows import TanhTransform
-from src.distributions.utils import make_covariance_matrix
 from src.distributions.nn_models import Model
+from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
+from src.distributions.utils import make_covariance_matrix
 
 class ConditionalGaussian(Model):
     """ Conditional gaussian distribution used to create mixture distributions """
-    def __init__(
-        self, x_dim, z_dim, cov="full", batch_norm=True, 
-        use_tanh=False, limits=None
-        ):
+    def __init__(self, x_dim, z_dim, cov="full", batch_norm=True):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
-            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full]
+            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full"]
             batch_norm (bool, optional): whether to use input batch normalization. Default=True
         """
         super().__init__()
@@ -30,7 +26,6 @@ class ConditionalGaussian(Model):
         self.z_dim = z_dim
         self.cov = cov
         self.batch_norm = batch_norm
-        self.use_tanh = use_tanh
         self.eps = 1e-6
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
@@ -55,14 +50,10 @@ class ConditionalGaussian(Model):
 
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
-
-        if use_tanh:
-            self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, cov={}, batch_norm={}, use_tanh={})".format(
-            self.__class__.__name__, self.x_dim, self.z_dim, self.cov, 
-            self.batch_norm, self.use_tanh
+        s = "{}(x_dim={}, z_dim={}, cov={}, batch_norm={})".format(
+            self.__class__.__name__, self.x_dim, self.z_dim, self.cov, self.batch_norm
         )
         return s
     
@@ -105,8 +96,7 @@ class ConditionalGaussian(Model):
         transforms = []
         if self.batch_norm:
             transforms.append(self.bn)
-        if self.use_tanh:
-            transforms.append(self.tanh_transform)
+        
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
@@ -202,17 +192,14 @@ class ConditionalGaussian(Model):
 
 class ConditionalFlow(Model):
     """ Conditional autoregressive flow distribution with used to create mixture distributions """
-    def __init__(
-        self, x_dim, z_dim, hidden_dim=None, cov="diag", batch_norm=True, 
-        use_tanh=False, limits=None
-        ):
+    def __init__(self, x_dim, z_dim, hidden_dim=None, cov="diag", batch_norm=True):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
             hidden_dim (int): hidden layer dimension in autoregressive network. 
                 If None hidden_dim=10*x_dim Default=None
-            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full]
+            cov (str): covariance type. choices=["diag", "full", "tied", "tied_full"]
             batch_norm (bool, optional): whether to use input batch normalization. Default=True
         """
         super().__init__()
@@ -222,7 +209,6 @@ class ConditionalFlow(Model):
         self.hidden_dim = hidden_dim if hidden_dim is not None else 10 * x_dim
         self.cov = cov
         self.batch_norm = batch_norm
-        self.use_tanh = use_tanh
         self.eps = 1e-6
         
         self.mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
@@ -251,14 +237,10 @@ class ConditionalFlow(Model):
         
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
-
-        if use_tanh:
-            self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, hidden_dim={}, cov={}, batch_norm={}, use_tanh={})".format(
-            self.__class__.__name__, self.x_dim, self.z_dim, self.hidden_dim, self.cov, 
-            self.batch_norm, self.use_tanh
+        s = "{}(x_dim={}, z_dim={}, hidden_dim={}, cov={}, batch_norm={})".format(
+            self.__class__.__name__, self.x_dim, self.z_dim, self.hidden_dim, self.cov, self.batch_norm
         )
         return s
     
@@ -301,8 +283,7 @@ class ConditionalFlow(Model):
         transforms = [self.flow]
         if self.batch_norm:
             transforms.append(self.bn)
-        if self.use_tanh:
-            transforms.append(self.tanh_transform)
+        
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     

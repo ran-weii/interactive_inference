@@ -6,25 +6,23 @@ import torch.distributions as torch_dist
 import pyro.nn as pyro_nn
 import pyro.distributions.transforms as pyro_transform
 
-from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
-from src.distributions.flows import TanhTransform
-from src.distributions.utils import make_covariance_matrix
 from src.distributions.nn_models import Model
+from src.distributions.flows import SimpleTransformedModule, BatchNormTransform
+from src.distributions.utils import make_covariance_matrix
 
 class HyperConditionalGaussian(Model):
     """ Hypernet version of conditional gaussian distribution """
     def __init__(
-        self, x_dim, z_dim, hyper_dim, cov="full", batch_norm=True, 
-        use_tanh=False, limits=None, hyper_cov=False
+        self, x_dim, z_dim, hyper_dim, cov="full", hyper_cov=False, batch_norm=True
         ):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
             hyper_dim (int): hyper dimension
-            cov (str): covariance type ["diag", "full"]
-            batch_norm (bool, optional): whether to use input batch normalization. Default=True
+            cov (str): covariance type ["diag", "full", "tied"]
             hyper_cov (bool, optional): whether to use hyper variable for cov. Default=False
+            batch_norm (bool, optional): whether to use input batch normalization. Default=True
         """
         super().__init__()
         assert cov in ["diag", "full", "tied"]
@@ -32,9 +30,8 @@ class HyperConditionalGaussian(Model):
         self.z_dim = z_dim
         self.hyper_dim = hyper_dim
         self.cov = cov
-        self.batch_norm = batch_norm
-        self.use_tanh = use_tanh
         self.hyper_cov = hyper_cov
+        self.batch_norm = batch_norm
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
@@ -73,14 +70,11 @@ class HyperConditionalGaussian(Model):
 
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
-
-        if use_tanh:
-            self.tanh_transform = TanhTransform(limits)
         
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, cov={}, batch_norm={}, use_tanh={}, hyper_cov={})".format(
+        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, cov={}, batch_norm={}, hyper_cov={})".format(
             self.__class__.__name__, self.x_dim, self.z_dim, self.hyper_dim, self.cov, 
-            self.batch_norm, self.use_tanh, self.hyper_cov
+            self.batch_norm, self.hyper_cov
         )
         return s
     
@@ -119,8 +113,7 @@ class HyperConditionalGaussian(Model):
         transforms = []
         if self.batch_norm:
             transforms.append(self.bn)
-        if self.use_tanh:
-            transforms.append(self.tanh_transform)
+        
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
@@ -202,17 +195,18 @@ class HyperConditionalGaussian(Model):
 class HyperConditionalFlow(Model):
     """ Hypernet version of conditional autoregressive flow distribution """
     def __init__(
-        self, x_dim, z_dim, hyper_dim, hidden_dim=None, cov="full", batch_norm=True, 
-        use_tanh=False, limits=None, hyper_cov=False
+        self, x_dim, z_dim, hyper_dim, hidden_dim=None, cov="full", hyper_cov=False, batch_norm=True
         ):
         """
         Args:
             x_dim (int): observed output dimension
             z_dim (int): latent conditonal dimension
             hyper_dim (int): hyper dimension
-            cov (str): covariance type ["diag", "full"]
-            batch_norm (bool, optional): whether to use input batch normalization. Default=True
+            hidden_dim (int, optional): hidden layer dimension in autoregressive network. 
+                If None hidden_dim=10*x_dim Default=None
+            cov (str): covariance type ["diag", "full", "tied"]
             hyper_cov (bool, optional): whether to use hyper variable for cov. Default=False
+            batch_norm (bool, optional): whether to use input batch normalization. Default=True
         """
         super().__init__()
         assert cov in ["diag", "full", "tied"]
@@ -221,9 +215,8 @@ class HyperConditionalFlow(Model):
         self.hyper_dim = hyper_dim
         self.hidden_dim = hidden_dim if hidden_dim is not None else 10 * x_dim
         self.cov = cov
-        self.batch_norm = batch_norm
-        self.use_tanh = use_tanh
         self.hyper_cov = hyper_cov
+        self.batch_norm = batch_norm
         self.eps = 1e-6
         
         self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
@@ -267,13 +260,10 @@ class HyperConditionalFlow(Model):
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
         
-        if use_tanh:
-            self.tanh_transform = TanhTransform(limits)
-        
     def __repr__(self):
-        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, hidden_dim={}, cov={}, batch_norm={}, use_tanh={}, hyper_cov={})".format(
+        s = "{}(x_dim={}, z_dim={}, hyper_dim={}, hidden_dim={}, cov={}, batch_norm={}, hyper_cov={})".format(
             self.__class__.__name__, self.x_dim, self.z_dim, self.hyper_dim, self.hidden_dim, self.cov, 
-            self.batch_norm, self.use_tanh, self.hyper_cov
+            self.batch_norm, self.hyper_cov
         )
         return s
     
@@ -312,8 +302,7 @@ class HyperConditionalFlow(Model):
         transforms = [self.flow]
         if self.batch_norm:
             transforms.append(self.bn)
-        if self.use_tanh:
-            transforms.append(self.tanh_transform)
+        
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
