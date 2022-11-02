@@ -13,7 +13,6 @@ from src.data.data_filter import (
     classify_tail_merging)
 from src.data.geometry import coord_transformation
 from src.map_api.frenet import Trajectory
-# from src.simulation.observers import FEATURE_SET, Observer
 
 # to use apply progress bar
 tqdm.pandas()
@@ -34,12 +33,8 @@ def parse_args():
     parser.add_argument("--task", type=str, choices=["kalman_filter", "features", "train_labels"])
     parser.add_argument("--cell_len", type=float, default=10, 
                         help="length of drivable cells, default=10")
-    parser.add_argument("--max_dist", type=float, default=50., 
-                        help="max dist to be considered neighbor, default=50")
     parser.add_argument("--min_seg_len", type=int, default=50, 
                         help="minimum trajectory segment length, default=50")
-    parser.add_argument("--invalid_lane_ids", type=str, default="1,6", 
-                        help="invalid lane ids to be filtered. str no space separated by comma default=1,6")
     parser.add_argument("--train_ratio", type=float, default=0.7, 
                         help="train ratio, default=0.7")
     parser.add_argument("--num_cores", type=int, default=10, 
@@ -119,7 +114,7 @@ def run_kalman_filter(df, dt, kf_filter):
 def compute_features(df, map_data, dt, min_seg_len, parallel):
     """ Return dataframe with fields defined in FEATURE_SET """
     from src.simulation.sensors import STATE_KEYS
-    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, FollowVehicleSensor, LidarSensor
+    from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
     from src.simulation.observers import Observer
     
     # compute actions
@@ -129,18 +124,16 @@ def compute_features(df, map_data, dt, min_seg_len, parallel):
 
     ego_sensor = EgoSensor(map_data)
     lv_sensor = LeadVehicleSensor(map_data)
-    fv_sensor = FollowVehicleSensor(map_data)
     lidar_sensor = LidarSensor()
-    feature_set = ego_sensor.feature_names + lv_sensor.feature_names + fv_sensor.feature_names + lidar_sensor.feature_names
+    feature_set = ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
 
     def f_compute_features_episode(df_ego, **kwargs):
         ego_sensor = EgoSensor(map_data)
         lv_sensor = LeadVehicleSensor(map_data, track_lv=False)
-        fv_sensor = FollowVehicleSensor(map_data, track_fv=False)
         lidar_sensor = LidarSensor()
         observer = Observer(
-            map_data, [ego_sensor, lv_sensor, fv_sensor, lidar_sensor], 
-            feature_set=ego_sensor.feature_names + lv_sensor.feature_names + fv_sensor.feature_names + lidar_sensor.feature_names
+            map_data, [ego_sensor, lv_sensor, lidar_sensor], 
+            feature_set=ego_sensor.feature_names + lv_sensor.feature_names + lidar_sensor.feature_names
         )
 
         track_id = df_ego["track_id"]
@@ -152,7 +145,6 @@ def compute_features(df, map_data, dt, min_seg_len, parallel):
         sensor_obs = {}
         sensor_obs["EgoSensor"], _ = ego_sensor.get_obs(ego_state, agent_states)
         sensor_obs["LeadVehicleSensor"], _ = lv_sensor.get_obs(ego_state, agent_states)
-        sensor_obs["FollowVehicleSensor"], _ = fv_sensor.get_obs(ego_state, agent_states)
         sensor_obs["LidarSensor"], _ = lidar_sensor.get_obs(ego_state, agent_states)
         obs = observer.observe(sensor_obs).numpy()
         return obs
@@ -215,9 +207,26 @@ def compute_features(df, map_data, dt, min_seg_len, parallel):
     # append actions 
     df_features = df_features.assign(ax=df["vx_grad"].values)
     df_features = df_features.assign(ay=df["vy_grad"].values)
+
+    # compute smoothed dds
+    def smooth_dds(x):
+        if x["dds"].values[0] == np.nan:
+            out = np.nan * np.ones((len(x), 1))
+        else:
+            out = np.gradient(x["ego_ds"].values).reshape(-1, 1) / dt
+
+        out = np.hstack([x[["track_id", "frame_id", "seg_id"]], out])
+        return pd.DataFrame(out, columns=["track_id", "frame_id", "seg_id", "dds_smooth"])
+
+    dds_smooth = df_features.groupby("seg_id").progress_apply(
+        smooth_dds
+    ).reset_index(drop=True)
+    df_features = df_features.merge(
+        dds_smooth, on=["track_id", "frame_id", "seg_id"], how="left"
+    )
     return df_features
 
-def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
+def get_train_labels(df, train_ratio, min_seg_len):
     """ Return dataframe with fields 
     ["track_id", "frame_id", "is_tail", "is_tail_merging", "eps_id", "eps_len", "is_train"] 
     """
@@ -248,7 +257,6 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
     new_seg_id = df_follow["seg_id"].values.copy().astype(float)
     new_seg_id[df_follow["is_tail_merging"] == 1] = np.nan
     new_seg_id[df_follow["is_head_merging"] == 1] = np.nan
-    new_seg_id[df_follow["ego_lane_id"].isin(invalid_lane_ids)] = np.nan
     new_seg_id, new_seg_len = filter_segment_by_length(new_seg_id, min_seg_len)
     
     df_follow = df_follow.assign(eps_id=new_seg_id)
@@ -271,21 +279,22 @@ def get_train_labels(df, train_ratio, min_seg_len, invalid_lane_ids):
         "is_head", "is_head_merging", "eps_id", "eps_len", "is_train"
     ]
     df_train_labels = df_follow[out_fields]
-    df = df.merge(df_train_labels, on=["track_id", "frame_id"], how="left")
+    df = df.merge(df_train_labels, on=["track_id", "frame_id"], how="left") 
     df_train_labels = df[out_fields]
     return df_train_labels
 
 def main(arglist):
     np.random.seed(arglist.seed)
-    swifter.set_defaults(
-        npartitions=arglist.num_cores,
-        dask_threshold=1,
-        scheduler="processes",
-        progress_bar=True,
-        progress_bar_desc=None,
-        allow_dask_on_strings=False,
-        force_parallel=arglist.parallel,
-    )
+    if arglist.parallel:
+        swifter.set_defaults(
+            npartitions=arglist.num_cores,
+            dask_threshold=1,
+            scheduler="processes",
+            progress_bar=True,
+            progress_bar_desc=None,
+            allow_dask_on_strings=False,
+            force_parallel=arglist.parallel,
+        )
     
     # make save path
     data_path = os.path.join(arglist.data_path, "processed_trackfiles")
@@ -327,12 +336,6 @@ def main(arglist):
         map_data = MapReader(cell_len=arglist.cell_len)
         map_data.parse(map_path, verbose=True)
         
-        # load neighbor df
-        # kf_path = os.path.join(
-        #     data_path, "kalman_filter", arglist.scenario, arglist.filename
-        # )
-        # df_kf = pd.read_csv(kf_path)
-        # df = df.merge(df_kf, on=["track_id", "frame_id"], how="right")
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
         
@@ -340,9 +343,6 @@ def main(arglist):
         df = compute_features(df, map_data, dt, arglist.min_seg_len, arglist.parallel)
     
     elif arglist.task == "train_labels":
-        neighbor_path = os.path.join(
-            data_path, "neighbors", arglist.scenario, arglist.filename
-        )
         feature_path = os.path.join(
             data_path, "features", arglist.scenario, arglist.filename
         )
@@ -351,10 +351,7 @@ def main(arglist):
         if arglist.debug:
             df = df.loc[df["track_id"] <= 30]
         
-        invalid_lane_ids = [int(i) for i in arglist.invalid_lane_ids.split(",")]
-        df = get_train_labels(
-            df, arglist.train_ratio, arglist.min_seg_len, invalid_lane_ids
-        )
+        df = get_train_labels(df, arglist.train_ratio, arglist.min_seg_len)
     
     if arglist.save:
         df.to_csv(os.path.join(save_path, arglist.filename), index=False)

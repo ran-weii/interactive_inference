@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from sklearn.preprocessing import KBinsDiscretizer
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -16,7 +15,6 @@ def collate_fn(batch):
     mask = pad_sequence([torch.ones(len(b[keys[0]])) for b in batch])
     return pad_batch, mask
     
-
 def sample_sequence(seq_len, max_seq_len, gamma=1.):
     """ Sample a segment of the sequence
 
@@ -206,9 +204,9 @@ class RelativeDataset(BaseDataset):
         device=torch.device("cpu"), seed=0):
         """
         Args:
-            df_track
-            feature_set
-            action_set
+            df_track (pd.dataframe): dataframe storing features and actions
+            feature_set (list): list of feature names
+            action_set (list): list of action names
             action_bins (int): used to create action discretizer
             train_labels_col (str): training label column
             max_esp (int): maximum number of episode. Exceeded episodes will be subsampled
@@ -247,13 +245,6 @@ class RelativeDataset(BaseDataset):
             ).to(torch.float32).to(self.device) for i in self.unique_eps
         ] 
 
-        # semi-supervised label
-        self.data_label = [
-            torch.from_numpy(
-                self.df_track.loc[self.df_track["eps_id"] == i][["is_supervised"]].values.astype(np.float32)
-            ).to(torch.float32).to(self.device) for i in self.unique_eps
-        ]
-
         if state_action:
             self.data_ego = torch.cat(self.data_ego, dim=0)
             self.data_act = torch.cat(self.data_act, dim=0)
@@ -269,21 +260,19 @@ class RelativeDataset(BaseDataset):
         obs_meta = self.data_meta[idx]
         obs_ego = self.data_ego[idx]
         act_ego = self.data_act[idx]
-        obs_label = self.data_label[idx]
+
         if not self.state_action:
             sample_ids = sample_sequence(len(obs_ego), self.max_eps_len, gamma=self.gamma)
             obs_meta = obs_meta[sample_ids][0]
             obs_ego = obs_ego[sample_ids]
             act_ego = act_ego[sample_ids] 
-            obs_label = obs_label[sample_ids][0]
         
         for aug in self.augmentation:
             obs_ego, act_ego = aug(obs_ego, act_ego, self.ego_fields)
 
         out_dict = {
-            "ego": obs_ego,
+            "obs": obs_ego,
             "act": act_ego,
             "meta": obs_meta,
-            "label": obs_label
         }
         return out_dict

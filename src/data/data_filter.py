@@ -134,6 +134,7 @@ def classify_tail_merging(df, feature_names, tail=True, p_tail=0.3, max_d=1.2, c
     
     # logistic regression features
     clf_inputs = np.abs(df_tail[feature_names].values)
+    clf_inputs = (clf_inputs - clf_inputs.mean(0)) / clf_inputs.std(0)
     clf_targets = df_tail["merging_labels"].values
     
     clf = LogisticRegression(class_weight=class_weight)

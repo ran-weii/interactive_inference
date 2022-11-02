@@ -6,14 +6,13 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, random_split
 
-def load_data(data_path, scenario, filename, train=True, load_raw=True):
+def load_data(data_path, scenario, filename, load_raw=True):
     """ Load processed data 
     
     Args:
         data_path (str): root data path. e.g. ../interaction-dataset-master
         scenario (str): scenario name. e.g. DR_CHN_Merging_ZS
         filename (str): track file name. e.g. vehicle_tracks_007.csv
-        train (bool, optional): whether in training mode. If False flip is_train labels. Default=True
         load_raw (bool, optional): whether to load the raw track file. Default=True
     
     Returns:
@@ -37,15 +36,19 @@ def load_data(data_path, scenario, filename, train=True, load_raw=True):
         df_track.append(df_raw)
 
     df_track = pd.concat(df_track, axis=1)
-    
-    if not train:
-        df_track["is_train"] = 1 - df_track["is_train"]
         
     # add scenario and record id
     record_id = re.compile(r"\d\d\d").search(filename).group()
     df_track.insert(0, "scenario", scenario)
     df_track.insert(0, "record_id", record_id)
     return df_track
+
+def get_record_eps_id(df_track):
+    """ Combine record_id and eps_id into new_eps_id """
+    df_track["record_id"] = df_track["record_id"].astype(int)
+    num_digits = len(str(np.nanmax(df_track["eps_id"]).astype(int)))
+    new_eps_id = df_track["record_id"] * 10**num_digits + df_track["eps_id"]
+    return new_eps_id
 
 def train_test_split(dataset, train_ratio, batch_size, collate_fn=None, seed=0):
     gen = torch.Generator()
