@@ -33,7 +33,7 @@ class MLPAgent(AbstractAgent):
         self.obs_variance = nn.Parameter(torch.ones(obs_dim), requires_grad=False)
     
     def __repr__(self):
-        s = "{}(obs_dim={}, ctl_dim={}, aact_dim={]}, hidden_dim={}, num_hidden={}, activation={})".format(
+        s = "{}(obs_dim={}, ctl_dim={}, act_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
             self.__class__.__name__, self.obs_dim, self.ctl_dim, self.act_dim,
             self.mlp.hidden_dim, self.mlp.num_hidden, self.mlp.activation,
         )
@@ -172,7 +172,7 @@ class RNNAgent(AbstractAgent):
         self.obs_variance = nn.Parameter(torch.ones(obs_dim), requires_grad=False)
     
     def __repr__(self):
-        s = "{}(obs_dim={}, ctl_dim={}, aact_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
+        s = "{}(obs_dim={}, ctl_dim={}, act_dim={}, hidden_dim={}, num_hidden={}, activation={})".format(
             self.__class__.__name__, self.obs_dim, self.ctl_dim, self.act_dim,
             self.mlp.hidden_dim, self.mlp.num_hidden, self.mlp.activation
         )

@@ -20,7 +20,7 @@ class BehaviorCloning(Model):
             self.agent.parameters(), 
             lr=lr, weight_decay=decay
         )
-        self.loss_keys = ["loss_u"]
+        self.loss_keys = ["loss"]
     
     def __repr__(self):
         s_agent = self.agent.__repr__()
@@ -30,10 +30,7 @@ class BehaviorCloning(Model):
         return s
     
     def stdout(self, train_stats, test_stats):
-        s = "loss_u: {:.4f}/{:.4f}, loss_o: {:.4f}/{:.4f}".format(
-            train_stats["loss_u"], test_stats["loss_u"], 
-            train_stats["loss_o"], test_stats["loss_o"]
-        )
+        s = "loss: {:.4f}/{:.4f}".format(train_stats["loss"], test_stats["loss"])
         return s
     
     def compute_prior_loss(self, o, u, mask, hidden):
@@ -65,13 +62,16 @@ class BehaviorCloning(Model):
         
         epoch_stats = []
         for i, batch in enumerate(loader):
-            pad_batch, mask = batch
-            o = pad_batch["obs"]
-            u = pad_batch["act"]
+            o = batch["obs"]
+            u = batch["act"]
+            mask = torch.ones(o.shape[0], device=o.device)
 
             o = o.to(self.device)
             u = u.to(self.device)
             mask = mask.to(self.device)
+            
+            # ensure o is not recurrent
+            assert len(o.shape) == 2
             
             out = self.agent.forward(o)
             loss, stats = self.agent.act_loss(o, u, mask, out)
