@@ -1,23 +1,36 @@
 import torch
 import torch.nn as nn
-from src.agents.core import AbstractAgent
-from src.agents.qmdp_layers import QMDPLayer, QMDPLayer2
-from src.distributions.mixture_models import ConditionalGaussian
-from src.distributions.utils import kl_divergence, rectify
-
-from typing import Union, Tuple, Optional
 from torch import Tensor
+from typing import Union, Tuple, Optional
+
+from src.agents.core import AbstractAgent
+from src.agents.qmdp_layer import QMDPLayer
+from src.distributions.mixture_models import ConditionalGaussian, ConditionalFlow
+from src.distributions.utils import kl_divergence
 
 class VINAgent(AbstractAgent):
-    """ Value iteraction network agent using global action prior with 
-    conditinal gaussian observation and control models and 
-    QMDP hidden layer
-    """
+    """ Active inference agent implemented as a Value Interation Network """
     def __init__(
-        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
-        obs_cov="full", ctl_cov="full", rwd="efe", use_tanh=False, ctl_lim=None, 
-        detach=True, pred_steps=1
+        self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, 
+        alpha=1., beta=1., obs_model="flow", obs_cov="full", ctl_cov="full", 
+        rwd="efe", detach=False
         ):
+        """
+        Args:
+            state_dim (int): hidden state dimension
+            act_dim (int): discrete action dimension
+            obs_dim (int): observation dimension
+            ctl_dim (int): control dimension
+            rank (int): transition matrix embedding dimension. If rank=0 transition matrix is full rank
+            horizon (int): maximum planning horizon
+            alpha (float, optional): observation entropy weight. Default=1.
+            beta (float, optional): prior policy likelihood weight. Default=0.
+            obs_model (str, optional): observation model type. choices=["gmm", "flow"]. Default="flow"
+            obs_cov (str, optional): observation covariance. Default="full"
+            ctl_cov (str, optional): control covariance. Default="full"
+            rwd (str, optional): reward function type. choices=["efe", "ece"]. Default="efe"
+            detach (bool, optional): whether to stop model gradient in reward and policy computation. Default=False
+        """
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
@@ -28,17 +41,15 @@ class VINAgent(AbstractAgent):
         self.beta = beta # policy prior temperature
         self.rwd = rwd
         self.detach = detach
-        self.pred_steps = pred_steps
         
         self.rnn = QMDPLayer(state_dim, act_dim, rank, horizon, detach=detach)
-        self.obs_model = ConditionalGaussian(
-            obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
-            use_tanh=False, limits=None
-        )
-        self.ctl_model = ConditionalGaussian(
-            ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
-            use_tanh=use_tanh, limits=ctl_lim
-        )
+        if obs_model == "flow":
+            self.obs_model = ConditionalFlow(obs_dim, state_dim, cov=obs_cov, batch_norm=True)
+        else:
+            self.obs_model = ConditionalGaussian(obs_dim, state_dim, cov=obs_cov, batch_norm=True)
+        
+        self.ctl_model = ConditionalGaussian(ctl_dim, act_dim, cov=ctl_cov, batch_norm=True)
+
         self.c = nn.Parameter(torch.randn(1, state_dim))
         self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim)) 
         
@@ -171,170 +182,6 @@ class VINAgent(AbstractAgent):
         alpha_b, alpha_pi = self.rnn.forward(logp_o, logp_u, value, b)
         return [alpha_b, alpha_pi, value], [alpha_b, alpha_pi] # second tuple used in bptt
     
-    def act_loss(self, o, u, mask, hidden):
-        """ Compute action loss 
-        
-        Args:
-            o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-            u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-            mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-            hidden (list): hidden outputs of forward method
-
-        Returns:
-            loss (torch.tensor): action loss. size=[batch_size]
-            stats (dict): action loss stats
-        """
-        _, alpha_pi = hidden
-        logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
-        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
-
-        # compute stats
-        nan_mask = mask.clone()
-        nan_mask[nan_mask != 0] = 1.
-        nan_mask[nan_mask == 0] = torch.nan
-        logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
-        stats = {"loss_u": logp_u_mean}
-        return loss, stats
-    
-    def obs_loss(self, o, u, mask, hidden):
-        """ Compute observation loss 
-        
-        Args:
-            o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-            u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-            mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-            hidden (list): hidden outputs of forward method
-
-        Returns:
-            loss (torch.tensor): observation loss. size=[batch_size]
-            stats (dict): observation loss stats
-        """
-        alpha_b, _ = hidden
-        
-        # one step transition
-        logp_u = self.ctl_model.log_prob(u)
-        s_next = self.rnn.predict_one_step(logp_u, alpha_b)
-        
-        logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
-        loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-
-        # compute stats
-        nan_mask = mask[1:].clone()
-        nan_mask[nan_mask != 0] = 1.
-        nan_mask[nan_mask == 0] = torch.nan
-        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
-        stats = {"loss_o": logp_o_mean}
-        return loss, stats
-
-    def compute_prediction_loss(self, o, u, mask, hidden):
-        """ Multi-step prediction loss """
-        pred_steps = self.pred_steps
-        alpha_b, _ = hidden
-        
-        # multi step prediction
-        logp_u = self.ctl_model.log_prob(u)
-        s_pred = [alpha_b[:-pred_steps]] + [torch.empty(0)] * pred_steps
-        for i in range(pred_steps):
-            s_pred[i+1] = self.rnn.predict_one_step(logp_u[i:-pred_steps+i], s_pred[i])
-        
-        logp_o = self.obs_model.mixture_log_prob(s_pred[-1], o[pred_steps:])
-        loss = -torch.sum(logp_o * mask[pred_steps:], dim=0) / (mask[pred_steps:].sum(0) + 1e-6)
-
-        # compute stats
-        nan_mask = mask[pred_steps:].clone()
-        nan_mask[nan_mask != 0] = 1.
-        nan_mask[nan_mask == 0] = torch.nan
-        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
-        stats = {"loss_pred": logp_o_mean}
-        return loss, stats
-
-    
-    # def act_loss(self, o, u, mask, hidden):
-    #     """ Compute action loss by matching forward kl of discrete actions
-        
-    #     Args:
-    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-    #         mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-    #         hidden (list): hidden outputs of forward method
-
-    #     Returns:
-    #         loss (torch.tensor): action loss. size=[batch_size]
-    #         stats (dict): action loss stats
-    #     """
-    #     _, alpha_pi = hidden
-    #     logp_u = self.ctl_model.log_prob(u)
-    #     pi_target = torch.softmax(logp_u, dim=-1)
-    #     logp_pi = kl_divergence(pi_target, alpha_pi)
-    #     loss = torch.sum(logp_pi * mask, dim=0) / (mask.sum(0) + 1e-6)
-
-    #     # compute stats
-    #     nan_mask = mask.clone()
-    #     nan_mask[nan_mask != 0] = 1.
-    #     nan_mask[nan_mask == 0] = torch.nan
-    #     logp_u_mean = torch.nanmean((nan_mask * logp_pi)).cpu().data
-    #     stats = {"loss_u": logp_u_mean}
-    #     return loss, stats
-
-    # def obs_loss(self, o, u, mask, hidden):
-    #     """ Compute elbo observation loss 
-        
-    #     Args:
-    #         o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-    #         u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-    #         mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-    #         hidden (list): hidden outputs of forward method
-
-    #     Returns:
-    #         loss (torch.tensor): observation loss. size=[batch_size]
-    #         stats (dict): observation loss stats
-    #     """
-    #     alpha_b, _ = hidden
-        
-    #     # compute posterior predictive
-    #     logp_o = self.obs_model.mixture_log_prob(alpha_b, o)
-        
-    #     # compute variational prior
-    #     logp_u = self.ctl_model.log_prob(u)
-    #     s_next = self.rnn.predict_one_step(logp_u, alpha_b)
-        
-    #     # compute kl
-    #     kl = kl_divergence(s_next[:-1], alpha_b[1:])
-        
-    #     elbo = logp_o[1:] - kl
-    #     loss = -torch.sum(elbo * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-        
-    #     # compute stats
-    #     nan_mask = mask[1:].clone()
-    #     nan_mask[nan_mask != 0] = 1.
-    #     nan_mask[nan_mask == 0] = torch.nan
-    #     elbo_mean = -torch.nanmean((nan_mask * elbo)).cpu().data
-    #     stats = {"loss_o": elbo_mean}
-    #     return loss, stats
-    
-    def compute_mutual_information(self, o, u, mask, hidden):
-        """ Compute mutual information between state and observation """
-        alpha_b, _ = hidden
-
-        # compute variational prior
-        logp_u = self.ctl_model.log_prob(u)
-        s_next = self.rnn.predict_one_step(logp_u, alpha_b)
-        logp_s = torch.log(s_next + 1e-6)
-
-        # sample observation
-        o_sample = self.obs_model.ancestral_sample(s_next).squeeze(0)
-        
-        # compute posterior
-        logp_o = self.obs_model.log_prob(o_sample)
-        log_b_next = torch.log_softmax(logp_o + logp_s, dim=-1)
-        
-        cross_ent = torch.sum(s_next * log_b_next, dim=-1)
-        ent = -torch.sum(s_next * logp_s, dim=-1)
-        
-        mi = cross_ent + ent
-        mi = torch.sum(mi * mask, dim=0) / (mask.sum(0) + 1e-6)
-        return mi
-
     def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
         
@@ -342,7 +189,7 @@ class VINAgent(AbstractAgent):
             o (torch.tensor): observation sequence. size[batch_size, obs_dim]
             u (torch.tensor): control sequence. size[batch_size, ctl_dim]
             sample_method (str, optional): sampling method. 
-                choices=["bma", "ace", "ace"]. Default="ace"
+                choices=["bma", "ace", "acm"]. Default="ace"
             num_samples (int, optional): number of samples to draw. Default=1
         
         Returns:
@@ -370,14 +217,16 @@ class VINAgent(AbstractAgent):
         self._state["pi"] = pi_t
         return u_sample, logp
     
-    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
+    def choose_action_batch(
+        self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs
+        ):
         """ Choose action offline for a batch of sequences 
         
         Args:
             o (torch.tensor): observation sequence. size[T, batch_size, obs_dim]
             u (torch.tensor): control sequence. size[T, batch_size, ctl_dim]
             sample_method (str, optional): sampling method. 
-                choices=["bma", "ace", "ace"]. Default="ace"
+                choices=["bma", "ace", "acm"]. Default="ace"
             num_samples (int, optional): number of samples to draw. Default=1
             tau (float, optional): gumbel softmax temperature. Default=0.1
             hard (bool, optional): if hard use straight-through gradient. Default=True
@@ -401,6 +250,89 @@ class VINAgent(AbstractAgent):
             return u_sample, logp, hidden
         else:
             return u_sample, logp
+            
+    def act_loss(self, o, u, mask, hidden):
+        """ Compute action loss by matching forward kl of discrete actions
+        
+        Args:
+            o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+            u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+            mask (torch.tensor): binary mask sequence. size=[T, batch_size]
+            hidden (list): hidden outputs of forward method
+
+        Returns:
+            loss (torch.tensor): action loss. size=[batch_size]
+            stats (dict): action loss stats
+        """
+        _, alpha_pi = hidden
+        logp_u = self.ctl_model.log_prob(u)
+        pi_target = torch.softmax(logp_u, dim=-1)
+        logp_pi = kl_divergence(pi_target, alpha_pi)
+        loss = torch.sum(logp_pi * mask, dim=0) / (mask.sum(0) + 1e-6)
+
+        # compute stats
+        nan_mask = mask.clone()
+        nan_mask[nan_mask != 0] = 1.
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_u_mean = torch.nanmean((nan_mask * logp_pi)).cpu().data
+        stats = {"loss_u": logp_u_mean}
+        return loss, stats
+
+    def obs_loss(self, o, u, mask, hidden, pred_steps=1):
+        """ Compute multi-step observation prediction loss 
+        
+        Args:
+            o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
+            u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
+            mask (torch.tensor): binary mask tensor. size=[T, batch_size]
+            hidden (list): hidden outputs of forward method
+            pred_steps (int, optional): number of steps ahead to predict. Default=1.
+
+        Returns:
+            loss (torch.tensor): observation loss. size=[batch_size]
+            stats (dict): observation loss stats
+        """
+        alpha_b, _ = hidden
+        
+        # multi step prediction
+        logp_u = self.ctl_model.log_prob(u)
+        s_pred = [alpha_b[:-pred_steps]] + [torch.empty(0)] * pred_steps
+        for i in range(pred_steps):
+            s_pred[i+1] = self.rnn.predict_one_step(logp_u[i:-pred_steps+i], s_pred[i])
+        
+        logp_o = self.obs_model.mixture_log_prob(s_pred[-1], o[pred_steps:])
+        loss = -torch.sum(logp_o * mask[pred_steps:], dim=0) / (mask[pred_steps:].sum(0) + 1e-6)
+
+        # compute stats
+        nan_mask = mask[pred_steps:].clone()
+        nan_mask[nan_mask != 0] = 1.
+        nan_mask[nan_mask == 0] = torch.nan
+        logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
+        stats = {"loss_o": logp_o_mean}
+        return loss, stats
+    
+    def compute_mutual_information(self, o, u, mask, hidden):
+        """ Compute mutual information between state and observation """
+        alpha_b, _ = hidden
+
+        # compute variational prior
+        logp_u = self.ctl_model.log_prob(u)
+        s_next = self.rnn.predict_one_step(logp_u, alpha_b)
+        logp_s = torch.log(s_next + 1e-6)
+
+        # sample observation
+        o_sample = self.obs_model.ancestral_sample(s_next).squeeze(0)
+        
+        # compute posterior
+        logp_o = self.obs_model.log_prob(o_sample)
+        log_b_next = torch.log_softmax(logp_o + logp_s, dim=-1)
+        
+        cross_ent = torch.sum(s_next * log_b_next, dim=-1)
+        ent = -torch.sum(s_next * logp_s, dim=-1)
+        
+        mi = cross_ent + ent
+        mi = torch.sum(mi * mask, dim=0) / (mask.sum(0) + 1e-6)
+        return mi
 
     def predict(self, o, u, sample_method="ace", num_samples=1):
         """ Offline prediction observations and control """
@@ -423,281 +355,3 @@ class VINAgent(AbstractAgent):
                 alpha_pi, num_samples, sample_mean, tau=0.1, hard=True
             )
         return o_sample, u_sample
-
-
-# class VINAgent2(AbstractAgent):
-#     """ Non causal Value iteraction network agent using policy as prior with 
-#     conditinal gaussian observation and control models and 
-#     QMDP hidden layer
-#     """
-#     def __init__(
-#         self, state_dim, act_dim, obs_dim, ctl_dim, rank, horizon, alpha=1., beta=1.,
-#         obs_cov="full", ctl_cov="full", use_tanh=False, ctl_lim=None, detach=True
-#         ):
-#         super().__init__()
-#         self.state_dim = state_dim
-#         self.act_dim = act_dim
-#         self.obs_dim = obs_dim
-#         self.ctl_dim = ctl_dim
-#         self.horizon = horizon
-#         self.alpha = alpha
-#         self.beta = beta
-#         self.detach = detach
-        
-#         self.rnn = QMDPLayer2(state_dim, act_dim, rank, horizon, detach=detach)
-#         self.obs_model = ConditionalGaussian(
-#             obs_dim, state_dim, cov=obs_cov, batch_norm=True, 
-#             use_tanh=False, limits=None
-#         )
-#         self.ctl_model = ConditionalGaussian(
-#             ctl_dim, act_dim, cov=ctl_cov, batch_norm=True, 
-#             use_tanh=use_tanh, limits=ctl_lim
-#         )
-#         self.c = nn.Parameter(torch.randn(1, state_dim))
-#         self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
-        
-#         nn.init.xavier_normal_(self.c, gain=1.)
-#         nn.init.xavier_normal_(self._pi0, gain=1.)
-
-#         # self.parameter_size = [
-#         #     self.c.shape, self._pi0.shape,
-#         #     self.rnn.b0.shape, self.rnn.u.shape, self.rnn.v.shape, self.rnn.w.shape, self.rnn.tau.shape,
-#         #     self.obs_model.mu.shape, self.obs_model.lv.shape, self.obs_model.tl.shape,
-#         #     self.ctl_model.mu.shape, self.ctl_model.lv.shape, self.ctl_model.tl.shape
-#         # ]
-    
-#     def reset(self):
-#         """ Reset internal states for online inference """
-#         self._prev_ctl = None
-#         self._state = {
-#             "a": None, # previous action distribution
-#             "b": None, # previous belief distribution
-#             "pi": None, # previous policy/action prior
-#         }
-
-#     @property
-#     def target_dist(self):
-#         return torch.softmax(self.c, dim=-1)
-    
-#     @property
-#     def pi0(self):
-#         """ Prior policy """
-#         return torch.softmax(self._pi0, dim=-2)
-    
-#     @property
-#     def transition(self):
-#         return self.rnn.transition
-    
-#     @property
-#     def value(self):
-#         value = self.rnn.compute_value(self.transition, self.reward)
-#         return value
-    
-#     @property
-#     def policy(self):
-#         """ Optimal planned policy """
-#         b = torch.eye(self.state_dim)
-#         pi = self.rnn.plan(b, self.value)
-#         return pi
-    
-#     @property
-#     def passive_dynamics(self):
-#         """ Optimal controlled dynamics """
-#         policy = self.policy.T.unsqueeze(-1)
-#         transition = self.transition.squeeze(0)
-#         return torch.sum(transition * policy, dim=-3)
-    
-#     @property
-#     def efe(self):
-#         """ Negative expected free energy """
-#         entropy = self.obs_model.entropy()
-#         c = self.target_dist
-#         kl = kl_divergence(torch.eye(self.state_dim), c)
-#         return -kl - self.alpha * entropy
-    
-#     @property
-#     def reward(self):
-#         """ State action reward """
-#         transition = self.rnn.transition
-#         entropy = self.obs_model.entropy()
-
-#         if self.detach:
-#             transition = transition.data
-        
-#         c = self.target_dist
-#         kl = kl_divergence(transition, c.unsqueeze(-2).unsqueeze(-2))
-#         eh = torch.sum(transition * entropy.unsqueeze(-2).unsqueeze(-2), dim=-1).data
-#         log_pi0 = torch.log(self.pi0 + 1e-6)
-#         r = -kl - self.alpha * eh + self.beta * log_pi0
-#         return r
-
-#     def forward(
-#         self, o: Tensor, u: Union[Tensor, None], 
-#         hidden: Optional[Union[Tuple[Tensor, Tensor], None]]=None, **kwargs
-#         ) -> Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]:
-#         """ 
-#         Args:
-#             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-#             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-#             hidden ([tuple[torch.tensor, torch.tensor], None], optional). initial hidden state.
-        
-#         Returns:
-#             alpha_b (torch.tensor): state belief distributions. size=[T, batch_size, state_dim]
-#             alpha_a (torch.tensor): action predictive distributions. size=[T, batch_size, act_dim]
-#         """
-#         batch_size = o.shape[1]
-#         a, b, pi = None, None, None
-#         if hidden is not None:
-#             a, b, pi = hidden
-
-#         logp_o = self.obs_model.log_prob(o)
-#         logp_u = torch.zeros(1, batch_size, self.act_dim).to(self.device) if u is None else self.ctl_model.log_prob(u)
-#         reward = self.reward
-#         alpha_a, alpha_b, alpha_pi = self.rnn(logp_o, logp_u, reward, b, pi)
-#         return [alpha_a, alpha_b, alpha_pi], [alpha_a, alpha_b, alpha_pi] # second tuple used in bptt
-    
-#     def act_loss(self, o, u, mask, hidden):
-#         """ Compute action loss 
-        
-#         Args:
-#             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-#             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-#             mask (torch.tensor): binary mask sequence. size=[T, batch_size]
-#             hidden (list): hidden outputs of forward method
-
-#         Returns:
-#             loss (torch.tensor): action loss. size=[batch_size]
-#             stats (dict): action loss stats
-#         """
-#         _, _, alpha_pi = hidden
-#         logp_u = self.ctl_model.mixture_log_prob(alpha_pi, u)
-#         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
-
-#         # compute stats
-#         nan_mask = mask.clone()
-#         nan_mask[nan_mask != 0] = 1.
-#         nan_mask[nan_mask == 0] = torch.nan
-#         logp_u_mean = -torch.nanmean((nan_mask * logp_u)).cpu().data
-#         stats = {"loss_u": logp_u_mean}
-#         return loss, stats
-    
-#     def obs_loss(self, o, u, mask, hidden):
-#         """ Compute observation loss 
-        
-#         Args:
-#             o (torch.tensor): observation sequence. size=[T, batch_size, obs_dim]
-#             u (torch.tensor): control sequence. size=[T, batch_size, ctl_dim]
-#             mask (torch.tensor): binary mask tensor. size=[T, batch_size]
-#             hidden (list): hidden outputs of forward method
-
-#         Returns:
-#             loss (torch.tensor): observation loss. size=[batch_size]
-#             stats (dict): observation loss stats
-#         """
-#         alpha_a, alpha_b, _ = hidden
-        
-#         # one step transition
-#         transition = self.rnn.transition
-#         pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a.data)
-#         s_next = torch.einsum("tnij, tni -> tnj", pi_transition, alpha_b)
-        
-#         logp_o = self.obs_model.mixture_log_prob(s_next[:-1], o[1:])
-#         loss = -torch.sum(logp_o * mask[1:], dim=0) / (mask[1:].sum(0) + 1e-6)
-
-#         # compute stats
-#         nan_mask = mask[1:].clone()
-#         nan_mask[nan_mask != 0] = 1.
-#         nan_mask[nan_mask == 0] = torch.nan
-#         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
-#         stats = {"loss_o": logp_o_mean}
-#         return loss, stats
-    
-#     def choose_action(self, o, sample_method="ace", num_samples=1):
-#         """ Choose action online for a single time step
-        
-#         Args:
-#             o (torch.tensor): observation sequence. size[batch_size, obs_dim]
-#             u (torch.tensor): control sequence. size[batch_size, ctl_dim]
-#             sample_method (str, optional): sampling method. 
-#                 choices=["bma", "ace", "ace"]. Default="ace"
-#             num_samples (int, optional): number of samples to draw. Default=1
-        
-#         Returns:
-#             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
-#             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
-#         """
-#         a_t, b_t, pi_t = self._state["a"], self._state["b"], self._state["pi"]
-#         [alpha_a, alpha_b, alpha_pi], _ = self.forward(
-#             o.unsqueeze(0), self._prev_ctl, [a_t, b_t, pi_t]
-#         )
-#         a_t, b_t, pi_t = alpha_a[0], alpha_b[0], alpha_pi[0]
-        
-#         if sample_method == "bma":
-#             u_sample = self.ctl_model.bayesian_average(pi_t)
-#         else:
-#             sample_mean = True if sample_method == "acm" else False
-#             u_sample = self.ctl_model.ancestral_sample(
-#                 pi_t.unsqueeze(0), num_samples, sample_mean
-#             ).squeeze(-3)
-#             logp = self.ctl_model.mixture_log_prob(pi_t, u_sample)
-        
-#         self._prev_ctl = u_sample.sum(0)
-#         self._state["a"] = a_t
-#         self._state["b"] = b_t
-#         self._state["pi"] = pi_t
-#         return u_sample, logp
-    
-#     def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, tau=0.1, hard=True, return_hidden=False, **kwargs):
-#         """ Choose action offline for a batch of sequences 
-        
-#         Args:
-#             o (torch.tensor): observation sequence. size[T, batch_size, obs_dim]
-#             u (torch.tensor): control sequence. size[T, batch_size, ctl_dim]
-#             sample_method (str, optional): sampling method. 
-#                 choices=["bma", "ace", "ace"]. Default="ace"
-#             num_samples (int, optional): number of samples to draw. Default=1
-#             tau (float, optional): gumbel softmax temperature. Default=0.1
-#             hard (bool, optional): if hard use straight-through gradient. Default=True
-#             return_hidden (bool, optional): if true return agent hidden state. Default=False
-
-#         Returns:
-#             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
-#             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
-#         """
-#         [alpha_a, alpha_b, alpha_pi], hidden = self.forward(o, u)
-
-#         if sample_method == "bma":
-#             u_sample = self.ctl_model.bayesian_average(alpha_pi)
-#         else:
-#             sample_mean = True if sample_method == "acm" else False
-#             u_sample = self.ctl_model.ancestral_sample(
-#                 alpha_pi, num_samples, sample_mean, tau, hard
-#             )
-#             logp = self.ctl_model.mixture_log_prob(alpha_pi, u_sample)
-#         if return_hidden:
-#             return u_sample, logp, hidden
-#         else:
-#             return u_sample, logp
-
-#     def predict(self, o, u, sample_method="ace", num_samples=1):
-#         """ Offline prediction observations and control """
-#         [alpha_a, alpha_b, alpha_pi], _ = self.forward(o, u)
-        
-#         # one step transition
-#         transition = self.rnn.transition
-#         pi_transition = torch.einsum("nkij, tnk -> tnij", transition, alpha_a)
-#         s_next = torch.einsum("tnij, tni -> tnj", pi_transition, alpha_b)
-        
-#         if sample_method == "bma":
-#             o_sample = self.obs_model.bayesian_average(s_next)
-#             u_sample = self.ctl_model.bayesian_average(alpha_a)
-
-#         else:
-#             sample_mean = True if sample_method == "acm" else False
-#             o_sample = self.obs_model.ancestral_sample(
-#                 s_next, num_samples, sample_mean, tau=0.1, hard=True
-#             )
-#             u_sample = self.ctl_model.ancestral_sample(
-#                 alpha_pi, num_samples, sample_mean, tau=0.1, hard=True
-#             )
-#         return o_sample, u_sample
