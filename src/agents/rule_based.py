@@ -5,10 +5,9 @@ from src.agents.core import AbstractAgent
 from src.distributions.utils import rectify
 
 class IDM(AbstractAgent):
-    """ Intelligent driver model """
+    """ Intelligent driver model for longitudinal control """
     def __init__(
-        self, feature_set, v0=120., tau=1.5, s0=2., a=0.5, b=3., 
-        k1=-0.01, k2=-0.2, std=torch.tensor([0.01, 0.0001]).to(torch.float32)
+        self, feature_set, v0=120., tau=1.5, s0=2., a=0.5, b=3., std=0.01
         ):
         """
         Args:
@@ -17,45 +16,36 @@ class IDM(AbstractAgent):
             s0 (float): minimum gap in m. Default=3.
             a (float): desired acceleration in m/s/s. Default=1.5
             b (float): deceleration in m/s/s. Default=4.
-            k1 (float): lateral distance gain. Default=-0.01
-            k2 (float): lateral velocity gain. Default=-0.2
-            std (torch.tensor): control std. size=[1, 2]
+            std (float): control std. Default=0.01
         """
-        super().__init__(None, None, None, None, None)
+        super().__init__()
+        assert feature_set == ["ego_ds", "lv_s_rel", "lv_ds_rel"]
         self.eps = 1e-6
-        self.feature_set = feature_set
-        self.d_idx = feature_set.index("ego_d")
-        self.ds_idx = feature_set.index("ego_ds")
-        self.dd_idx = feature_set.index("ego_dd")
-        self.s_rel_idx = feature_set.index("lv_s_rel")
-        self.ds_rel_idx = feature_set.index("lv_ds_rel")
-        self.psi_err_idx = feature_set.index("ego_psi_error_r")
 
         self.v0 = nn.Parameter(torch.tensor([v0]).log())
         self.tau = nn.Parameter(torch.tensor([tau]).log())
         self.s0 = nn.Parameter(torch.tensor([s0]).log())
         self.a = nn.Parameter(torch.tensor([a]).log())
         self.b = nn.Parameter(torch.tensor([b]).log())
-        self.k1 = nn.Parameter(torch.tensor([k1]))
-        self.k2 = nn.Parameter(torch.tensor([k2]))
-        self.lv = nn.Parameter(0.5 * torch.log(std + self.eps))
+        self.lv = nn.Parameter(0.5 * torch.log(torch.tensor([std + self.eps])))
     
     def reset(self):
         self._b = None
-        self._state = {}
+        self._state = {
+            "b": None, # dummy belief distribution
+            "pi": None, # previous policy/action prior
+        }
     
     def compute_action_dist(self, o):
         """ Compute action distribution 
         
         Returns:
-            mu (torch.tensor): action mean. size=[batch_size, 2]
-            lv (torch.tensor): action log variance. size=[batch_size, 2]
+            mu (torch.tensor): action mean. size=[batch_size, 1]
+            lv (torch.tensor): action log variance. size=[batch_size, 1]
         """
-        d = o[..., self.d_idx]
-        ds = o[..., self.ds_idx]
-        dd = o[..., self.dd_idx]
-        s_rel = o[..., self.s_rel_idx]
-        ds_rel = o[..., self.ds_rel_idx]
+        ds = o[..., 0]
+        s_rel = o[..., 1]
+        ds_rel = o[..., 2]
         
         # get constants
         v0 = rectify(self.v0)
@@ -65,29 +55,12 @@ class IDM(AbstractAgent):
         b = rectify(self.b)
         
         # compute longitudinal acc
-        delta_s = ds * tau + 0.5 * ds * ds_rel / torch.sqrt(a * b + self.eps)
-        s_star = s0 + torch.max(torch.zeros_like(d).to(self.device), delta_s) # desired gap distance
-        dds_des = a * (1. - (ds / v0)**4) # obstacle free desired speed
-        dds_int = - a * (s_star / (s_rel + self.eps))**2
-        dds = dds_des + dds_int
-
-        # emergency braking
-        ttc = s_rel / ds_rel
-        is_emergency = ttc < 2.
-        dds_emergency = -0.05 * s_rel * b
-        dds[is_emergency] = dds_emergency[is_emergency]
-
-        # compute lateral acc using a feedback controller
-        ddd = self.k1 * d + self.k2 * dd
-
-        dds = dds.clip(-4.5, 4.5)
-        ddd = ddd.clip(-1, 1.)
-        
-        mu = torch.cat([dds.unsqueeze(-1), ddd.unsqueeze(-1)], dim=-1)
-        lv =  self.lv * torch.ones_like(mu).to(self.device)
+        s_des = s0 + ds * tau - 0.5 * ds * ds_rel / torch.sqrt(a * b + self.eps)
+        mu = a * (1. - (ds / v0)**4 - (s_des / s_rel)**2).unsqueeze(-1)
+        lv =  self.lv * torch.ones_like(mu, device=self.device)
         return mu, lv
     
-    def forward(self, o, u):
+    def forward(self, o):
         """ Compute action distribution for a sequence
         
         Returns:
@@ -110,16 +83,28 @@ class IDM(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
         """
         mu, lv = self.compute_action_dist(o)
-        mu = mu.clip(-5., 5.)
         a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
-        logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a)
+        logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
+
+        self._state["b"] = None
+        self._state["pi"] = mu.clone()
         return a, logp
+
+    def choose_action_batch(self, o, u, sample_method="", num_samples=1, return_hidden=False, **kwargs):
+        mu, lv = self.compute_action_dist(o)
+        a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
+        logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
+
+        if return_hidden:
+            return a, logp, None
+        else:
+            return a, logp
 
     def act_loss(self, o, u, mask, forward_out):
         mu, lv = forward_out
         logp_u = torch_dist.Normal(mu, rectify(lv)).log_prob(u).sum(-1)
         
-        loss = -torch.sum(logp_u * mask, dim=0) / mask.sum(0)
+        loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
         
         # compute stats
         nan_mask = mask.clone()
