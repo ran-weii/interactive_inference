@@ -13,9 +13,10 @@ from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset, collate_fn
 
 # model imports
+from src.agents.rule_based import IDM
+from src.agents.nn_agents import MLPAgent, RNNAgent
 from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
-from src.agents.nn_agents import RNNAgent
 from src.algo.bc import RecurrentBehaviorCloning
 from src.algo.hyper_bc import HyperBehaviorCloning
 
@@ -43,7 +44,7 @@ def parse_args():
     parser.add_argument("--feature_set", type=str_list_, default=["ego_ds", "lv_s_rel", "lv_ds_rel"], help="agent feature set")
     parser.add_argument("--action_set", type=str_list_, default="dds", help="agent action set, default=dds")
     # agent args
-    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "rnn"], default="vin", help="agent type, default=vin")
+    parser.add_argument("--agent", type=str, choices=["vin", "hvin", "rnn", "mlp", "idm"], default="vin", help="agent type, default=vin")
     parser.add_argument("--state_dim", type=int, default=10, help="agent state dimension, default=10")
     parser.add_argument("--act_dim", type=int, default=15, help="agent action dimension, default=15")
     parser.add_argument("--horizon", type=int, default=30, help="agent planning horizon, default=30")
@@ -165,13 +166,22 @@ def main(arglist):
             obs_dim, ctl_dim, arglist.act_dim, arglist.hidden_dim, 
             arglist.num_hidden, arglist.gru_layers, arglist.activation
         )
+
+    elif arglist.agent == "mlp":
+        agent = MLPAgent(
+            obs_dim, ctl_dim, arglist.act_dim, arglist.hidden_dim,
+            arglist.num_hidden, arglist.activation
+        )
+
+    elif arglist.agent == "idm":
+        agent = IDM(feature_set)
     
     # preload stats
-    if arglist.agent != "vin" and arglist.norm_obs:
+    if hasattr(agent, "obs_mean") and arglist.norm_obs:
         agent.obs_mean.data = obs_mean
         agent.obs_variance.data = obs_var
 
-    if (arglist.action_set == ["dds"] or arglist.action_set == ["dds_smooth"]):
+    if hasattr(agent, "ctl_model") and (arglist.action_set == ["dds"] or arglist.action_set == ["dds_smooth"]):
         # load ctl gmm parameters
         with open(os.path.join(arglist.exp_path, "agents", "ctl_model", "model.p"), "rb") as f:
             [ctl_means, ctl_covs, weights] = pickle.load(f)

@@ -51,10 +51,10 @@ class MLPAgent(AbstractAgent):
         obs_norm = (obs - self.obs_mean) / self.obs_variance**0.5
         return obs_norm
 
-    def forward(self, o, **kwargs):
+    def forward(self, o, u=None, **kwargs):
         o = self.normalize_obs(o)
         pi = torch.softmax(self.mlp(o), dim=-1)
-        return pi
+        return [pi], [pi]
 
     def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
@@ -69,7 +69,7 @@ class MLPAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, batch_size]
         """
-        pi_t = self.forward(o)
+        _, [pi_t] = self.forward(o)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(pi_t)
@@ -103,7 +103,7 @@ class MLPAgent(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, T, batch_size, ctl_dim]
             logp (torch.tensor): control log probability. size=[num_samples, T, batch_size]
         """
-        alpha_pi = self.forward(o)
+        _, [alpha_pi] = self.forward(o)
 
         if sample_method == "bma":
             u_sample = self.ctl_model.bayesian_average(alpha_pi)
@@ -131,7 +131,8 @@ class MLPAgent(AbstractAgent):
             loss (torch.tensor): action loss. size=[batch_size]
             stats (dict): action loss stats
         """
-        alpha_pi = forward_out
+        alpha_pi = forward_out[0]
+        
         logp_u = self.ctl_model.log_prob(u)
         pi_target = torch.softmax(logp_u, dim=-1)
         logp_pi = kl_divergence(pi_target, alpha_pi)
@@ -145,7 +146,7 @@ class MLPAgent(AbstractAgent):
         stats = {"loss_u": logp_u_mean}
         return loss, stats
 
-    def obs_loss(self, o, u, mask, forward_out):
+    def obs_loss(self, o, u, mask, forward_out, **kwargs):
         loss = torch.zeros(1)
         stats = {"loss_o": 0.}
         return loss, stats

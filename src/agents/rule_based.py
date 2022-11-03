@@ -29,6 +29,18 @@ class IDM(AbstractAgent):
         self.b = nn.Parameter(torch.tensor([b]).log())
         self.lv = nn.Parameter(0.5 * torch.log(torch.tensor([std + self.eps])))
     
+    def __repr__(self):
+        s = "{}(v0={:.2f}, tau={:.2f}, s0={:.2f}, a={:.2f}, b={:.2f}, lv={:.2f})".format(
+            self.__class__.__name__, 
+            self.v0.exp().item(),
+            self.tau.exp().item(),
+            self.s0.exp().item(),
+            self.a.exp().item(),
+            self.b.exp().item(),
+            self.lv.exp().item(),
+        )
+        return s
+
     def reset(self):
         self._b = None
         self._state = {
@@ -44,7 +56,7 @@ class IDM(AbstractAgent):
             lv (torch.tensor): action log variance. size=[batch_size, 1]
         """
         ds = o[..., 0]
-        s_rel = o[..., 1]
+        s_rel = o[..., 1] + 1e-6
         ds_rel = o[..., 2]
         
         # get constants
@@ -60,7 +72,7 @@ class IDM(AbstractAgent):
         lv =  self.lv * torch.ones_like(mu, device=self.device)
         return mu, lv
     
-    def forward(self, o):
+    def forward(self, o, u=None, **kwargs):
         """ Compute action distribution for a sequence
         
         Returns:
@@ -68,7 +80,7 @@ class IDM(AbstractAgent):
             lv (torch.tensor): action log variance. size=[T, batch_size, 2]
         """
         mu, lv = self.compute_action_dist(o)
-        return mu, lv
+        return [mu, lv], [mu, lv]
 
     def choose_action(self, o, sample_method="ace", num_samples=1):
         """ Choose action online for a single time step
@@ -83,7 +95,10 @@ class IDM(AbstractAgent):
             u_sample (torch.tensor): sampled controls. size=[num_samples, batch_size, ctl_dim]
         """
         mu, lv = self.compute_action_dist(o)
-        a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
+        if sample_method == "ace":
+            a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
+        else:
+            a = mu.unsqueeze(0)
         logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
 
         self._state["b"] = None
@@ -102,6 +117,8 @@ class IDM(AbstractAgent):
 
     def act_loss(self, o, u, mask, forward_out):
         mu, lv = forward_out
+        mu *= mask.unsqueeze(-1)
+        
         logp_u = torch_dist.Normal(mu, rectify(lv)).log_prob(u).sum(-1)
         
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
@@ -113,7 +130,7 @@ class IDM(AbstractAgent):
         stats = {"loss_u": logp_u_mean}
         return loss, stats
 
-    def obs_loss(self, o, u, mask, forward_out):
+    def obs_loss(self, o, u, mask, forward_out, **kwargs):
         loss = torch.zeros(1)
         stats = {"loss_o": loss}
         return loss, stats

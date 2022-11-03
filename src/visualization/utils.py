@@ -32,6 +32,8 @@ def plot_history(df_history, plot_keys, plot_std=False):
     num_cols = len(plot_keys)
     width = min(4 * num_cols, 15)
     fig, ax = plt.subplots(1, num_cols, figsize=(width, 4))
+    if num_cols == 1:
+        ax = [ax]
     for i in range(num_cols):
         ax[i].plot(df_train["epoch"], df_train[plot_keys[i]], label="train")
         if plot_std:

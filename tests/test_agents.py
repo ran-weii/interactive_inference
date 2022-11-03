@@ -48,7 +48,7 @@ def test_idm_agent():
     
     # test offline
     with torch.no_grad():
-        out = agent.forward(o)
+        out, _ = agent.forward(o)
         act_loss, stats = agent.act_loss(o, u, mask, out)
         u_sample, logp = agent.choose_action_batch(o, u)
     
@@ -74,8 +74,13 @@ def test_idm_agent():
     assert torch.all(torch.abs(pi_t - out[0]) < 1e-5)    
     
     # test training
-    loader = [[{"obs": o.flatten(0, 1), "act": u.flatten(0, 1)}, mask.flatten(0, 1)]]
+    loader = [{"obs": o.flatten(0, 1), "act": u.flatten(0, 1)}]
     trainer = BehaviorCloning(agent)
+    trainer.run_epoch(loader)
+
+    # test recurrent training
+    loader = [[{"obs": o, "act": u}, mask]]
+    trainer = RecurrentBehaviorCloning(agent, bptt_steps=5)
     trainer.run_epoch(loader)
 
     print("test_idm_agent passed")
@@ -103,7 +108,7 @@ def test_mlp_agent():
     
     # test offline
     with torch.no_grad():
-        pi = agent.forward(o)
+        [pi], _ = agent.forward(o)
         act_loss, stats = agent.act_loss(o, u, mask, pi)
         u_sample, logp = agent.choose_action_batch(o, u)
 
@@ -129,9 +134,15 @@ def test_mlp_agent():
     assert torch.all(torch.abs(pi_t - pi) < 1e-5)
     
     # test training
-    loader = [[{"obs": o.flatten(0, 1), "act": u.flatten(0, 1)}, mask.flatten(0, 1)]]
+    loader = [{"obs": o.flatten(0, 1), "act": u.flatten(0, 1)}]
     trainer = BehaviorCloning(agent)
     trainer.run_epoch(loader)
+
+    # test recurrent training
+    loader = [[{"obs": o, "act": u}, mask]]
+    trainer = RecurrentBehaviorCloning(agent, bptt_steps=5)
+    trainer.run_epoch(loader)
+
     print("test_mlp_agent passed")
 
 def test_rnn_agent():

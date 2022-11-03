@@ -73,7 +73,7 @@ class BehaviorCloning(Model):
             # ensure o is not recurrent
             assert len(o.shape) == 2
             
-            out = self.agent.forward(o)
+            _, out = self.agent.forward(o)
             loss, stats = self.agent.act_loss(o, u, mask, out)
             
             if train:
@@ -189,7 +189,7 @@ class RecurrentBehaviorCloning(Model):
                 )):
                 o_t, u_t, mask_t = batch_t
                 
-                out, hidden = self.agent.forward(o_t, u_t, hidden)
+                out, hidden = self.agent.forward(o_t, u_t, hidden=hidden)
                 
                 pred_steps = self.pred_steps if len(o_t) > self.pred_steps else 1
                 loss_u, stats_u = self.agent.act_loss(o_t, u_t, mask_t, hidden)

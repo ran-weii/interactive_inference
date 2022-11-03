@@ -9,9 +9,12 @@ from src.visualization.utils import plot_history
 
 class SaveCallback:
     def __init__(self, arglist, cp_history=None):
+        if not isinstance(arglist, dict):
+            arglist = vars(arglist)
+
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
-        exp_path = os.path.join(arglist.exp_path, "agents")
-        agent_path = os.path.join(exp_path, arglist.agent)
+        exp_path = os.path.join(arglist["exp_path"], "agents")
+        agent_path = os.path.join(exp_path, arglist["agent"])
         save_path = os.path.join(agent_path, date_time)
         model_path = os.path.join(save_path, "model")
         if not os.path.exists(exp_path):
@@ -25,12 +28,12 @@ class SaveCallback:
         
         # save args
         with open(os.path.join(save_path, "args.json"), "w") as f:
-            json.dump(vars(arglist), f)
+            json.dump(arglist, f)
 
         self.save_path = save_path
         self.model_path = model_path
         self.cp_history = cp_history
-        self.cp_every = arglist.cp_every
+        self.cp_every = arglist["cp_every"]
 
         self.num_test_eps = 0
         self.iter = 0
