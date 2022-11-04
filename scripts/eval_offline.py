@@ -20,9 +20,9 @@ from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
 
 # eval imports
-from src.evaluation.offline import eval_actions_episode, eval_actions_batch
+from src.evaluation.offline import eval_actions_batch
 from src.evaluation.metrics import mean_absolute_error
-from src.visualization.utils import set_plotting_style, plot_time_series, plot_scatter
+from src.visualization.utils import set_plotting_style
 
 import warnings
 warnings.filterwarnings("ignore")
