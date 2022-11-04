@@ -1,6 +1,6 @@
 import torch
 
-def eval_actions_epoch(agent, loader, sample_method="ace", num_samples=30):
+def eval_actions_batch(agent, loader, sample_method="ace", num_samples=30):
     """ Evaluate agent action selection
     
     Args:
@@ -9,12 +9,19 @@ def eval_actions_epoch(agent, loader, sample_method="ace", num_samples=30):
         sample_method (str, optional): sample method. 
             chioces=["bme", "ace", "acm"]. Default="ace
         num_samples (int, optional): number of samples. Default=30
+
+    Returns:
+        u_true_pad (torch.tensor): nan padded true actions. size=[max_T, loader_size, ctl_dim]
+        u_sample_pad (torch.tensor): nan padded sample actions. size=[num_samples, max_T, loader_size, ctl_dim]
     """
     agent.eval()
     
-    u_batch, u_sample_batch = [], []
+    u_true_batch, u_sample_batch = [], []
     for i, batch in enumerate(loader):
-        o, u, mask = batch
+        pad_batch, mask = batch
+        o = pad_batch["obs"]
+        u = pad_batch["act"]
+
         agent.reset()
         with torch.no_grad():
             u_sample, _ = agent.choose_action_batch(
@@ -25,12 +32,28 @@ def eval_actions_epoch(agent, loader, sample_method="ace", num_samples=30):
             nan_mask[mask == 0] = torch.nan
             u_mask = u * nan_mask.unsqueeze(-1)
             u_sample_mask = u_sample * nan_mask.unsqueeze(0).unsqueeze(-1)
-            u_batch.append(u_mask)
+
+            u_true_batch.append(u_mask)
             u_sample_batch.append(u_sample_mask)
     
-    u_batch = torch.cat(u_batch, dim=1).data.numpy()
-    u_sample_batch = torch.cat(u_sample_batch, dim=1).data.numpy()
-    return u_batch, u_sample_batch
+    # pad batches
+    max_len = max([len(u) for u in u_true_batch])
+    u_true_pad = []
+    u_sample_pad = []
+    for (u_true, u_sample) in zip(u_true_batch, u_sample_batch):
+        pad_len = max_len - len(u_true)
+        padding1 = torch.nan * torch.ones(list(u_true.shape)[1:]).unsqueeze(0)
+        padding2 = padding1.clone().unsqueeze(0).repeat_interleave(len(u_sample), 0)
+
+        u_true = torch.cat([u_true, padding1.repeat_interleave(pad_len, -3)], dim=-3)
+        u_sample = torch.cat([u_sample, padding2.repeat_interleave(pad_len, -3)], dim=-3)
+        
+        u_true_pad.append(u_true)
+        u_sample_pad.append(u_sample)
+    
+    u_true_pad = torch.cat(u_true_pad, dim=-2).data.numpy()
+    u_sample_pad = torch.cat(u_sample_pad, dim=-2).data.numpy()
+    return u_true_pad, u_sample_pad
 
 def eval_actions_episode(agent, obs, ctl, sample_method="ace", num_samples=30):
     """ Evaluate agent action selection for an episode

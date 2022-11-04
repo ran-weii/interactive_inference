@@ -105,13 +105,16 @@ class IDM(AbstractAgent):
         self._state["pi"] = mu.clone()
         return a, logp
 
-    def choose_action_batch(self, o, u, sample_method="", num_samples=1, return_hidden=False, **kwargs):
-        mu, lv = self.compute_action_dist(o)
-        a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
+    def choose_action_batch(self, o, u, sample_method="ace", num_samples=1, return_hidden=False, **kwargs):        
+        [mu, lv], hidden = self.forward(o)
+        if sample_method == "ace":
+            a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
+        else:
+            a = mu.unsqueeze(0)
         logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
 
         if return_hidden:
-            return a, logp, None
+            return a, logp, hidden
         else:
             return a, logp
 
