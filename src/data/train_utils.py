@@ -43,12 +43,22 @@ def load_data(data_path, scenario, filename, load_raw=True):
     df_track.insert(0, "record_id", record_id)
     return df_track
 
-def get_record_eps_id(df_track):
-    """ Combine record_id and eps_id into new_eps_id """
-    df_track["record_id"] = df_track["record_id"].astype(int)
-    num_digits = len(str(np.nanmax(df_track["eps_id"]).astype(int)))
-    new_eps_id = df_track["record_id"] * 10**num_digits + df_track["eps_id"]
-    return new_eps_id
+def update_record_id(df_track):
+    """ Update inplace eps_id and frame_id in df_track based on record_id """
+    eps_id = df_track["eps_id"].values
+    frame_id = df_track["frame_id"].values
+    record_id = df_track["record_id"].values.astype(int)
+    
+    # add record id digit to front
+    max_eps_id_digits = len(str(np.nanmax(eps_id).astype(int)))
+    max_frame_id_digits = len(str(np.nanmax(frame_id).astype(int)))
+    
+    new_eps_id = record_id * 10**(max_eps_id_digits) + eps_id
+    new_frame_id = record_id * 10**(max_frame_id_digits) + frame_id
+    
+    df_track = df_track.assign(eps_id=new_eps_id)
+    df_track = df_track.assign(frame_id=new_frame_id)
+    return df_track
 
 def train_test_split(dataset, train_ratio, batch_size, collate_fn=None, seed=0):
     gen = torch.Generator()

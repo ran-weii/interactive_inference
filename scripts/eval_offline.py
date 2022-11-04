@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 
 # setup imports
-from src.data.train_utils import load_data, get_record_eps_id, count_parameters
+from src.data.train_utils import load_data, update_record_id, count_parameters
 from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset, collate_fn
 
@@ -71,7 +71,7 @@ def main(arglist):
     for filename in arglist.filenames:
         df_track.append(load_data(arglist.data_path, arglist.scenario, filename, load_raw=False))
     df_track = pd.concat(df_track, axis=0)
-    df_track = df_track.assign(eps_id=get_record_eps_id(df_track))
+    df_track = update_record_id(df_track)
     
     # reverse train test labels
     df_track["is_train"] = 1 - df_track["is_train"]

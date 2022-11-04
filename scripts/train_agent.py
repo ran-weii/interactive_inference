@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch 
 
 # setup imports
-from src.data.train_utils import load_data, get_record_eps_id
+from src.data.train_utils import load_data, update_record_id
 from src.data.train_utils import train_test_split, count_parameters
 from src.data.data_filter import filter_segment_by_length
 from src.data.ego_dataset import RelativeDataset
@@ -72,7 +72,7 @@ def main(arglist):
     for filename in arglist.filenames:
         df_track.append(load_data(arglist.data_path, arglist.scenario, filename, load_raw=False))
     df_track = pd.concat(df_track, axis=0)
-    df_track = df_track.assign(eps_id=get_record_eps_id(df_track))
+    df_track = update_record_id(df_track)
     
     # filter invalid lanes
     valid_lanes = [int(l) for l in arglist.valid_lanes]
