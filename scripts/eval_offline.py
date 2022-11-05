@@ -148,6 +148,7 @@ def main(arglist):
 
     # load state dict
     state_dict = torch.load(os.path.join(exp_path, "model.pt"), map_location=torch.device("cpu"))
+    state_dict = state_dict if "model_state_dict" not in state_dict.keys() else state_dict["model_state_dict"]
     state_dict = {k.replace("agent.", ""): v for (k, v) in state_dict.items() if "agent." in k}
     agent.load_state_dict(state_dict, strict=False)
     agent.eval()

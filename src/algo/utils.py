@@ -8,7 +8,8 @@ import torch
 from src.visualization.utils import plot_history
 
 class SaveCallback:
-    def __init__(self, arglist, cp_history=None):
+    """ Callback object for config, history, and model checkpointing """
+    def __init__(self, arglist, model, cp_history=None):
         if not isinstance(arglist, dict):
             arglist = vars(arglist)
 
@@ -37,6 +38,7 @@ class SaveCallback:
 
         self.num_test_eps = 0
         self.iter = 0
+        self.loss_keys = model.loss_keys
 
     def __call__(self, model, history):
         self.iter += 1
@@ -45,14 +47,12 @@ class SaveCallback:
         
         # save history
         df_history = pd.DataFrame(history)
-        self.save_history(model, df_history)
+        self.save_history(df_history)
         
         # save model
-        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
-        torch.save(cpu_state_dict, os.path.join(self.model_path, f"model_{self.iter}.pt"))
-        print(f"\ncheckpoint saved at: {self.save_path}\n")
+        self.save_checkpoint(model, os.path.join(self.model_path, f"model_{self.iter}.pt"))
     
-    def save_history(self, model, df_history):
+    def save_history(self, df_history):
         if self.cp_history is not None:
             df_history["epoch"] += self.cp_history["epoch"].values[-1] + 1
             df_history["time"] += self.cp_history["time"].values[-1]
@@ -60,15 +60,27 @@ class SaveCallback:
         df_history.to_csv(os.path.join(self.save_path, "history.csv"), index=False)
         
         # save history plot
-        fig_history, _ = plot_history(df_history, model.loss_keys)
+        fig_history, _ = plot_history(df_history, self.loss_keys)
         fig_history.savefig(os.path.join(self.save_path, "history.png"), dpi=100)
 
         plt.clf()
         plt.close()
 
-    def save_model(self, model):
-        cpu_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
-        torch.save(cpu_state_dict, os.path.join(self.save_path, "model.pt"))
+    def save_checkpoint(self, model, path=None):
+        if path is None:
+            path = os.path.join(self.save_path, "model.pt")
+
+        model_state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+        optimizer_state_dict = {
+            k: v if not isinstance(v, torch.Tensor) else v.cpu() for k, v in model.optimizer.state_dict().items()
+        }
+        
+        torch.save({
+            "model_state_dict": model_state_dict,
+            "optimizer_state_dict": optimizer_state_dict,
+            "scheduler_state_dict": model.scheduler.state_dict()
+        }, path)
+        print(f"\ncheckpoint saved at: {path}\n")
 
 
 def train(model, train_loader, test_loader, epochs, callback=None, verbose=1):

@@ -100,7 +100,7 @@ class RecurrentBehaviorCloning(Model):
     def __init__(
         self, agent, bptt_steps=30, pred_steps=5, 
         bc_penalty=1., obs_penalty=0., pred_penalty=0., reg_penalty=0., 
-        lr=1e-3, lr_flow=1e-3, decay=0, grad_clip=None
+        lr=1e-3, lr_flow=1e-3, decay=0, grad_clip=None, decay_steps=100, decay_rate=0.8
         ):
         super().__init__()
         self.bptt_steps = bptt_steps
@@ -113,6 +113,8 @@ class RecurrentBehaviorCloning(Model):
         self.lr_flow = lr_flow
         self.decay = decay
         self.grad_clip = grad_clip
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
         self.agent = agent
         
         # group parameters by flow parameters
@@ -125,15 +127,18 @@ class RecurrentBehaviorCloning(Model):
             ], 
             lr=lr, weight_decay=decay
         )
+        self.scheduler = torch.optim.lr_scheduler.StepLR(
+            self.optimizer, step_size=decay_steps, gamma=decay_rate, last_epoch=-1, verbose=False
+        )
         self.loss_keys = ["loss_u", "loss_o"]
     
     def __repr__(self):
         s_agent = self.agent.__repr__()
         s = "{}(bptt_steps={}, pred_steps={}, bc_penalty={}, obs_penalty={}, pred_penalty={}, "\
-        "reg_penalty={}, lr={}, lr_flow={}, decay={}, grad_clip={},\nagent={})".format(
+        "reg_penalty={}, lr={}, lr_flow={}, decay={}, grad_clip={}, decay_steps={}, decay_rate={},\nagent={})".format(
             self.__class__.__name__, self.bptt_steps, self.pred_steps, 
             self.bc_penalty, self.obs_penalty, self.pred_penalty, self.reg_penalty, 
-            self.lr, self.lr_flow, self.decay, self.grad_clip, s_agent
+            self.lr, self.lr_flow, self.decay, self.grad_clip, self.decay_steps, self.decay_rate, s_agent
         )
         return s
     
@@ -226,5 +231,7 @@ class RecurrentBehaviorCloning(Model):
                     **stats_u, **stats_o, **stats_pred, **stats_prior
                 }) 
         
+        if train:
+            self.scheduler.step()
         stats = pd.DataFrame(epoch_stats).mean().to_dict()
         return stats

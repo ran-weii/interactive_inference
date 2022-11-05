@@ -1,5 +1,6 @@
 import argparse
 import os
+import glob
 import pickle
 import numpy as np
 import pandas as pd
@@ -86,6 +87,8 @@ def parse_args():
     parser.add_argument("--lr_post", type=float, default=0.005, help="hvin posterior learning rate, default=0.01")
     parser.add_argument("--decay", type=float, default=1e-5, help="weight decay, default=0")
     parser.add_argument("--grad_clip", type=float, default=None, help="gradient clipping, default=None")
+    parser.add_argument("--decay_steps", type=int, default=200, help="learning rate decay steps, default=100")
+    parser.add_argument("--decay_rate", type=float, default=0.8, help="learning rate decay rate, default=0.8")
     parser.add_argument("--cp_every", type=int, default=1000, help="checkpoint interval, default=1000")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save", type=bool_, default=True)
@@ -196,18 +199,21 @@ def main(arglist):
             arglist.bc_penalty, arglist.obs_penalty, arglist.pred_penalty, arglist.reg_penalty, 
             arglist.post_obs_penalty, arglist.kl_penalty,
             lr=arglist.lr, lr_flow=arglist.lr_flow, lr_post=arglist.lr_post, 
-            decay=arglist.decay, grad_clip=arglist.grad_clip
+            decay=arglist.decay, grad_clip=arglist.grad_clip, decay_steps=arglist.decay_steps, 
+            decay_rate=arglist.decay_rate
         )
     else:
         model = RecurrentBehaviorCloning(
             agent, arglist.bptt_steps, arglist.pred_steps, arglist.bc_penalty, 
             arglist.obs_penalty, arglist.pred_penalty, arglist.reg_penalty, 
-            lr=arglist.lr, lr_flow=arglist.lr_flow, decay=arglist.decay, grad_clip=arglist.grad_clip
+            lr=arglist.lr, lr_flow=arglist.lr_flow, decay=arglist.decay, 
+            grad_clip=arglist.grad_clip, decay_steps=arglist.decay_steps, 
+            decay_rate=arglist.decay_rate
         )
     
     print(f"num parameters: {count_parameters(model)}")
     print(model)
-
+    
     # load from check point
     cp_history = None
     if arglist.checkpoint_path != "none":
@@ -215,25 +221,30 @@ def main(arglist):
             arglist.exp_path, "agents", 
             arglist.agent, arglist.checkpoint_path
         )
+        
         # load state dict
-        state_dict = torch.load(os.path.join(cp_path, "model.pt"))
-
+        cp_model_path = glob.glob(os.path.join(cp_path, "model/*.pt"))
+        cp_model_path.sort(key=lambda x: int(os.path.basename(x).replace(".pt", "").split("_")[-1]))
+        
+        state_dict = torch.load(cp_model_path[-1])
+        model.load_state_dict(state_dict["model_state_dict"], strict=False)
+        model.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
+        model.scheduler.load_state_dict(state_dict["scheduler_state_dict"])
+        
         # load history
         cp_history = pd.read_csv(os.path.join(cp_path, "history.csv"))
-
-        model.load_state_dict(state_dict, strict=False)
         print(f"loaded checkpoint from {cp_path}")
     
     callback = None
     if arglist.save:
-        callback = SaveCallback(arglist, cp_history)
-
+        callback = SaveCallback(arglist, model, cp_history)
+    
     model, df_history = train(
         model, train_loader, test_loader, arglist.epochs, callback=callback, verbose=1
     )
     if arglist.save:
-        callback.save_model(model)
-        callback.save_history(model, df_history)
+        callback.save_checkpoint(model)
+        callback.save_history(df_history)
     
 if __name__ == "__main__":
     arglist = parse_args()
