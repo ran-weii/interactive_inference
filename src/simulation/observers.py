@@ -205,7 +205,7 @@ class Observer:
         ).flatten()
         return act_env
     
-    def get_info(self):
+    def get_info(self, ego_state, obs):
         """ Get simulator info. Return terminated=True if d > max_d (3.8) """
         max_d = 3.8
         info = {

@@ -230,7 +230,7 @@ def test_sensor_simulator():
     map_data = MapReader(cell_len=10)
     map_data.parse(filepath, verbose=True)
     
-    filename = "vehicle_tracks_007.csv"
+    filename = "vehicle_tracks_000.csv"
     df_track = load_data(data_path, scenario, filename)
     df_track = df_track.iloc[:5000].reset_index(drop=True)
     
@@ -242,16 +242,21 @@ def test_sensor_simulator():
     fv_sensor = FollowVehicleSensor(map_data, track_fv=True)
     lidar_sensor = LidarSensor(num_beams)
     sensors = [ego_sensor, lv_sensor, fv_sensor, lidar_sensor]
-    observer = Observer(map_data, sensors)
+    observer = Observer(map_data, sensors, feature_set=["ego_ds", "lv_s_rel", "lv_ds_rel", "lv_inv_tau"])
     
     env = InteractionSimulator(map_data, sensors, observer, svt_object)
     
-    eps_id = np.where(svt_object.ego_track_ids == 65)[0][0] # record 3 537 stuck by merging car
+    eps_id = np.where(svt_object.ego_track_ids == 1)[0][0] # record 3 537 stuck by merging car
     # eps_id = 4
-    env.reset(eps_id, playback=True) # beam too sparse for eps 3
+    env.reset(eps_id, playback=False) # beam too sparse for eps 3
+
+    df_eps = df_track.loc[df_track["track_id"] == 1].reset_index(drop=True)
     for t in range(env.T - 1):
         # action = env.get_data_action()
-        action = torch.randn(1, 2)
+        # action = torch.randn(1, 2)
+        # action = torch.from_numpy(df_eps.iloc[t][["dds", "ddd"]].values.astype(np.float32)).view(1, -1)
+        action = torch.from_numpy(df_eps.iloc[t][["dds_smooth", "ddd"]].values.astype(np.float32)).view(1, -1)
+        print(t, action.numpy().round(3))
         obs, _, done, _ = env.step(action)
         if done:
             break
