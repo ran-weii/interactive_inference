@@ -103,8 +103,8 @@ class HyperQMDPLayer(nn.Module):
         """
         tau = self.compute_horizon_dist(z)
         
-        a = torch.softmax(torch.einsum("ni, hnki -> hnk", b, value), dim=-1)
-        a = torch.einsum("hnk, nh -> nk", a, tau)
+        a = torch.softmax(torch.einsum("...ni, hnki -> ...hnk", b, value), dim=-1)
+        a = torch.einsum("...hnk, nh -> ...nk", a, tau)
         return a
     
     def update_action(self, logp_u: Tensor) -> Tensor:

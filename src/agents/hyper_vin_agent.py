@@ -11,6 +11,7 @@ from src.distributions.hyper_mixture_models import HyperConditionalGaussian, Hyp
 from src.distributions.nn_models import GRUMLP
 from src.distributions.utils import kl_divergence, rectify
 
+""" TODO: parameterize all factors as row orthogonal matrix """
 class HyperVINAgent(AbstractAgent):
     """ Hypernet version of the VIN agent """
     def __init__(
@@ -363,3 +364,31 @@ class HyperVINAgent(AbstractAgent):
         logp_o_mean = -torch.nanmean((nan_mask * logp_o)).cpu().data
         stats = {"loss_o": logp_o_mean}
         return loss, stats
+
+    def compute_mutual_information(self, o, u, mask):
+        """ Compute conditiona mutual information H(z, u|o) """
+        prior_dist = self.get_prior_dist()
+        z = prior_dist.rsample((o.shape[1],)).squeeze(-2)
+        u_sample = self.choose_action_batch(o, u, z)[0].squeeze(0)
+        post_dist = self.get_posterior_dist(o, u_sample, mask)
+        mi = post_dist.entropy().sum(-1).mean() - prior_dist.entropy().sum(-1)
+        return mi
+
+    def compute_hessian_penalty(self, o, u, z, mask, hidden):
+        """ Compute hessian penalty using finite difference """
+        def masked_mean(x, mask, dim):
+            return torch.sum(x * mask, dim=dim) / (mask.sum(dim) + 1e-6)
+        
+        eps = 1e-3
+        rademacher_vec = torch.randint(0, 2, size=z.shape)
+        rademacher_vec[rademacher_vec == 0] = -1
+        v = eps * rademacher_vec
+        
+        mask_ = mask.unsqueeze(-1)
+        _, alpha_pi = hidden
+        _, [_, alpha_pi_1] = self.forward(o, u, z + v)
+        _, [_, alpha_pi_2] = self.forward(o, u, z - v)
+        finite_diff = (alpha_pi_1 - 2 * alpha_pi + alpha_pi_2) / eps**2 * mask_
+        
+        penalty = masked_mean(finite_diff**2, mask_, dim=1) - masked_mean(finite_diff, mask_, dim=1)**2
+        return penalty.max()
