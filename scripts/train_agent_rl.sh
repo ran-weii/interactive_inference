@@ -1,0 +1,31 @@
+#! /bin/bash
+python train_agent_rl.py \
+--checkpoint_path "none" \
+--agent mlp \
+--action_set frenet \
+--use_tanh True \
+--algo sac \
+--hidden_dim 64 \
+--num_hidden 2 \
+--activation relu \
+--gamma 0.9 \
+--beta 0.2 \
+--polyak 0.995 \
+--norm_obs True \
+--max_data_eps 5 \
+--create_svt True \
+--min_eps_len 50 \
+--max_eps_len 500 \
+--batch_size 200 \
+--buffer_size 1000000 \
+--epochs 50 \
+--steps_per_epoch 1000 \
+--update_after 3000 \
+--update_every 50 \
+--log_test_every 1 \
+--a_steps 50 \
+--lr 0.001 \
+--decay 1e-5 \
+--grad_clip 1000 \
+--seed 0 \
+--save False

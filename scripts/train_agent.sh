@@ -1,0 +1,24 @@
+#! /bin/bash
+python train_agent.py \
+--filenames "vehicle_tracks_000.csv" \
+--valid_lanes "3,4" \
+--checkpoint_path "none" \
+--feature_set "ego_ds,lv_s_rel,lv_ds_rel" \
+--action_set "dds_smooth" \
+--agent idm \
+--act_dim 15 \
+--hidden_dim 64 \
+--num_hidden 2 \
+--activation relu \
+--norm_obs True \
+--min_eps_len 50 \
+--max_eps_len 500 \
+--train_ratio 0.7 \
+--batch_size 100 \
+--epochs 1 \
+--lr 0.005 \
+--decay 3e-5 \
+--grad_clip 100 \
+--cp_every 50 \
+--seed 0 \
+--save False

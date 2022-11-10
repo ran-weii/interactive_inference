@@ -1,6 +1,4 @@
 *.pyc
-*.sh
-*.ipynb
 .DS_Store
 src/.DS_Store
 doc/*
