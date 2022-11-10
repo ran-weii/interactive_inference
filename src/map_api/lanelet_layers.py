@@ -4,7 +4,7 @@ from shapely.geometry import Point, LineString, Polygon
 from shapely import ops
 from scipy.interpolate import CubicSpline
 from src.data.geometry import (
-    get_heading, get_cardinal_direction, mid_point, dist_two_points, wrap_angles)
+    get_heading, get_cardinal_direction, mid_point, dist_two_points)
 from src.map_api.frenet import FrenetPath
 
 class L2Point:
@@ -24,7 +24,8 @@ class L2Linestring:
         self.subtype = subtype
         
         self.lanelet_references = []
-
+        
+        # properties to define frenet coordinate w.r.t. self
         self.interpolator = None
         self.cubic_spline = None
         self.spline_heading = None
@@ -56,7 +57,8 @@ class L2Linestring:
     def _create_frenet_path(self):
         coords = np.array(self.linestring.coords)
         self.frenet_path = FrenetPath(coords)
-     
+    
+
 class L2Polygon:
     def __init__(self, id_, polygon, type_, subtype):
         self.id_ = id_
@@ -93,6 +95,7 @@ class Cell:
     
     @property
     def center_line(self):
+        """ Cell center line computed from left and right bound coordinates """
         if self._center_line:
             return self._center_line
         
@@ -175,12 +178,14 @@ class Lanelet:
             self.right_bound.linestring = LineString(right_bound_coords)
     
     def _find_centerline(self):
+        """ Merge cell center lines into lanelet center line """
         if self.centerline is None:
             centerline = ops.linemerge([c.center_line for c in self.cells])
             self.centerline = L2Linestring(self.id_, centerline, None, None)
 
     @property
     def polygon(self):
+        """ Polygon of lanelet boundary """
         if self._polygon:
             return self._polygon
         
@@ -197,7 +202,9 @@ class Lanelet:
 
     @property
     def cells(self):
-        """ List of polygons with max distance of self.cell_len """
+        """ List of Cell objects in the lanenet computed from left and right boundaries 
+        with max length of self.cell_len 
+        """
         if self._cells:
             return self._cells
 
@@ -244,6 +251,7 @@ class Lanelet:
 
 
 class Lane:
+    """ Object used to store connected lanelets """
     def __init__(self, id_, lanelets, cell_len=5.):
         self.id_ = id_
         self.lanelets = [l for l in lanelets]
@@ -252,7 +260,7 @@ class Lane:
         
         self.left_bound = None
         self.right_bound = None
-        self.centerline = None
+        self.centerline = None # has frenet path properties
         
         self._polygon = None
         self._cells = []
@@ -263,6 +271,7 @@ class Lane:
     
     @property
     def polygon(self):
+        """ Polygon of lane boundary """
         if self._polygon:
             return self._polygon
         
@@ -272,6 +281,9 @@ class Lane:
     
     @property
     def cells(self):
+        """ List of Cell objects in the Lane computed from left and right boundaries 
+        with max len of self.cell_len 
+        """
         if self._cells:
             return self._cells
         
@@ -334,6 +346,7 @@ class Lane:
                 else:
                     return None
         
+        # find connected lanelets
         G = nx.DiGraph()
         for i in range(len(self.lanelets) - 1):
             for j in range(i+1, len(self.lanelets)):

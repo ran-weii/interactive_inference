@@ -2,7 +2,7 @@ import math
 import pyproj
 
 class LL2XYProjector:
-    """ From the INTERACTOIN repository """
+    """ Longitude and latitude projector from the INTERACTOIN repository """
     def __init__(self, lat_origin, lon_origin):
         self.lat_origin = lat_origin
         self.lon_origin = lon_origin

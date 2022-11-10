@@ -11,7 +11,6 @@ speedups.disable()
 from src.map_api.lanelet_layers import L2Point, L2Linestring, L2Polygon, Lanelet, Lane
 from src.map_api.utils import LL2XYProjector
 from src.map_api.utils import parse_node, parse_way, parse_relation
-from src.data.geometry import get_cardinal_direction, dist_two_points
 from src.data.geometry import compute_bounding_box
 from src.visualization.map_vis import (
     get_way_styling, plot_ways, plot_lanelets, plot_lanes)
@@ -61,6 +60,13 @@ class MapReader:
     def match_lane(self, x, y, psi, l, w):
         """ Match a point (x, y) to a lane on the map 
         
+        Args:
+            x (float): target x coordinate
+            y (float): target y coordinate
+            psi (float): target heading in radians
+            l (float): target length
+            w (float): target width
+
         Returns:
             lane_id (int): id of the matched lane. Return None if not matched
         """
@@ -77,7 +83,8 @@ class MapReader:
         return lane_id
         
     def plot(self, option="ways", annot=True, figsize=(15, 6)):
-        """
+        """ Plot map lane lines
+
         Args:
             option (str, optional): plotting options, 
                 one of ["ways", "lanelets", "cells", "lanes"]. Defaults to "ways".
@@ -214,7 +221,8 @@ class MapReader:
         else:
             self.lanelets[id_] = lanelet
     
-    def _extract_lanes(self):    
+    def _extract_lanes(self):
+        """ Extract connected lanelets as lanes """ 
         def is_connected(lanelet1, lanelet2):
             left_bound_linestring_1 = lanelet1.left_bound.linestring
             left_bound_linestring_2 = lanelet2.left_bound.linestring
