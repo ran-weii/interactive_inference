@@ -21,7 +21,7 @@ from src.agents.hyper_vin_agent import HyperVINAgent
 
 # eval imports
 from src.evaluation.offline import eval_actions_batch
-from src.evaluation.metrics import mean_absolute_error
+from src.evaluation.metrics import mean_absolute_error, compute_interquartile_mean
 from src.visualization.utils import set_plotting_style
 
 import warnings
@@ -51,8 +51,6 @@ def parse_args():
         help="max episode length, default=200")
     parser.add_argument("--batch_size", type=int, default=64, 
         help="evaluation batch size, default=64")
-    parser.add_argument("--num_eps", type=int, default=5, 
-        help="number of episodes to evaluate, default=5")
     parser.add_argument("--num_samples", type=int, default=30, 
         help="number of sample to draw, default=30")
     parser.add_argument("--sample_method", type=str, choices=["ace", "acm"], default="acm", 
@@ -155,12 +153,17 @@ def main(arglist):
     print(agent)
     print(f"num parameters: {count_parameters(agent)}")
     
+    # evaluation loop
     u_true, u_sample = eval_actions_batch(
         agent, test_loader, sample_method=arglist.sample_method
     )
-    mae = mean_absolute_error(u_true, u_sample)
+    mae = mean_absolute_error(u_true.numpy(), u_sample.numpy(), dims=(0,))
     
-    print(f"mae: {mae}")
+    # flatten sequence and remove nan padding
+    mae = mae.reshape(-1, len(action_set))[:, 0]
+    mae = mae[np.isnan(mae) == False]
+    iqm = compute_interquartile_mean(mae)
+    print(f"mae: {iqm}")
     
     # save results
     if arglist.save:
@@ -169,7 +172,7 @@ def main(arglist):
             os.mkdir(save_path)
         
         with open(os.path.join(save_path, "lanes_{}.json".format(",".join(arglist.test_lanes))), "w") as f:
-            json.dump({"mae": float(mae[0]), "test_lanes": test_lanes}, f)
+            json.dump({"mae": float(iqm), "test_lanes": test_lanes}, f)
 
         print("\nonline evaluation results saved at {}".format(save_path))
 

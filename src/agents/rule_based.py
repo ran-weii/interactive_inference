@@ -98,7 +98,7 @@ class IDM(AbstractAgent):
         if sample_method == "ace":
             a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
         else:
-            a = mu.unsqueeze(0)
+            a = mu.unsqueeze(0).repeat_interleave(num_samples, dim=0)
         logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
 
         self._state["b"] = None
@@ -110,7 +110,7 @@ class IDM(AbstractAgent):
         if sample_method == "ace":
             a = torch_dist.Normal(mu, rectify(lv)).sample((num_samples,))
         else:
-            a = mu.unsqueeze(0)
+            a = mu.unsqueeze(0).repeat_interleave(num_samples, dim=0)
         logp = torch_dist.Normal(mu, rectify(lv)).log_prob(a).sum(-1)
 
         if return_hidden:

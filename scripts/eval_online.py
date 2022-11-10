@@ -63,8 +63,10 @@ def parse_args():
         choices=["bma", "ace", "acm"], default="ace", 
         help="action sampling method, default=ace")
     parser.add_argument("--playback", type=bool_, default=False)
-    parser.add_argument("--test_on_train", type=bool_, default=False, help="whether to test on train episode, default=False")
-    parser.add_argument("--test_posterior", type=bool_, default=False, help="whether to test hvin posterior, default=False")
+    parser.add_argument("--test_on_train", type=bool_, default=False, 
+        help="whether to test on train episode, default=False")
+    parser.add_argument("--test_posterior", type=bool_, default=False, 
+        help="whether to test hvin posterior, default=False")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save_summary", type=bool_, default=True, help="whether to save test summary")
     parser.add_argument("--save_data", type=bool_, default=False)
@@ -238,10 +240,7 @@ def main(arglist):
         
         if arglist.save_summary:
             result_dict = {
-                "mean_mae": np.mean(maes),
-                "median_mae": np.median(maes),
-                "min_mae": np.min(maes),
-                "max_mae": np.max(maes),
+                "maes": maes,
                 "test_lanes": test_lanes,
                 "test_posterior": arglist.test_posterior
             }

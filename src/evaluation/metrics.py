@@ -1,34 +1,36 @@
 import numpy as np
 
-def mean_absolute_error(true, pred, mask=None, speed=None, cumulative=False):
-    """
+def compute_interquartile_mean(metrics, q1=25., q2=75.):
+    """ Compute interquantile mean
+    
     Args:
-        true (np.array): true control [T, batch_size, ctl_dim]
-        pred (np.array): true control [T, batch_size, ctl_dim]
-        mask (np.array, optional): sequence mask [T, batch_size]. Defaults to None.
-        speed (np.array, optional): speed vecotr [T, batch_size, speed_dim]. 
-            Defaults to None.
-        cumulative (bool, optional): whether to accumulate along trajectory. 
-            Defaults to False.
+        metrics (np.array): evaluation metrics
+        q1 (float): percentile lower bound
+        q2 (float): percentile upper bound
+
+    Return:
+        iqm (float): interquartile mean
+    """
+    metrics_ = metrics[
+        (metrics > np.percentile(metrics, q1)) & \
+        (metrics < np.percentile(metrics, q2))
+    ]
+    iqm = np.mean(metrics_)
+    return iqm
+
+def mean_absolute_error(true, pred, dims):
+    """ Compute nan masked mean absolute error 
+    
+    Args:
+        true (np.array): true sequence. size=[..., batch_size, out_dim]
+        pred (np.array): predicted sequence. size=[..., batch_size, out_dim]
+        dims (tuple): dimensions to perform average
 
     Returns:
-        mae (np.array): mean absolute error [ctl_dim]
+        mae (np.array): mean absolute errors. size=[batch_size, out_dim]
     """
-    mae = np.abs(pred - true)
-    
-    if mask is not None:
-        nan_mask = np.expand_dims(mask, axis=-1).copy()
-        nan_mask[nan_mask == 0] = float("nan")
-        mae *= nan_mask
-    
-    if speed is not None:
-        mae *= np.abs(speed)
-        
-    if cumulative:
-        mae = np.nansum(mae, 0)
-    
-    mae = np.nanmean(mae, axis=tuple(range(mae.ndim - 1)))
-    return mae
+    assert true.shape == pred.shape
+    return np.nanmean(np.abs(pred - true), axis=dims)
 
 def threshold_relative_error(true, pred, mask=None, alpha=0.1):
     """ Proposed by "On Offline Evaluation of Vision-based Driving Models, 
