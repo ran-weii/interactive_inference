@@ -5,7 +5,6 @@ from src.data.geometry import wrap_angles, coord_transformation
 from src.data.geometry import angle_to_vector
 from src.map_api.frenet_utils import compute_normal_from_kappa
 from src.map_api.frenet_utils import compute_acceleration_vector
-from src.simulation.simulator import STATE_KEYS
 
 """ TODO: 
 make lane feature calculation a part of the observer 
@@ -230,8 +229,8 @@ class CarfollowObserver:
             sensors (list): list of sensor objects
             feature_set (list): list of feature variable names
             action_set (list): list of action variable names
+            max_s_rel (float): maximum relative distance to lead vehicle to set terminate to true in info. Default=-1.
         """
-        self.state_key = STATE_KEYS
         self.map_data = map_data
         self.sensors = sensors
         if feature_set is None:
@@ -352,19 +351,7 @@ class CarfollowObserver:
     
     def get_info(self, ego_state, obs):
         """ Get simulator info. Return terminate flag """
-        # # check if ego state reach map boundary
-        # x = ego_state[self.x_idx]
-        # y = ego_state[self.y_idx]
-        
-        # terminate = any([
-        #     x <= self.x_lim[0],
-        #     x >= self.x_lim[1],
-        #     y <= self.y_lim[0],
-        #     y >= self.y_lim[1],
-        # ])
-
         # check if ego is ahead of lv
-        # max_s_rel = 10.
         lv_s_rel_idx = self.feature_set.index("lv_s_rel")
         lv_s_rel = obs[:, lv_s_rel_idx]
         terminate = lv_s_rel < -self.max_s_rel

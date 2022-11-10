@@ -505,7 +505,8 @@ class LidarSensor:
         lidar_measurements = lidar_measurements[self.valid_beam_idx]
         lidar_hit_pos = lidar_hit_pos[self.valid_beam_idx]
         return lidar_measurements, lidar_hit_pos
-
+    
+    """ NOTE: code below from RareSim """
     # def get_obs(self, ego_state, agent_state):
     #     """ Compute lidar range and range-rate measurements at each angle offset
         

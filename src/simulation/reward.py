@@ -33,7 +33,8 @@ class CarfollowingReward:
     #     f3 = -(loom_s - self.loom_target) ** 2
     #     r = f1 + f2 + 10 * f3
     #     return r
-
+    
+    """ NOTE: the above reward is deprecated. use l2 distance reward from data """
     def __call__(self, sim_state, sensor_obs, ctl):
         ego_state = sim_state["ego_state"]
         ego_true_state = sim_state["ego_true_state"]

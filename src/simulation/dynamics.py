@@ -8,15 +8,6 @@ class ConstantAcceleration:
         """
         self.dt = dt
 
-        # self.A = np.array(
-        #     [[1, 0, dt,  0,  0.5 * dt**2,  0],
-        #     [0, 1,  0, dt,  0,  0.5 * dt**2],
-        #     [0, 0,  1,  0, dt,  0],
-        #     [0, 0,  0,  1,  0, dt],
-        #     [0, 0,  0,  0,  1,  0],
-        #     [0, 0,  0,  0,  0,  1]]
-        # ) 
-
         self.A = np.array(
             [[1, 0, dt,  0],
             [0, 1,  0, dt],
@@ -39,6 +30,5 @@ class ConstantAcceleration:
         Returns:
             next_state (np.array): size=[batch_size, 4]
         """
-        # next_state = np.matmul(self.A, state)
         next_state = np.matmul(self.A, state) + np.matmul(self.B, action)
         return next_state
