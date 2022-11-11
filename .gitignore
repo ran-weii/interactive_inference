@@ -1,7 +1,6 @@
 *.pyc
 .DS_Store
 src/.DS_Store
-doc/*
 examples/*
 exp/*
 presentations/*

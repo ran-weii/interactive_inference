@@ -1,4 +1,4 @@
-# Processed track data
+# Description of track data
 
 ## Raw data fields
 Raw dataset fields provided by the INTERACTION dataset [website](https://interaction-dataset.com/details-and-format).
@@ -14,57 +14,42 @@ Raw dataset fields provided by the INTERACTION dataset [website](https://interac
 * length: length of agent. Unit in m.
 * width: width of agent. Unit in m.
 
-## Extracted data fields
-Processed dataset fields saved in "./interaction-dataset-master/processed_trackfiles/" for car-following beahvior modeling. 
-* scenario: traffic scenario, e.g., DR_CHN_Merging_ZS
-* record_id: id of the recorded track file in a scenario, e.g. 007
-* track_id: id of the tracked vehicle
-* frame_id: id of the video frame
-* lane_left_label: user manual label of left lane
-* lane_left_type: lanelet way type of left lane
-* lane_left_subtype: lanelet way subtype of left lane
-* lane_left_way_id: lanelet way id of left lane
-* lane_left_min_dist: minimum distance from the centroid of the vehicle to the closest line segment of left lane
-* lane_right_label: user manual label of right lane
-* lane_right_type: lanelet way type of right lane
-* lane_right_subtype: lanelet way subtype of right lane
-* lane_right_way_id: lanelet way id of right lane
-* lane_right_min_dist: minimum distance from the centroid of the vehicle to the closest line segment of right lane
-* lane_label_diff: difference between left and right lane labels in [-1, 0, 1], used for lane identification sanity check
-* lane_label_avg: average of left and right lane labels, used to identify vehicles in adjacent lanes
-* lead_track_id: track_id of lead vehicle, the closest vehicle ahead of the ego vehicle in the same lane
-* car_follow_eps: id of car following episode, defined as the episode without switching lanes or lead vehicle
-* ax: acceleration in the x direction derived from vx in the raw dataset using np.gradient
-* ay: acceleration in the y direction derived from vx in the raw dataset using np.gradient
-* x_kf: kalman filtered x position
-* y_kf: kalman filtered y position
-* vx_kf: kalman filtered x velocity
-* vy_kf: kalman filtered y velocity
-* ax_kf: kalman filtered x acceleration
-* ay_kf: kalman filtered y acceleration
+## Extracted fields
+The following fields are extracted from the preprocessing step. 
 
-# Pytorch datasets
-1. EgoDataset: This dataset returns a dictionary with the following fields:
-    * meta: array with the following fields: ["scenario", "record_id", "track_id", "agent_type"]
-    * ego: array of ego observation with dimension [num_frames, obs_dim] with the following fields: ["x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id", "lane_left_type", "lane_left_min_dist", "lane_right_type", "lane_right_min_dist"]
-    * agents: array of agent observation with dimension [num_frames, num_agents, obs_dim] with the following fields: ["x", "y", "vx", "vy", "psi_rad", "length", "width", "track_id", "is_lead", "is_left", "dist_to_ego"]. In frames with fewer than num_agents number of agents, the corresponding array values are set to -1.
-    * act: array of ego action with dimension [num_frames, num_act] with fields: ["ax", "ay"]
+### Features
+These fields are stored in the ``features`` folder:
+* seg_id: id of the current drive segment 
+* seg_len: length of the current drive segment
+* ego_d: ego lane offset
+* ego_ds: ego longitudinal speed
+* ego_dd: ego lateral speed
+* ego_psi_error: ego heading error
+* ego_kappa: ego lane curvature
+* ego_lane_id: ego lane id
+* lv_s_rel: lead vehicle relative distance
+* lv_ds_rel: lead vehicle relative speed
+* lv_inv_tau: lead vehicle inverse tau
+* lv_d: lead vehicle lane offset
+* lv_dd: lead vehicle lateral speed
+* lv_track_id: lead vehicle track id
+* lidar_range_{k}: range measurement of the kth lidar beam
+* lidar_range_rate_{k}: range rate measurement of the kth lidar beam
+* dds: ego frenet longitudinal acceleration (inaccurate do not use)
+* ddd: ego frenet lateral acceleration
+* kappa: ego trajectory curvature
+* norm: ego trajectory normal vector direction in radians
+* a: signed ego acceleration norm. sign is positive if in the same direction as heading
+* ax: ego cartesian x accelection
+* ay: ego cartesian y accelection
+* dds_norm: smoothed ego frenet longitudinal acceleration computed by differentiating ego_ds
 
-2. SimpleEgoDataset: Subclass of EgoDataset with a single agent being the lead vehicle, i.e., num_agents=1. 
-
-3. RelativeDataset: Subclass of EgoDataset with a single agent and relative observations. Relevant observations are converted to the ego coordinate defined by the ego heading. This dataset contains the follow ego fields:
-    * vx_ego: x velocity in ego coordinate
-    * vy_ego: y velocity in ego coordinate 
-    * lane_left_min_dist: same in extracted data fileds
-    * lane_right_min_dist: same in extracted data fileds
-    * x_rel_ego: relative x distance to lead vehicle in ego coordinate
-    * y_rel_ego:relative x distance to lead vehicle in ego coordinate
-    * vx_rel_ego: relative x velocity to lead vehicle in ego coordinate
-    * vy_rel_ego: relative y velocity to lead vehicle in ego coordinate
-    * psi_rad_rel: relative heading to lead vehicle
-
-# Preprocess FAQ
-1. How do you identify lead vehicles?
-    * After we identify a vehicle's lane position using the method described in [here](./lanelet.md), we calculate the minimum distance from the vehicle to each of the way segment in the lanelet map. The distance is sign so that a positive distance is to the left and negative to the right. For each sign, we choose the lane with the smallest absolute distance to be the current lane lines. This gives us a left and a right lane. 
-2. How do you identify car-following episodes? 
-    * After we identify the lane position of each vehicle, we take the average of the left and right lane label as the lane number of the vehicle. If the absolute difference between two vehicles' average lane label is smaller than one, and the distance are smaller than a predefined threshold (e.g., 50m), we define them as neighboring vehicles. Of all neighboring vehicles, the one in front (i.e., with cardinal direction between pi and -pi) with the smallest distance to the ego vehicle is defined as the lead vehicle. 
+### Train labels
+These fields are stored in the ``train_labels`` folder:
+* is_tail: whether the current step is the tail of a drive segment
+* is_tail_merging: Whether the current step is the tail of a drive segment and the vehicle is merging
+* is_head: whether the current step is the head of a drive segment
+* is_head_merging: whether the current step is the head of a drive segment and the vehicle is merging
+* eps_id: episode id assigned to the current step
+* eps_len: length of the assigned episode
+* is_train: whether the current step is assigned to the training set
