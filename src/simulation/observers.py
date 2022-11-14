@@ -252,9 +252,6 @@ class CarfollowObserver:
         self.x_lim = map_data.x_lim
         self.y_lim = map_data.y_lim
 
-        self.x_idx = self.state_key.index("x")
-        self.y_idx = self.state_key.index("y")
-
         self.max_s_rel = max_s_rel
 
         self.reset()
