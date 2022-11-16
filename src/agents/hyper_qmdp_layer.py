@@ -25,13 +25,18 @@ class HyperQMDPLayer(nn.Module):
         self.hyper_dim = hyper_dim
         self.eps = 1e-6
         
-        self._b0 = nn.Linear(hyper_dim, state_dim)
-        self._tau = nn.Linear(hyper_dim, 1)
-        self._gamma = nn.Linear(hyper_dim, act_dim * state_dim) # transition precision
-        
-        self._b0.weight.data = 0.1 * torch.randn(self._b0.weight.data.shape)
-        self._tau.weight.data = 0.1 * torch.randn(self._tau.weight.data.shape)
-        self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
+        self._b0 = nn.Parameter(torch.randn(1, state_dim)) # initial belief
+        self._tau = nn.Parameter(torch.randn(1, 1)) # horizon poisson rate
+        nn.init.xavier_normal_(self._b0, gain=1.)
+        nn.init.uniform_(self._tau, a=-1, b=1)
+
+        self._b0_offset = nn.Linear(hyper_dim, state_dim, bias=False)
+        self._tau_offset = nn.Linear(hyper_dim, 1, bias=False)
+        self._w_offset = nn.Linear(hyper_dim, act_dim * state_dim * state_dim, bias=False)
+
+        self._b0_offset.weight.data *= 0.1
+        self._tau_offset.weight.data *= 0.1
+        self._w_offset.weight.data *= 0.1
         
         if rank == 0: # full rank parameterization
             self._w = nn.Parameter(torch.randn(1, act_dim, state_dim, state_dim))
@@ -63,10 +68,8 @@ class HyperQMDPLayer(nn.Module):
     def compute_transition(self, z):
         # compute base transition matrix
         w = self.compute_base_transition()
-        
-        # compute transition temperature
-        gamma = rectify(self._gamma(z)).view(-1, self.act_dim, self.state_dim, 1)
-        return torch.softmax(gamma * w, dim=-1)
+        w_offset = self._w_offset(z).view(-1, self.act_dim, self.state_dim, self.state_dim)
+        return torch.softmax(w_offset + w, dim=-1)
     
     def compute_value(self, transition: Tensor, reward: Tensor) -> Tensor:
         """ Compute expected value using value iteration
@@ -86,7 +89,7 @@ class HyperQMDPLayer(nn.Module):
         return torch.stack(q)
 
     def compute_horizon_dist(self, z):
-        tau = self._tau(z)
+        tau = self._tau + self._tau_offset(z)
         h_dist = poisson_pdf(rectify(tau), self.horizon)
         return h_dist
 
@@ -137,7 +140,7 @@ class HyperQMDPLayer(nn.Module):
         return b_post
     
     def init_hidden(self, z: Tensor, value: Tensor) -> Tuple[Tensor, Tensor]:
-        b0 = torch.softmax(self._b0(z), dim=-1)
+        b0 = torch.softmax(self._b0 + self._b0_offset(z), dim=-1)
         a0 = self.plan(b0, z, value)
         return b0, a0
     

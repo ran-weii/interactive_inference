@@ -74,6 +74,7 @@ def parse_args():
     parser.add_argument("--obs_penalty", type=float, default=0., help="observation penalty, default=0.")
     parser.add_argument("--pred_penalty", type=float, default=0., help="multi step prediction penalty, default=0.")
     parser.add_argument("--reg_penalty", type=float, default=0., help="regularization penalty, default=0.")
+    parser.add_argument("--ortho_penalty", type=float, default=0., help="factor orthogonality penalty, default=0.")
     parser.add_argument("--post_obs_penalty", type=float, default=0., help="posterior observation penalty, default=0.")
     parser.add_argument("--kl_penalty", type=float, default=1., help="kl penalty, default=1.")
     # training args
@@ -197,7 +198,7 @@ def main(arglist):
         model = HyperBehaviorCloning(
             agent, arglist.train_mode, arglist.detach, arglist.bptt_steps, arglist.pred_steps,
             arglist.bc_penalty, arglist.obs_penalty, arglist.pred_penalty, arglist.reg_penalty, 
-            arglist.post_obs_penalty, arglist.kl_penalty,
+            arglist.ortho_penalty, arglist.post_obs_penalty, arglist.kl_penalty,
             lr=arglist.lr, lr_flow=arglist.lr_flow, lr_post=arglist.lr_post, 
             decay=arglist.decay, grad_clip=arglist.grad_clip, decay_steps=arglist.decay_steps, 
             decay_rate=arglist.decay_rate

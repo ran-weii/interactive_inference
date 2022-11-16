@@ -11,7 +11,6 @@ from src.distributions.hyper_mixture_models import HyperConditionalGaussian, Hyp
 from src.distributions.nn_models import GRUMLP
 from src.distributions.utils import kl_divergence, rectify
 
-""" TODO: parameterize all factors as row orthogonal matrix """
 class HyperVINAgent(AbstractAgent):
     """ Hypernet version of the VIN agent """
     def __init__(
@@ -65,16 +64,18 @@ class HyperVINAgent(AbstractAgent):
             )
         self.ctl_model = ConditionalGaussian(ctl_dim, act_dim, cov=ctl_cov, batch_norm=True)
         
-        self._c = nn.Linear(hyper_dim, state_dim)
+        self._c = nn.Parameter(torch.randn(1, state_dim))
+        self._c_offset = nn.Linear(hyper_dim, state_dim, bias=False)
+        self._gamma = nn.Linear(hyper_dim, 1, bias=False)
         self._pi0 = nn.Parameter(torch.randn(1, act_dim, state_dim))
-        self._gamma = nn.Linear(hyper_dim, 1)
         
-        self._c.weight.data = 0.1 * torch.randn(self._c.weight.data.shape)
-        self._gamma.weight.data = 0.1 * torch.randn(self._gamma.weight.data.shape)
+        nn.init.xavier_normal_(self._c, gain=1.)
         nn.init.xavier_normal_(self._pi0, gain=1.)
+        self._c_offset.weight.data *= 0.1
+        self._gamma.weight.data *= 0.1
         
         # hyper prior
-        self.prior_mu = nn.Parameter(torch.zeros(1, hyper_dim), requires_grad=train_prior)
+        self.prior_mu = nn.Parameter(torch.zeros(1, hyper_dim), requires_grad=False)
         self.prior_lv = nn.Parameter(torch.zeros(1, hyper_dim), requires_grad=train_prior)
         
         # inference network
@@ -109,7 +110,7 @@ class HyperVINAgent(AbstractAgent):
         }
 
     def compute_target_dist(self, z):
-        return torch.softmax(self._c(z), dim=-1)
+        return torch.softmax(self._c + self._c_offset(z), dim=-1)
     
     def compute_efe(self, z, detach=False):
         """ Compute expected free energy """
@@ -147,7 +148,7 @@ class HyperVINAgent(AbstractAgent):
         return r
 
     def compute_prior_policy(self, z):
-        gamma = rectify(self._gamma(z)).unsqueeze(-1)
+        gamma = rectify(1. + self._gamma(z)).unsqueeze(-1)
         return torch.softmax(gamma * self._pi0, dim=-2)
     
     def compute_value(self, z):

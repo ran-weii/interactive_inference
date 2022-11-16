@@ -34,9 +34,10 @@ class HyperConditionalGaussian(Model):
         self.batch_norm = batch_norm
         self.eps = 1e-6
         
-        self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
-        self._mu.weight.data = 0.1 * torch.randn(self._mu.weight.data.shape)
-        self._mu.bias.data = torch.rand(self._mu.bias.data.shape).uniform_(-1, 1)
+        self._mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
+        self._mu_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
+        nn.init.uniform_(self._mu, a=-1, b=1)
+        self._mu_offset.weight.data *= 0.1
         
         if not hyper_cov:
             if cov == "full":
@@ -53,20 +54,23 @@ class HyperConditionalGaussian(Model):
                 nn.init.normal_(self._lv, mean=0, std=0.01)
         else:
             if cov == "full":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
             elif cov == "diag":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
             elif cov == "tied":
-                self._lv = nn.Linear(hyper_dim, x_dim)
+                self._lv = nn.Parameter(torch.randn(1, 1, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
 
         if batch_norm:
             self.bn = BatchNormTransform(x_dim, momentum=0.1, affine=False, update_stats=False)
@@ -89,13 +93,14 @@ class HyperConditionalGaussian(Model):
         return mu_ent
 
     def mu(self, z):
-        return self._mu(z).view(-1, self.z_dim, self.x_dim)
+        mu = self._mu + self._mu_offset(z).view(-1, self.z_dim, self.x_dim)
+        return mu
     
     def lv(self, z):
         if not self.hyper_cov:
             lv = torch.repeat_interleave(self._lv, len(z), dim=0)
         else:
-            lv = self._lv(z).view(len(z), -1, self.x_dim)
+            lv = self._lv + self._lv_offset(z).view(len(z), -1, self.x_dim)
         return lv
 
     def get_distribution_class(self, z, transform=True, requires_grad=True):
@@ -219,9 +224,10 @@ class HyperConditionalFlow(Model):
         self.batch_norm = batch_norm
         self.eps = 1e-6
         
-        self._mu = nn.Linear(hyper_dim, z_dim * x_dim)
-        self._mu.weight.data = 0.1 * torch.randn(self._mu.weight.data.shape)
-        self._mu.bias.data = torch.rand(self._mu.bias.data.shape).uniform_(-1, 1)
+        self._mu = nn.Parameter(torch.randn(1, z_dim, x_dim))
+        self._mu_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
+        nn.init.uniform_(self._mu, a=-1, b=1)
+        self._mu_offset.weight.data *= 0.1
         
         if not hyper_cov:
             if cov == "full":
@@ -238,20 +244,23 @@ class HyperConditionalFlow(Model):
                 nn.init.normal_(self._lv, mean=0, std=0.01)
         else:
             if cov == "full":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim))
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
             elif cov == "diag":
-                self._lv = nn.Linear(hyper_dim, z_dim * x_dim)
+                self._lv = nn.Parameter(torch.randn(1, z_dim, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, z_dim * x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
             elif cov == "tied":
-                self._lv = nn.Linear(hyper_dim, x_dim)
+                self._lv = nn.Parameter(torch.randn(1, 1, x_dim))
+                self._lv_offset = nn.Linear(hyper_dim, x_dim, bias=False)
                 self._tl = nn.Parameter(torch.zeros(1, z_dim, x_dim, x_dim), requires_grad=False)
-                self._lv.weight.data = 0.1 * torch.randn(self._lv.weight.data.shape)
-                self._lv.bias.data = torch.zeros(self._lv.bias.data.shape)
+                nn.init.normal_(self._lv, mean=0, std=0.01)
+                self._lv_offset.weight.data *= 0.1
         
         self.flow = pyro_transform.AffineAutoregressive(
             pyro_nn.AutoRegressiveNN(x_dim, [self.hidden_dim, self.hidden_dim])
@@ -278,13 +287,14 @@ class HyperConditionalFlow(Model):
         return mu_ent
 
     def mu(self, z):
-        return self._mu(z).view(-1, self.z_dim, self.x_dim)
+        mu = self._mu + self._mu_offset(z).view(-1, self.z_dim, self.x_dim)
+        return mu
     
     def lv(self, z):
         if not self.hyper_cov:
             lv = torch.repeat_interleave(self._lv, len(z), dim=0)
         else:
-            lv = self._lv(z).view(len(z), -1, self.x_dim)
+            lv = self._lv + self._lv_offset(z).view(len(z), -1, self.x_dim)
         return lv
 
     def get_distribution_class(self, z, transform=True, requires_grad=True):
