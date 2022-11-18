@@ -1,3 +1,4 @@
+import itertools
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
@@ -20,26 +21,24 @@ def compute_markov_stationary_dist(B):
 def compute_controlled_transition(transition, policy):
     return torch.einsum("kij, ik -> ij", transition, policy)
 
-""" TODO: 
-plot controlled transition matrix and stationary distribution
-plot observation classification on samples
-plot action classification on samples
-"""
 class VINExplainer:
     """ VIN agent explainer """
-    def __init__(self, agent, feature_set, action_set):
+    def __init__(self, agent, feature_set, action_set, z=None):
+        self.feature_set = feature_set
+        self.action_set = action_set
+        self.z = z
+
+        # parse agent
         self.state_dim = agent.state_dim
         self.act_dim = agent.act_dim
         self.obs_dim = agent.obs_dim
         self.ctl_dim = agent.ctl_dim
-        self.feature_set = feature_set
-        self.action_set = action_set
 
         self.agent = agent
 
         # compute obs mean and variance from samples
         num_samples = 100
-        obs_samples = agent.obs_model.sample((num_samples,)).squeeze(-3)
+        obs_samples = agent.obs_model.sample((num_samples,), z=self.z).squeeze(-3)
         
         # init attributes
         with torch.no_grad():
@@ -47,19 +46,19 @@ class VINExplainer:
             self.obs_variance = torch.var(obs_samples, dim=0)
             self.ctl_mean = agent.ctl_model.mean().squeeze(0)
             self.ctl_variance = agent.ctl_model.variance().squeeze(0)
-            # self.b0 = agent.rnn.init_hidden().squeeze(0).flatten()
-            self.transition = agent.rnn.compute_transition().squeeze(0)
-            self.target_dist = agent.compute_target_dist().flatten()
-            self.pi0 = agent.compute_pi0().squeeze(0)
-            self.policy = agent.compute_policy(torch.eye(agent.state_dim)).squeeze(0)
-
+            self.b0 = agent.rnn.init_hidden(agent.compute_value(z=z), z=z)[0].squeeze(0).flatten()
+            self.transition = agent.rnn.compute_transition(z=self.z).squeeze(0)
+            self.target_dist = agent.compute_target_dist(z=self.z).flatten()
+            self.pi0 = agent.compute_prior_policy(z=self.z).squeeze(0)
+            self.policy = agent.compute_policy(torch.eye(agent.state_dim), z=self.z).squeeze(0)
+            
             self.controlled_transition = compute_controlled_transition(self.transition, self.policy)
             self.stationary_dist = torch.from_numpy(compute_markov_stationary_dist(self.controlled_transition))
 
         self.idx_sort_ctl = torch.arange(self.agent.act_dim)
         self.idx_sort_obs = torch.arange(self.agent.state_dim)
         self.key_feature = ""
-        
+
     def sort_state_action(self, by_feature):
         """
         Args:
@@ -78,7 +77,7 @@ class VINExplainer:
         self.obs_mean = self.obs_mean[self.idx_sort_obs]
         self.obs_variance = self.obs_variance[self.idx_sort_obs]
 
-        # self.b0 = self.b0[self.idx_sort_obs]
+        self.b0 = self.b0[self.idx_sort_obs]
 
         self.transition = self.transition[self.idx_sort_ctl]
         self.transition = self.transition[:, self.idx_sort_obs]
@@ -137,7 +136,7 @@ class VINExplainer:
         # compute grid size
         num_samples = 300
         with torch.no_grad():
-            obs_sample = self.agent.obs_model.sample((num_samples,)).squeeze(1)
+            obs_sample = self.agent.obs_model.sample((num_samples,), z=self.z).squeeze(1)
 
         num_grids = 200
         grid_min = obs_sample.flatten(0, 1).min(0)[0]
@@ -171,44 +170,65 @@ class VINExplainer:
         plt.suptitle(f"obs component density colored by {by}")
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         return fig, ax
+    
+    def create_observation_component_data(self, color_by, num_samples=300, log=True):
+        """ Sample from each component and organize into a dataframe. add another column for color 
+        
+        Args:
+            color_by (str): choices=["target_dist", "stationary_dist", "policy", "initial_belief", "key_feature"]
+            num_sample (int): number of samples per component
+            log (bool): whether to take log
+        """
+        with torch.no_grad():
+            obs_sample = self.agent.obs_model.sample((num_samples,), z=self.z).squeeze(1) 
+            obs_sample = obs_sample[:, self.idx_sort_obs]
+        
+        if color_by == "target_dist":
+            color = self.target_dist.view(1, -1, 1).repeat_interleave(num_samples, 0)
+            color = torch.log(color + 1e-6) if log else color
+        elif color_by == "stationary_dist":
+            color = self.stationary_dist.view(1, -1, 1).repeat_interleave(num_samples, 0)
+            color = torch.log(color + 1e-6) if log else color
+        elif color_by == "policy":
+            # infer one step
+            with torch.no_grad():
+                value = self.agent.compute_value(z=self.z)
+                b = torch.softmax(self.agent.obs_model.log_prob(obs_sample, z=self.z), dim=-1)
+                pi = self.agent.rnn.plan(b, value, z=self.z)
+                color = self.agent.ctl_model.ancestral_sample(pi).squeeze(0)
+        elif color_by == "initial_belief":
+            color = self.b0.view(1, -1, 1).repeat_interleave(num_samples, 0)
+            color = torch.log(color + 1e-6) if log else color
+        elif color_by == "key_feature":
+            color = self.obs_mean[:, self.idx_feature].view(1, -1, 1).repeat_interleave(num_samples, 0)
+        else:
+            color = torch.arange(self.agent.state_dim).view(1, -1, 1).repeat_interleave(num_samples, 0)
+        
+        # pack as df
+        data = torch.cat([obs_sample, color], dim=-1).transpose(0, 1).flatten(0, 1)
+        df = pd.DataFrame(
+            data.numpy(),
+            columns=self.feature_set + ["state_index"]
+        )
+        return df
 
-    """ NOTE: consider plotting the colors with mixture pdfs """
     def plot_observation_scatter_matrix(
-        self, color_by="none", plot_component_centers=True, num_samples=300, figsize=(8, 8)
+        self, df, c=None, plot_component_centers=True, figsize=(8, 8)
         ):
         """ Plot observation component samples as a scatter matrix. 
         Each component is colored either by the key feature or the target dist pdf value 
 
         Args:
-            color_by (str): self attribute to resort the observations by. choices=[target_dist, stationary_dist]
+            df (pd.dataframe): scatter points dataframe. columns should correspond feature_set
+            c (str): array with the same length as df to color scatter points
             plot_component_centers (bool): if true, plot component centers with red x. 
         """
-        with torch.no_grad():
-            obs_sample = self.agent.obs_model.sample((num_samples,)).squeeze(1) 
-            obs_sample = obs_sample[:, self.idx_sort_obs]
-        
-        if color_by == "target_dist":
-            idx_sort = torch.argsort(self.target_dist, descending=False)
-        elif color_by == "stationary_dist":
-            idx_sort = torch.argsort(self.stationary_dist, descending=False)
-        else:
-            color_by = self.key_feature
-            idx_sort = torch.arange(self.state_dim)
-        obs_sample = obs_sample[:, idx_sort]
-        
-        # pack as df
-        state_index = torch.arange(self.state_dim).view(1, -1, 1).repeat_interleave(num_samples, 0)
-        data = torch.cat([obs_sample, state_index], dim=-1).transpose(0, 1).flatten(0, 1)
-        df = pd.DataFrame(
-            data.numpy(),
-            columns=self.feature_set + ["state_index"]
-        )
-        
         fig, ax = plt.subplots(self.obs_dim, self.obs_dim, figsize=figsize)
         pd.plotting.scatter_matrix(
             df[self.feature_set], 
             ax=ax,
-            c=df["state_index"],
+            c=c,
+            cmap="inferno",
             diagonal="kde",
         )
 
@@ -223,26 +243,43 @@ class VINExplainer:
                             "rx", ms=figsize[0]
                         )
         
-        # by = "target value" if color_by_value else self.key_feature
-        plt.suptitle(f"obs component scatter matrix colored by {color_by}")
+        plt.suptitle(f"obs component scatter matrix")
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         return fig, ax
     
-    def plot_observation_scatter_3d(self, x="lv_s_rel", y="lv_ds_rel", z="lv_inv_tau", color_var="state_index"):
-        """ Plot observation component samples as plotly 3d scatter plot """
-        num_samples = 200
-        with torch.no_grad():
-            obs_samples = self.agent.obs_model.sample((num_samples,)).squeeze(-3)
-            target_dist = self.agent.compute_target_dist()
-            target_dist = torch.repeat_interleave(target_dist, num_samples, dim=0).unsqueeze(-1)
-            state_index = torch.arange(self.state_dim).view(1, -1, 1)
-            state_index = torch.repeat_interleave(state_index, num_samples, dim=0)
-            data = torch.cat([obs_samples, target_dist, state_index], dim=-1).flatten(0, 1).numpy()
-            df = pd.DataFrame(data, columns=self.feature_set + ["target_dist", "state_index"])
+    def plot_observation_scatter_flat(
+        self, df, c=None, fig_ax=None, ms=4, figsize=(10, 3)
+        ):
+        """ Plot observation component samples in a single row of scatter plots. 
+        Each component is colored either by the key feature or the target dist pdf value 
 
+        Args:
+            df (pd.dataframe): scatter points dataframe. columns should correspond feature_set
+            c (str): array with the same length as df to color scatter points
+            fig_ax (list): fig and axes object. if None will create new
+        """
+        features = list(itertools.combinations(self.feature_set, 2))
+        if fig_ax is None:
+            fig, ax = plt.subplots(1, len(features), figsize=figsize)
+        else:
+            fig, ax = fig_ax
+
+        for i in range(len(features)):
+            feature_x = features[i][0]
+            feature_y = features[i][1]
+            ax[i].scatter(df[feature_x], df[feature_y], c=c, s=ms, cmap="inferno")
+            ax[i].set_xlabel(feature_x)
+            ax[i].set_ylabel(feature_y)
+        
+        plt.tight_layout()
+        return fig, ax
+
+    def plot_observation_scatter_3d(self, x="lv_s_rel", y="lv_ds_rel", z="lv_inv_tau", color_by="target_dist"):
+        """ Plot observation component samples as plotly 3d scatter plot """
+        df = self.create_observation_component_data(color_by=color_by)
         fig = px.scatter_3d(
             df, x=x, y=y, z=z, 
-            color=color_var,
+            color="state_index",
             size_max=2
         )
         return fig
@@ -337,5 +374,44 @@ class VINExplainer:
         ax.set_xticklabels([f"{t:.2f}" for t in self.ctl_mean[:, -1]])
         ax.set_yticklabels(obs_means, rotation=0)
         ax.set_title(f"planned policy, beta={self.agent.beta}")
+        plt.tight_layout()
+        return fig, ax
+
+    def plot_belief_simulation_observations(self, data, figsize=(6, 8)):
+        """ Plot decoded belief simulation as time series plots """
+        fig, ax = plt.subplots(len(self.feature_set) + 1, 1, figsize=figsize, sharex=True)
+        for i in range(len(self.feature_set)):
+            ax[i].plot(data["o"][:, i])
+            ax[i].set_ylabel(self.feature_set[i])
+
+        ax[-1].plot(data["u"][:, 0])
+        ax[-1].set_ylabel(self.action_set[0])
+
+        ax[-1].set_xlabel("Time step (0.1s)")
+
+        plt.tight_layout()
+        return fig, ax
+
+    def plot_belief_simulation_states(self, data, figsize=(6, 8)):
+        """ Plot belief simulation states as heat maps """
+        s = data["pi_s"][:, self.idx_sort_obs]
+        b = data["b"][:, self.idx_sort_obs]
+        pi = data["pi"][:, self.idx_sort_ctl]
+
+        fig, ax = plt.subplots(len(self.feature_set), 1, figsize=figsize, sharex=True)
+        sns.heatmap(s.T, cbar=False, ax=ax[0])
+        sns.heatmap(b.T, cbar=False, ax=ax[1])
+        sns.heatmap(pi.T, cbar=False, ax=ax[2])
+        
+        ax[0].invert_yaxis()
+        ax[1].invert_yaxis()
+        ax[2].invert_yaxis()
+
+        ax[0].set_ylabel("Imagined state")
+        ax[1].set_ylabel("Belief state")
+        ax[2].set_ylabel("Action state")
+
+        ax[-1].set_xlabel("Time step (0.1s)")
+
         plt.tight_layout()
         return fig, ax

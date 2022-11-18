@@ -35,13 +35,14 @@ class AgentSimulator:
         o = o_[s]
         return o
 
-def simulate_imagination(agent, s0, max_steps):
+def simulate_imagination(agent, s0, max_steps, sample_method="acm"):
     """ Simulate agent in imagination and decode to observation and control space
     
     Args:
         agent (VINAgent): vin agent object
         s0 (int): index of the initial state
         max_steps (int): maximum number of simulation steps
+        sample_method (str): agent action selection method. choices=["acm", "ace"]
 
     Returns:
         data (dict): data dict with fields ["s", "o", "u", "b", "pi"]
@@ -53,7 +54,7 @@ def simulate_imagination(agent, s0, max_steps):
     data = {"s": [s0], "o": [o.data.flatten()], "u": [], "b": [], "pi": []}
     for t in range(max_steps):
         with torch.no_grad():
-            u = agent.choose_action(o.view(1, -1), sample_method="acm")[0].view(1, -1)
+            u = agent.choose_action(o.view(1, -1), sample_method=sample_method)[0].view(1, -1)
 
         o_next = env.step(u)
         
