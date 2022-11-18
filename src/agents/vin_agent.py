@@ -56,7 +56,7 @@ class VINAgent(AbstractAgent):
         nn.init.xavier_normal_(self.c, gain=1.)
         nn.init.xavier_normal_(self._pi0, gain=1.)
     
-    def reset(self):
+    def reset(self, **kwargs):
         """ Reset internal states for online inference """
         self._prev_ctl = None # previous control
         self._value = None # precomputed value
@@ -65,24 +65,24 @@ class VINAgent(AbstractAgent):
             "pi": None, # previous policy/action prior
         }
     
-    def compute_target_dist(self):
+    def compute_target_dist(self, **kwargs):
         return torch.softmax(self.c, dim=-1)
 
-    def compute_pi0(self):
+    def compute_prior_policy(self, **kwargs):
         return torch.softmax(self._pi0, dim=-2)
 
-    def compute_value(self):
+    def compute_value(self, **kwargs):
         transition = self.rnn.compute_transition()
         reward = self.compute_reward()
         value = self.rnn.compute_value(transition, reward)
         return value
 
-    def compute_policy(self, b):
+    def compute_policy(self, b, **kwargs):
         value = self.compute_value()
         pi = self.rnn.plan(b, value)
         return pi
     
-    def compute_efe(self):
+    def compute_efe(self, **kwargs):
         """ Compute negative expected free energy """
         transition = self.rnn.compute_transition()
         entropy = self.obs_model.entropy() / self.obs_dim
@@ -97,7 +97,7 @@ class VINAgent(AbstractAgent):
         r = -kl - self.alpha * eh
         return r
 
-    def compute_ece(self, num_samples=200):
+    def compute_ece(self, num_samples=200, **kwargs):
         """ Compute expected cross entropy """
         # sample observation
         transition = self.rnn.compute_transition()
@@ -138,8 +138,8 @@ class VINAgent(AbstractAgent):
         ig = torch.einsum("nkij, nkij -> nki", transition, kl.sum(0)) / self.obs_dim
         return ig
     
-    def compute_reward(self):
-        log_pi0 = torch.log(self.compute_pi0() + 1e-6)
+    def compute_reward(self, **kwargs):
+        log_pi0 = torch.log(self.compute_prior_policy() + 1e-6)
         if self.rwd == "efe":
             r = self.compute_efe() + self.beta * log_pi0
         else:
@@ -170,7 +170,7 @@ class VINAgent(AbstractAgent):
             value = self.compute_value()
         
         if None in hidden:
-            b, pi = self.rnn.init_hidden(batch_size, value)
+            b, pi = self.rnn.init_hidden(value, batch_size)
         else:
             b, pi = hidden
         

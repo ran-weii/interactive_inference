@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional
 
 from src.distributions.utils import poisson_pdf, rectify
 
@@ -61,7 +61,7 @@ class QMDPLayer(nn.Module):
         )
         return s
 
-    def compute_transition(self):
+    def compute_transition(self, **kwargs):
         if self.rank == 0:
             w = self.w
         else:
@@ -87,7 +87,7 @@ class QMDPLayer(nn.Module):
             q[t+1] = reward + torch.einsum("nkij, nkj -> nki", transition, v_next)
         return torch.stack(q)
     
-    def plan(self, b: Tensor, value: Tensor) -> Tensor:
+    def plan(self, b: Tensor, value: Tensor, **kwargs) -> Tensor:
         """ Compute the belief policy distribution 
         
         Args:
@@ -98,11 +98,11 @@ class QMDPLayer(nn.Module):
             pi (torch.tensor): policy/action prior. size=[batch_size, act_dim]
         """
         tau = poisson_pdf(rectify(self.tau), self.horizon)
-        if tau.shape[0] != b.shape[0]:
-            tau = torch.repeat_interleave(tau, b.shape[0], 0)
+        if tau.shape[0] != b.shape[-2]:
+            tau = torch.repeat_interleave(tau, b.shape[-2], 0)
         
-        pi = torch.softmax(torch.einsum("ni, hnki -> hnk", b, value), dim=-1)
-        pi = torch.einsum("hnk, nh -> nk", pi, tau)
+        pi = torch.softmax(torch.einsum("...ni, hnki -> h...nk", b, value), dim=-1)
+        pi = torch.einsum("h...nk, ...nh -> ...nk", pi, tau)
         return pi
     
     def update_action(self, logp_u: Tensor) -> Tensor:
@@ -134,12 +134,12 @@ class QMDPLayer(nn.Module):
         b_post = torch.softmax(logp_s + logp_o, dim=-1)
         return b_post
 
-    def init_hidden(self, batch_size, value: Tensor) -> Tuple[Tensor, Tensor]:
+    def init_hidden(self, value: Tensor, batch_size: Optional[int]=1, **kwargs) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self.b0, dim=-1).repeat_interleave(batch_size, dim=-2)
         a0 = self.plan(b0, value)
         return b0, a0
     
-    def predict_one_step(self, logp_u, b):
+    def predict_one_step(self, logp_u, b, **kwargs):
         transition = self.compute_transition()
         a = self.update_action(logp_u)
         s_next = torch.einsum("...kij, ...i, ...k -> ...j", transition, b, a)

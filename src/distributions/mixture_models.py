@@ -80,7 +80,7 @@ class ConditionalGaussian(Model):
             self.bn.moving_mean.data = mean
             self.bn.moving_variance.data = variance
 
-    def get_distribution_class(self, requires_grad=True):
+    def get_distribution_class(self, requires_grad=True, **kwargs):
         [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
@@ -100,19 +100,19 @@ class ConditionalGaussian(Model):
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
-    def mean(self):
+    def mean(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.mean
     
-    def variance(self):
+    def variance(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.variance
     
-    def entropy(self):
+    def entropy(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.entropy()
     
-    def log_prob(self, x):
+    def log_prob(self, x, **kwargs):
         """ Component log probabilities 
 
         Args:
@@ -121,7 +121,7 @@ class ConditionalGaussian(Model):
         distribution = self.get_distribution_class()
         return distribution.log_prob(x.unsqueeze(-2))
     
-    def mixture_log_prob(self, pi, x):
+    def mixture_log_prob(self, pi, x, **kwargs):
         """ Compute mixture log probabilities 
         
         Args:
@@ -133,29 +133,12 @@ class ConditionalGaussian(Model):
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, sample_shape=torch.Size()):
+    def sample(self, sample_shape=torch.Size(), **kwargs):
         """ Sample components """
         distribution = self.get_distribution_class()
         return distribution.rsample(sample_shape)
-    
-    def infer(self, prior, x, logp_x=None):
-        """ Compute posterior distributions
 
-        Args:
-            prior (torch.tensor): prior probabilities. size=[..., z_dim]
-            x (torch.tensor): observations. size=[..., x_dim]
-            logp_x (torch.tensor, None, optional): log likelihood to avoid
-                computing again. default=None
-
-        Returns:
-            post (torch.tensor): posterior probabilities. size=[..., z_dim]
-        """
-        if logp_x is None:
-            logp_x = self.log_prob(x)
-        post = torch.softmax(torch.log(prior + self.eps) + logp_x, dim=-1)
-        return post
-
-    def bayesian_average(self, pi):
+    def bayesian_average(self, pi, **kwargs):
         """ Compute weighted average of component means 
         
         Args:
@@ -165,7 +148,7 @@ class ConditionalGaussian(Model):
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
         return x
     
-    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, tau=0.1, hard=True):
+    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, tau=0.1, hard=True, **kwargs):
         """ Ancestral sampling
         
         Args:
@@ -267,7 +250,7 @@ class ConditionalFlow(Model):
             self.bn.moving_mean.data = mean
             self.bn.moving_variance.data = variance
 
-    def get_distribution_class(self, requires_grad=True):
+    def get_distribution_class(self, requires_grad=True, **kwargs):
         [mu, lv, tl] = self.mu, self.lv, self.tl
         L = make_covariance_matrix(lv, tl, cholesky=True, lv_rectify="exp")
         
@@ -287,19 +270,19 @@ class ConditionalFlow(Model):
         distribution = SimpleTransformedModule(distribution, transforms)
         return distribution
     
-    def mean(self):
+    def mean(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.mean
     
-    def variance(self):
+    def variance(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.variance
     
-    def entropy(self):
+    def entropy(self, **kwargs):
         distribution = self.get_distribution_class()
         return distribution.entropy()
     
-    def log_prob(self, x):
+    def log_prob(self, x, **kwargs):
         """ Component log probabilities 
 
         Args:
@@ -308,7 +291,7 @@ class ConditionalFlow(Model):
         distribution = self.get_distribution_class()
         return distribution.log_prob(x.unsqueeze(-2))
     
-    def mixture_log_prob(self, pi, x):
+    def mixture_log_prob(self, pi, x, **kwargs):
         """ Compute mixture log probabilities 
         
         Args:
@@ -320,29 +303,12 @@ class ConditionalFlow(Model):
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, sample_shape=torch.Size()):
+    def sample(self, sample_shape=torch.Size(), **kwargs):
         """ Sample components """
         distribution = self.get_distribution_class()
         return distribution.rsample(sample_shape)
-    
-    def infer(self, prior, x, logp_x=None):
-        """ Compute posterior distributions
 
-        Args:
-            prior (torch.tensor): prior probabilities. size=[..., z_dim]
-            x (torch.tensor): observations. size=[..., x_dim]
-            logp_x (torch.tensor, None, optional): log likelihood to avoid
-                computing again. default=None
-
-        Returns:
-            post (torch.tensor): posterior probabilities. size=[..., z_dim]
-        """
-        if logp_x is None:
-            logp_x = self.log_prob(x)
-        post = torch.softmax(torch.log(prior + self.eps) + logp_x, dim=-1)
-        return post
-
-    def bayesian_average(self, pi):
+    def bayesian_average(self, pi, **kwargs):
         """ Compute weighted average of component means 
         
         Args:
@@ -352,7 +318,7 @@ class ConditionalFlow(Model):
         x = torch.sum(pi.unsqueeze(-1) * mu.unsqueeze(0), dim=-2)
         return x
     
-    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, tau=0.1, hard=True):
+    def ancestral_sample(self, pi, num_samples=1, sample_mean=False, tau=0.1, hard=True, **kwargs):
         """ Ancestral sampling
         
         Args:

@@ -111,6 +111,20 @@ class HyperVINAgent(AbstractAgent):
 
     def compute_target_dist(self, z):
         return torch.softmax(self._c + self._c_offset(z), dim=-1)
+
+    def compute_prior_policy(self, z):
+        gamma = rectify(1. + self._gamma(z)).unsqueeze(-1)
+        return torch.softmax(gamma * self._pi0, dim=-2)
+    
+    def compute_value(self, z):
+        transition = self.rnn.compute_transition(z)
+        value = self.rnn.compute_value(transition, self.compute_reward(z))
+        return value
+    
+    def compute_policy(self, b, z):        
+        value = self.compute_value(z)
+        pi = self.rnn.plan(b, value, z)
+        return pi
     
     def compute_efe(self, z, detach=False):
         """ Compute expected free energy """
@@ -146,21 +160,6 @@ class HyperVINAgent(AbstractAgent):
         log_r = torch.logsumexp(logp_s + logp_o, dim=-1).transpose(1, 2)
         r = torch.einsum("nkij, nj -> nki", transition, log_r.mean(0))
         return r
-
-    def compute_prior_policy(self, z):
-        gamma = rectify(1. + self._gamma(z)).unsqueeze(-1)
-        return torch.softmax(gamma * self._pi0, dim=-2)
-    
-    def compute_value(self, z):
-        transition = self.rnn.compute_transition(z)
-        value = self.rnn.compute_value(transition, self.compute_reward(z))
-        return value
-    
-    def compute_policy(self, z):        
-        value = self.compute_value(z)
-        b = torch.eye(self.state_dim).to(self.device)
-        pi = self.rnn.plan(b, z, value)
-        return pi
 
     def compute_reward(self, z, detach=False):
         """ State action reward """
@@ -218,7 +217,7 @@ class HyperVINAgent(AbstractAgent):
             value = self.compute_value(z)
         
         if None in hidden:
-            b, pi = self.rnn.init_hidden(z, value)
+            b, pi = self.rnn.init_hidden(value, z)
         else:
             b, pi = hidden
         

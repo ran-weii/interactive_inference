@@ -93,7 +93,7 @@ class HyperQMDPLayer(nn.Module):
         h_dist = poisson_pdf(rectify(tau), self.horizon)
         return h_dist
 
-    def plan(self, b: Tensor, z: Tensor, value: Tensor) -> Tensor:
+    def plan(self, b: Tensor, value: Tensor, z: Tensor) -> Tensor:
         """ Compute the belief action distribution 
         
         Args:
@@ -139,9 +139,9 @@ class HyperQMDPLayer(nn.Module):
         b_post = torch.softmax(logp_s + logp_o, dim=-1)
         return b_post
     
-    def init_hidden(self, z: Tensor, value: Tensor) -> Tuple[Tensor, Tensor]:
+    def init_hidden(self, value: Tensor, z: Tensor) -> Tuple[Tensor, Tensor]:
         b0 = torch.softmax(self._b0 + self._b0_offset(z), dim=-1)
-        a0 = self.plan(b0, z, value)
+        a0 = self.plan(b0, value, z)
         return b0, a0
     
     def predict_one_step(self, logp_u, b, z):
@@ -176,9 +176,9 @@ class HyperQMDPLayer(nn.Module):
         for t in range(T):
             alpha_b[t+1] = self.update_belief(logp_o[t], alpha_a[t], alpha_b[t], transition)
             if detach:
-                alpha_pi[t] = self.plan(alpha_b[t+1].data, z, value)
+                alpha_pi[t] = self.plan(alpha_b[t+1].data, value, z)
             else:
-                alpha_pi[t] = self.plan(alpha_b[t+1], z, value)
+                alpha_pi[t] = self.plan(alpha_b[t+1], value, z)
         
         alpha_b = torch.stack(alpha_b[1:])
         alpha_pi = torch.stack(alpha_pi)

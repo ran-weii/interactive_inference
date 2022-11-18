@@ -87,11 +87,6 @@ class HyperConditionalGaussian(Model):
             self.bn.moving_mean.data = mean
             self.bn.moving_variance.data = variance
         
-    def parameter_entropy(self, z):
-        eps = 1e-6
-        mu_ent = torch.log(torch.abs(self._mu.weight) + eps).sum() / self.hyper_dim
-        return mu_ent
-
     def mu(self, z):
         mu = self._mu + self._mu_offset(z).view(-1, self.z_dim, self.x_dim)
         return mu
@@ -157,7 +152,7 @@ class HyperConditionalGaussian(Model):
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, z, sample_shape=torch.Size()):
+    def sample(self, sample_shape, z):
         """ Sample components """
         distribution = self.get_distribution_class(z)
         return distribution.rsample(sample_shape)
@@ -192,7 +187,7 @@ class HyperConditionalGaussian(Model):
         if sample_mean:
             x_ = self.mean(z)
         else:
-            x_ = self.sample(z, (num_samples, pi.shape[0])).squeeze(1)
+            x_ = self.sample((num_samples, pi.shape[0]), z).squeeze(1)
         x = torch.sum(z_ * x_, dim=-2)
         return x
 
@@ -281,11 +276,6 @@ class HyperConditionalFlow(Model):
             self.bn.moving_mean.data = mean
             self.bn.moving_variance.data = variance
         
-    def parameter_entropy(self, z):
-        eps = 1e-6
-        mu_ent = torch.log(torch.abs(self._mu.weight) + eps).sum() / self.hyper_dim
-        return mu_ent
-
     def mu(self, z):
         mu = self._mu + self._mu_offset(z).view(-1, self.z_dim, self.x_dim)
         return mu
@@ -351,7 +341,7 @@ class HyperConditionalFlow(Model):
         logp = torch.logsumexp(logp_pi + logp_x, dim=-1)
         return logp
 
-    def sample(self, z, sample_shape=torch.Size()):
+    def sample(self, sample_shape, z):
         """ Sample components """
         distribution = self.get_distribution_class(z)
         return distribution.rsample(sample_shape)
@@ -386,6 +376,6 @@ class HyperConditionalFlow(Model):
         if sample_mean:
             x_ = self.mean(z)
         else:
-            x_ = self.sample(z, (num_samples, pi.shape[0])).squeeze(1)
+            x_ = self.sample((num_samples, pi.shape[0]), z).squeeze(1)
         x = torch.sum(z_ * x_, dim=-2)
         return x

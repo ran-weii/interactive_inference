@@ -135,7 +135,7 @@ class HyperBehaviorCloning(Model):
         act_loss, act_stats = self.agent.act_loss(o, u, z, mask, hidden)
         obs_loss, obs_stats = self.agent.obs_loss(o, u, z, mask, hidden)
         
-        reg_loss = self.compute_reg_loss(z)
+        reg_loss, reg_stats = self.compute_reg_loss(z)
         
         loss = (
             self.bc_penalty * act_loss.mean() + \
@@ -145,7 +145,7 @@ class HyperBehaviorCloning(Model):
 
         stats = {
             "total_loss": loss.data.item(),
-            **act_stats, **obs_stats,
+            **act_stats, **obs_stats, **reg_stats
         }
         return loss, stats
     
@@ -160,7 +160,7 @@ class HyperBehaviorCloning(Model):
         obs_loss, obs_stats = self.agent.obs_loss(o, u, z, mask, hidden)
 
         kl = torch_dist.kl.kl_divergence(z_dist, prior_dist).sum(-1)
-        reg_loss = self.compute_reg_loss(z)
+        reg_loss, reg_stats = self.compute_reg_loss(z)
 
         loss = torch.mean(
             act_loss * mask.sum(0) + \
@@ -171,7 +171,7 @@ class HyperBehaviorCloning(Model):
         
         stats = {
             "total_loss": loss.data.item(),
-            **act_stats, **obs_stats,
+            **act_stats, **obs_stats, **reg_stats,
             "kl": kl.data.mean().item()
         }
         return loss, stats
