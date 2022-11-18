@@ -120,9 +120,8 @@ class IDM(AbstractAgent):
 
     def act_loss(self, o, u, mask, forward_out):
         mu, lv = forward_out
-        mu *= mask.unsqueeze(-1)
         
-        logp_u = torch_dist.Normal(mu, rectify(lv)).log_prob(u).sum(-1)
+        logp_u = torch_dist.Normal(mu * mask.unsqueeze(-1), rectify(lv)).log_prob(u).sum(-1)
         
         loss = -torch.sum(logp_u * mask, dim=0) / (mask.sum(0) + 1e-6)
         
