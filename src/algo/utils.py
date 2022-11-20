@@ -10,9 +10,6 @@ from src.visualization.utils import plot_history
 class SaveCallback:
     """ Callback object for config, history, and model checkpointing """
     def __init__(self, arglist, model, cp_history=None):
-        if not isinstance(arglist, dict):
-            arglist = vars(arglist)
-
         date_time = datetime.datetime.now().strftime("%m-%d-%Y %H-%M-%S")
         exp_path = os.path.join(arglist["exp_path"], "agents")
         agent_path = os.path.join(exp_path, arglist["agent"])
