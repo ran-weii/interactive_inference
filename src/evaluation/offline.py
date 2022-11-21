@@ -12,12 +12,13 @@ def pad_batches(batches):
     pad_batches = torch.cat(pad_batches, dim=-2)
     return pad_batches
 
-def eval_actions_batch(agent, loader, sample_method="ace", num_samples=30):
+def eval_actions_batch(agent, loader, test_posterior=True, sample_method="ace", num_samples=30):
     """ Evaluate agent action selection
     
     Args:
         agent (Agent): agent object
         loader (DataLoader): torch dataloader object
+        test_posterior (bool): whether to test posterior. Default=True
         sample_method (str, optional): sample method. 
             chioces=["bme", "ace", "acm"]. Default="ace
         num_samples (int, optional): number of samples. Default=30
@@ -36,8 +37,16 @@ def eval_actions_batch(agent, loader, sample_method="ace", num_samples=30):
 
         agent.reset()
         with torch.no_grad():
+            if hasattr(agent, "encoder"):
+                if test_posterior:
+                    z = agent.get_posterior_dist(o, u, mask).mean
+                else:
+                    z = agent.get_prior_dist().mean.repeat_interleave(o.shape[-2], dim=0)
+            else:
+                z = None
+                
             u_sample, _ = agent.choose_action_batch(
-                o, u, sample_method=sample_method, num_samples=num_samples
+                o, u, z=z, sample_method=sample_method, num_samples=num_samples
             )
             
             nan_mask = mask.clone()

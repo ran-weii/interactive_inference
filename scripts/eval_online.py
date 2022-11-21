@@ -17,6 +17,7 @@ from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
 from src.simulation.observers import Observer, CarfollowObserver
 from src.simulation.utils import create_svt_from_df
 from src.evaluation.online import eval_episode
+from src.evaluation.metrics import compute_interquartile_mean
 
 # agent imports
 from src.agents.rule_based import IDM
@@ -75,7 +76,7 @@ def parse_args():
     return arglist
 
 def compute_latent(data, agent):
-    o = data["ego"].unsqueeze(-2)
+    o = data["obs"].unsqueeze(-2)
     u = data["act"].unsqueeze(-2)
     mask = torch.ones(len(o), 1)
     
@@ -227,6 +228,8 @@ def main(arglist):
 
         print(f"test eps: {i}, mean reward: {np.mean(rewards)}")
     
+    print(f"iqm: {compute_interquartile_mean(np.array(maes)):.4f}")
+
     # save results
     if arglist.save_summary or arglist.save_data or arglist.save_video:
         post_fix = "_post" if arglist.test_posterior else ""

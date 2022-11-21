@@ -49,6 +49,8 @@ def parse_args():
         help="min episode length, default=100")
     parser.add_argument("--max_eps_len", type=int, default=200, 
         help="max episode length, default=200")
+    parser.add_argument("--test_posterior", type=bool_, default=False, 
+        help="whether to test hvin posterior, default=False")
     parser.add_argument("--batch_size", type=int, default=64, 
         help="evaluation batch size, default=64")
     parser.add_argument("--num_samples", type=int, default=30, 
@@ -155,7 +157,7 @@ def main(arglist):
     
     # evaluation loop
     u_true, u_sample = eval_actions_batch(
-        agent, test_loader, sample_method=arglist.sample_method
+        agent, test_loader, arglist.test_posterior, sample_method=arglist.sample_method
     )
     mae = mean_absolute_error(u_true.numpy(), u_sample.numpy(), dims=(0,))
     
@@ -171,7 +173,9 @@ def main(arglist):
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         
-        with open(os.path.join(save_path, "lanes_{}.json".format(",".join(arglist.test_lanes))), "w") as f:
+        post_fix = "post_" if arglist.test_posterior else ""
+        filename = "{}lanes_{}.json".format(post_fix, ",".join(arglist.test_lanes))
+        with open(os.path.join(save_path, filename), "w") as f:
             json.dump({"mae": float(iqm), "test_lanes": test_lanes}, f)
 
         print("\nonline evaluation results saved at {}".format(save_path))
