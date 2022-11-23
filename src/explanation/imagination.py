@@ -5,14 +5,15 @@ import torch.nn.functional as F
 
 class AgentSimulator:
     """ Agent imagination simulator """
-    def __init__(self, agent):
+    def __init__(self, agent, z=None):
         self.state_dim = agent.state_dim
         self.act_dim = agent.act_dim
+        self.z = z
 
         self.agent = deepcopy(agent)
 
         with torch.no_grad():
-            self.transition = self.agent.rnn.compute_transition().squeeze(0)
+            self.transition = self.agent.rnn.compute_transition(z=z).squeeze(0)
 
     def reset(self, s0):
         self.t = 0
@@ -31,24 +32,25 @@ class AgentSimulator:
 
     def sample_obs(self, s):
         with torch.no_grad():
-            o_ = self.agent.obs_model.sample().squeeze(0)
+            o_ = self.agent.obs_model.sample((1,), z=self.z).view(self.state_dim, -1)
         o = o_[s]
         return o
 
-def simulate_imagination(agent, s0, max_steps, sample_method="acm"):
+def simulate_imagination(agent, s0, max_steps, z=None, sample_method="acm"):
     """ Simulate agent in imagination and decode to observation and control space
     
     Args:
         agent (VINAgent): vin agent object
         s0 (int): index of the initial state
         max_steps (int): maximum number of simulation steps
+        z (torch.tensor): latent variable. Default=None
         sample_method (str): agent action selection method. choices=["acm", "ace"]
 
     Returns:
         data (dict): data dict with fields ["s", "o", "u", "b", "pi"]
     """
-    env = AgentSimulator(agent)
-    agent.reset()
+    env = AgentSimulator(agent, z=z)
+    agent.reset(z=z)
     o = env.reset(s0)
 
     data = {"s": [s0], "o": [o.data.flatten()], "u": [], "b": [], "pi": []}

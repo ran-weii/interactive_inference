@@ -1,15 +1,24 @@
 import torch
 
-def pad_batches(batches):
-    max_len = max([b.shape[-3] for b in batches])
+def pad_batches(batches, pad_dim=-3, batch_dim=-2):
+    """ Zero padding along a single dimension 
+    
+    Args:
+        batches (list): list of tensors with temporal dimension
+        pad_dim (int): dimension to be padded. usually the temporal dimension. Default=-3
+        batch_dim (int): batch dimension. Default=-2
+    """
+    max_len = max([b.shape[pad_dim] for b in batches])
     pad_batches = []
     for b in batches:
-        pad_len = max_len - b.shape[-3]
-        padding = torch.zeros(list(b.shape[:-3]) + list(b.shape[-2:])).unsqueeze(-3)
-        padding = padding.repeat_interleave(pad_len, dim=-3)
-        pad_batches.append(torch.cat([b, padding], dim=-3))
+        pad_len = max_len - b.shape[pad_dim]
+        pad_shape = list(b.shape)
+        pad_shape.pop(pad_dim)
+        padding = torch.zeros(pad_shape).unsqueeze(pad_dim)
+        padding = padding.repeat_interleave(pad_len, dim=pad_dim)
+        pad_batches.append(torch.cat([b, padding], dim=pad_dim))
         
-    pad_batches = torch.cat(pad_batches, dim=-2)
+    pad_batches = torch.cat(pad_batches, dim=batch_dim)
     return pad_batches
 
 def eval_actions_batch(agent, loader, test_posterior=True, sample_method="ace", num_samples=30):

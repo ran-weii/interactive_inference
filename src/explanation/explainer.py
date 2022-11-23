@@ -49,7 +49,8 @@ class VINExplainer:
             self.b0 = agent.rnn.init_hidden(agent.compute_value(z=z), z=z)[0].squeeze(0).flatten()
             self.transition = agent.rnn.compute_transition(z=self.z).squeeze(0)
             self.target_dist = agent.compute_target_dist(z=self.z).flatten()
-            self.pi0 = agent.compute_prior_policy(z=self.z).squeeze(0)
+            self.pi0 = agent.compute_prior_policy(z=self.z).squeeze(0).T
+            self.value = agent.compute_value(z=self.z)[-1].squeeze(0).T
             self.policy = agent.compute_policy(torch.eye(agent.state_dim), z=self.z).squeeze(0)
             
             self.controlled_transition = compute_controlled_transition(self.transition, self.policy)
@@ -85,8 +86,11 @@ class VINExplainer:
 
         self.target_dist = self.target_dist[self.idx_sort_obs]
 
-        self.pi0 = self.pi0[self.idx_sort_ctl]
-        self.pi0 = self.pi0[:, self.idx_sort_obs]
+        self.pi0 = self.pi0[self.idx_sort_obs]
+        self.pi0 = self.pi0[:, self.idx_sort_ctl]
+
+        self.value = self.value[self.idx_sort_obs]
+        self.value = self.value[:, self.idx_sort_ctl]
 
         self.policy = self.policy[self.idx_sort_obs]
         self.policy = self.policy[:, self.idx_sort_ctl]
@@ -175,7 +179,7 @@ class VINExplainer:
         """ Sample from each component and organize into a dataframe. add another column for color 
         
         Args:
-            color_by (str): choices=["target_dist", "stationary_dist", "policy", "initial_belief", "key_feature"]
+            color_by (str): choices=["target_dist", "stationary_dist", "value, "policy", "initial_belief", "key_feature"]
             num_sample (int): number of samples per component
             log (bool): whether to take log
         """
@@ -189,6 +193,8 @@ class VINExplainer:
         elif color_by == "stationary_dist":
             color = self.stationary_dist.view(1, -1, 1).repeat_interleave(num_samples, 0)
             color = torch.log(color + 1e-6) if log else color
+        elif color_by == "value":
+            color = torch.logsumexp(self.value, dim=-1).view(1, -1, 1).repeat_interleave(num_samples, 0)
         elif color_by == "policy":
             # infer one step
             with torch.no_grad():
@@ -344,12 +350,38 @@ class VINExplainer:
     def plot_policy_prior(self, figsize=(8, 6)):
         """ Plot prior policy as heat map """
         fig, ax = plt.subplots(1, 1, figsize=figsize)
-        sns.heatmap(self.pi0.numpy().round(2).T, annot=True, cbar=False, ax=ax)
+        sns.heatmap(self.pi0.numpy().round(2), annot=True, cbar=False, ax=ax)
         ax.set_xlabel("dds")
         ax.set_ylabel(self.key_feature)
         ax.set_xticklabels([f"{t:.2f}" for t in self.ctl_mean[:, -1]])
         ax.set_yticklabels([f"{t:.2f}" for t in self.obs_mean[:, self.idx_feature]], rotation=0)
         ax.set_title(f"default policy, beta={self.agent.beta}")
+        ax.invert_yaxis()
+        plt.tight_layout()
+        return fig, ax
+    
+    def plot_value(self, sort_by=None, figsize=(8, 6)):
+        """ Plot value as heatmap """
+        if sort_by is None:
+            value = self.value.numpy()
+            sort_by = self.key_feature
+            obs_means = [f"{t:.2f}" for t in self.obs_mean[:, self.idx_feature]]
+        else:
+            value = self.value.numpy()
+
+            idx_feature = self.feature_set.index(sort_by)
+            idx_sort = torch.argsort(self.obs_mean[:, idx_feature])
+            value = value[idx_sort]
+            obs_means = [f"{t:.2f}" for t in self.obs_mean[idx_sort, idx_feature]]
+
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        sns.heatmap(value, fmt=".2f", annot=True, cbar=False, ax=ax)
+        ax.set_xlabel("dds")
+        ax.set_ylabel(sort_by)
+        ax.set_xticklabels([f"{t:.2f}" for t in self.ctl_mean[:, -1]])
+        ax.set_yticklabels(obs_means, rotation=0)
+        ax.set_title(f"state action value, beta={self.agent.beta}")
+        ax.invert_yaxis()
         plt.tight_layout()
         return fig, ax
 
@@ -374,6 +406,7 @@ class VINExplainer:
         ax.set_xticklabels([f"{t:.2f}" for t in self.ctl_mean[:, -1]])
         ax.set_yticklabels(obs_means, rotation=0)
         ax.set_title(f"planned policy, beta={self.agent.beta}")
+        ax.invert_yaxis()
         plt.tight_layout()
         return fig, ax
 
