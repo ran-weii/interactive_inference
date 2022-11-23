@@ -161,15 +161,16 @@ class ConditionalGaussian(Model):
         Returns:
             x (torch.tensor): sampled observations. size[num_samples, T, batch_size, x_dim]
         """
-        log_pi_ = torch.repeat_interleave(torch.log(pi + self.eps).unsqueeze(0), num_samples, 0)
-        z_ = F.gumbel_softmax(log_pi_, tau=tau, hard=hard).unsqueeze(-1)
+        log_pi_ = torch.log(pi + self.eps).unsqueeze(0).repeat_interleave(num_samples, 0)
+        z_ = F.gumbel_softmax(log_pi_, tau=tau, hard=hard)
         
         # sample component
         if sample_mean:
             x_ = self.mean()
         else:
-            x_ = self.sample((num_samples, pi.shape[0])).squeeze(1)
-        x = torch.sum(z_ * x_, dim=-2)
+            x_ = self.sample([num_samples] + list(pi.shape)[:-1]).squeeze(-3)
+        
+        x = torch.einsum("k...z, k...zx -> k...x", z_, x_)
         return x
 
 
@@ -331,13 +332,14 @@ class ConditionalFlow(Model):
         Returns:
             x (torch.tensor): sampled observations. size[num_samples, T, batch_size, x_dim]
         """
-        log_pi_ = torch.repeat_interleave(torch.log(pi + self.eps).unsqueeze(0), num_samples, 0)
-        z_ = F.gumbel_softmax(log_pi_, tau=tau, hard=hard).unsqueeze(-1)
+        log_pi_ = torch.log(pi + self.eps).unsqueeze(0).repeat_interleave(num_samples, 0)
+        z_ = F.gumbel_softmax(log_pi_, tau=tau, hard=hard)
         
         # sample component
         if sample_mean:
             x_ = self.mean()
         else:
-            x_ = self.sample((num_samples, pi.shape[0])).squeeze(1)
-        x = torch.sum(z_ * x_, dim=-2)
+            x_ = self.sample([num_samples] + list(pi.shape)[:-1]).squeeze(-3)
+        
+        x = torch.einsum("k...z, k...zx -> k...x", z_, x_)
         return x
