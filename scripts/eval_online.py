@@ -68,6 +68,8 @@ def parse_args():
         help="whether to test on train episode, default=False")
     parser.add_argument("--test_posterior", type=bool_, default=False, 
         help="whether to test hvin posterior, default=False")
+    parser.add_argument("--eps_ids", type=str_list_, default=[], 
+        help="test episode ids supplied, default=[]")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save_summary", type=bool_, default=True, help="whether to save test summary")
     parser.add_argument("--save_data", type=bool_, default=False)
@@ -198,9 +200,12 @@ def main(arglist):
     print(f"num parameters: {count_parameters(agent)}")
     
     # sample eval episodes
-    test_eps_id = np.random.choice(
-        np.arange(env.num_eps), min(arglist.num_eps, env.num_eps), replace=False
-    )
+    if len(arglist.eps_ids) > 0:
+        test_eps_id = [int(i) for i in arglist.eps_ids]
+    else:
+        test_eps_id = np.random.choice(
+            np.arange(env.num_eps), min(arglist.num_eps, env.num_eps), replace=False
+        )
     print("test episodes:", test_eps_id)
     
     # eval loop
