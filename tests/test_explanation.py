@@ -88,12 +88,13 @@ def test_vin_explainer():
     # explainer.plot_action_component_pdfs()
     # explainer.plot_transition_matrix()
     # explainer.plot_target_dist(sort_by="lv_inv_tau")
+    # explainer.plot_value(sort_by="lv_inv_tau")
     # explainer.plot_policy(sort_by="lv_inv_tau")
     # explainer.plot_controlled_transition_matrix()
     # explainer.plot_controlled_stationary_dist()
 
-    # color_by = "policy"
-    # df = explainer.create_observation_component_data(color_by=color_by)
+    # color_by = "stationary_dist"
+    # df = explainer.create_observation_component_data(color_by=color_by, log=True)
     # explainer.plot_observation_scatter_flat(
     #     df[explainer.feature_set], df["state_index"]
     # )
@@ -130,16 +131,18 @@ def test_hvin_explainer():
     # plt.show()
 
 def test_imagination():
-    agent, feature_set, action_set = load_vin_agent()
+    # agent, feature_set, action_set = load_vin_agent()
+    agent, feature_set, action_set = load_hvin_agent()
     
     # init explainer
     by_feature = "lv_inv_tau"
-    explainer = VINExplainer(agent, feature_set, action_set)
+    z = torch.tensor([[10., 0., 0., 0.]])
+    explainer = VINExplainer(agent, feature_set, action_set, z=z)
     explainer.sort_state_action(by_feature)
 
     s0 = 0
     max_steps = 1000
-    data = simulate_imagination(agent, s0, max_steps, sample_method="ace")
+    data = simulate_imagination(agent, s0, max_steps, z=z, sample_method="ace")
     
     explainer.plot_belief_simulation_observations(data)
     explainer.plot_belief_simulation_states(data)

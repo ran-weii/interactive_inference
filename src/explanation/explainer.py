@@ -188,10 +188,12 @@ class VINExplainer:
             obs_sample = obs_sample[:, self.idx_sort_obs]
         
         if color_by == "target_dist":
-            color = self.target_dist.view(1, -1, 1).repeat_interleave(num_samples, 0)
+            target_dist = self.agent.compute_target_dist(z=self.z)
+            color = self.agent.obs_model.mixture_log_prob(target_dist, obs_sample, z=self.z).exp().unsqueeze(-1)
             color = torch.log(color + 1e-6) if log else color
         elif color_by == "stationary_dist":
-            color = self.stationary_dist.view(1, -1, 1).repeat_interleave(num_samples, 0)
+            stationary_dist = self.stationary_dist[torch.argsort(self.idx_sort_obs)]
+            color = self.agent.obs_model.mixture_log_prob(stationary_dist, obs_sample, z=self.z).exp().unsqueeze(-1)
             color = torch.log(color + 1e-6) if log else color
         elif color_by == "value":
             color = torch.logsumexp(self.value, dim=-1).view(1, -1, 1).repeat_interleave(num_samples, 0)
