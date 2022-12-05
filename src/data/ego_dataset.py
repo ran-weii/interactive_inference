@@ -130,7 +130,7 @@ class BaseDataset(Dataset):
         np.random.seed(seed)
         eps_id = df_track["eps_id"].values.copy()
         if train_labels_col is not None:
-            eps_id[df_track[train_labels_col] == 0] = np.nan
+            eps_id[df_track[train_labels_col] != 1] = np.nan
         unique_eps = np.unique(eps_id)
         self.unique_eps = unique_eps[np.isnan(unique_eps) == False]
         
