@@ -56,6 +56,8 @@ class HyperBehaviorCloning(Model):
             self.optimizer, step_size=decay_steps, gamma=decay_rate, last_epoch=-1, verbose=False
         )
         self.loss_keys = ["total_loss", "loss_u", "loss_o"]
+        if self.train_mode != "prior":
+            self.loss_keys.append("post_kl")
     
     def _set_params_grad(self):
         if self.train_mode == "prior":
@@ -89,6 +91,8 @@ class HyperBehaviorCloning(Model):
             train_stats["loss_u"], test_stats["loss_u"], 
             train_stats["loss_o"], test_stats["loss_o"]
         )
+        if self.train_mode != "prior":
+            s = " ".join([s, "post_kl: {:.4f}/{:.4f}".format(train_stats["post_kl"], test_stats["post_kl"])])
         return s
     
     def compute_ortho_loss(self):
@@ -172,7 +176,7 @@ class HyperBehaviorCloning(Model):
         stats = {
             "total_loss": loss.data.item(),
             **act_stats, **obs_stats, **reg_stats,
-            "kl": kl.data.mean().item()
+            "post_kl": kl.data.mean().item()
         }
         return loss, stats
     

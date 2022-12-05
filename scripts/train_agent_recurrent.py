@@ -213,6 +213,7 @@ def main(arglist, device=torch.device("cpu")):
             decay_rate=arglist["decay_rate"]
         )
     
+    model.to(device)
     print(f"num parameters: {count_parameters(model)}")
     print(model)
     
@@ -228,7 +229,7 @@ def main(arglist, device=torch.device("cpu")):
         cp_model_path = glob.glob(os.path.join(cp_path, "model/*.pt"))
         cp_model_path.sort(key=lambda x: int(os.path.basename(x).replace(".pt", "").split("_")[-1]))
         
-        state_dict = torch.load(cp_model_path[-1])
+        state_dict = torch.load(cp_model_path[-1], map_location="cpu")
         model.load_state_dict(state_dict["model_state_dict"], strict=False)
         model.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
         model.scheduler.load_state_dict(state_dict["scheduler_state_dict"])
@@ -241,7 +242,6 @@ def main(arglist, device=torch.device("cpu")):
     if arglist["save"]:
         callback = SaveCallback(arglist, model, cp_history)
     
-    model.to(device)
     model, df_history = train(
         model, train_loader, test_loader, arglist["epochs"], callback=callback, verbose=1
     )
