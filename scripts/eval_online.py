@@ -87,6 +87,12 @@ def compute_latent(data, agent):
         z = z_dist.mean
     return z
 
+def get_relative_distance(eps_data):
+    d = []
+    for data in eps_data[1:]:
+        d.append(data["sim_state"]["sensor_obs"]["LeadVehicleSensor"][0])
+    return d
+
 def main(arglist):
     np.random.seed(arglist.seed)
     torch.manual_seed(arglist.seed)
@@ -211,6 +217,7 @@ def main(arglist):
     # eval loop
     data = []
     maes = []
+    crash_rates = []
     animations = []
     for i, eps_id in enumerate(test_eps_id):
         if arglist.agent == "hvin":
@@ -227,6 +234,7 @@ def main(arglist):
         
         data.append(sim_data)
         maes.append(np.mean(rewards))
+        crash_rates.append(sum(np.array(get_relative_distance(sim_data)) < 0) / len(sim_data))
         if arglist.save_video:
             ani = animate(map_data, sim_data, title=f"eps {eps_id}", plot_lidar=False)
             animations.append(ani)
@@ -234,6 +242,7 @@ def main(arglist):
         print(f"test eps: {i}, mean reward: {np.mean(rewards)}")
     
     print(f"iqm: {compute_interquartile_mean(np.array(maes)):.4f}")
+    print(f"crash rates: {np.mean(crash_rates):.4f}")
 
     # save results
     if arglist.save_summary or arglist.save_data or arglist.save_video:
@@ -249,6 +258,7 @@ def main(arglist):
         if arglist.save_summary:
             result_dict = {
                 "maes": maes,
+                "crash_rates": crash_rates,
                 "test_lanes": test_lanes,
                 "test_posterior": arglist.test_posterior
             }
