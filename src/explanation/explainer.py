@@ -412,14 +412,14 @@ class VINExplainer:
         plt.tight_layout()
         return fig, ax
 
-    def plot_belief_simulation_observations(self, data, figsize=(6, 8)):
+    def plot_belief_simulation_observations(self, data, line_type="-k", figsize=(6, 8)):
         """ Plot decoded belief simulation as time series plots """
         fig, ax = plt.subplots(len(self.feature_set) + 1, 1, figsize=figsize, sharex=True)
         for i in range(len(self.feature_set)):
-            ax[i].plot(data["o"][:, i])
+            ax[i].plot(data["o"][:, i], line_type)
             ax[i].set_ylabel(self.feature_set[i])
 
-        ax[-1].plot(data["u"][:, 0])
+        ax[-1].plot(data["u"][:, 0], line_type)
         ax[-1].set_ylabel(self.action_set[0])
 
         ax[-1].set_xlabel("Time step (0.1s)")
