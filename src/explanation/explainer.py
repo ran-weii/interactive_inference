@@ -427,16 +427,16 @@ class VINExplainer:
         plt.tight_layout()
         return fig, ax
 
-    def plot_belief_simulation_states(self, data, figsize=(6, 8)):
+    def plot_belief_simulation_states(self, data, cmap="Greys", figsize=(6, 8)):
         """ Plot belief simulation states as heat maps """
         s = data["pi_s"][:, self.idx_sort_obs]
         b = data["b"][:, self.idx_sort_obs]
         pi = data["pi"][:, self.idx_sort_ctl]
 
         fig, ax = plt.subplots(len(self.feature_set), 1, figsize=figsize, sharex=True)
-        sns.heatmap(s.T, cbar=False, ax=ax[0])
-        sns.heatmap(b.T, cbar=False, ax=ax[1])
-        sns.heatmap(pi.T, cbar=False, ax=ax[2])
+        sns.heatmap(s.T, cbar=False, cmap=cmap, ax=ax[0])
+        sns.heatmap(b.T, cbar=False, cmap=cmap, ax=ax[1])
+        sns.heatmap(pi.T, cbar=False, cmap=cmap, ax=ax[2])
         
         ax[0].invert_yaxis()
         ax[1].invert_yaxis()
