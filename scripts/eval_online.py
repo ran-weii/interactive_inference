@@ -13,7 +13,7 @@ from src.data.data_filter import filter_segment_by_length
 from src.map_api.lanelet import MapReader
 from src.data.ego_dataset import RelativeDataset
 from src.simulation.simulator import InteractionSimulator
-from src.simulation.sensors import EgoSensor, LeadVehicleSensor, LidarSensor
+from src.simulation.sensors import EgoSensor, LeadVehicleSensor, FollowVehicleSensor, LidarSensor
 from src.simulation.observers import Observer, CarfollowObserver
 from src.simulation.utils import create_svt_from_df
 from src.evaluation.online import eval_episode
@@ -87,10 +87,16 @@ def compute_latent(data, agent):
         z = z_dist.mean
     return z
 
-def get_relative_distance(eps_data):
+def get_lv_relative_distance(eps_data):
     d = []
     for data in eps_data[1:]:
         d.append(data["sim_state"]["sensor_obs"]["LeadVehicleSensor"][0])
+    return d
+
+def get_fv_relative_distance(eps_data):
+    d = []
+    for data in eps_data[1:]:
+        d.append(data["sim_state"]["sensor_obs"]["FollowVehicleSensor"][0])
     return d
 
 def main(arglist):
@@ -143,8 +149,9 @@ def main(arglist):
 
     ego_sensor = EgoSensor(map_data)
     lv_sensor = LeadVehicleSensor(map_data, track_lv=True)
+    fv_sensor = FollowVehicleSensor(map_data, track_fv=True)
     lidar_sensor = LidarSensor()
-    sensors = [ego_sensor, lv_sensor, lidar_sensor]
+    sensors = [ego_sensor, lv_sensor, fv_sensor, lidar_sensor]
 
     if (action_set == ["dds"] or action_set == ["dds_smooth"]):
         observer = CarfollowObserver(map_data, sensors, feature_set=feature_set)
@@ -217,7 +224,8 @@ def main(arglist):
     # eval loop
     data = []
     maes = []
-    crash_rates = []
+    lv_crash_rates = []
+    fv_crash_rates = []
     animations = []
     for i, eps_id in enumerate(test_eps_id):
         if arglist.agent == "hvin":
@@ -234,15 +242,21 @@ def main(arglist):
         
         data.append(sim_data)
         maes.append(np.mean(rewards))
-        crash_rates.append(sum(np.array(get_relative_distance(sim_data)) < 0) / len(sim_data))
+        lv_crash_rates.append(sum(np.array(get_lv_relative_distance(sim_data)) < 0) / len(sim_data))
+        fv_crash_rates.append(sum(np.array(get_fv_relative_distance(sim_data)) < 0) / len(sim_data))
         if arglist.save_video:
             ani = animate(map_data, sim_data, title=f"eps {eps_id}", plot_lidar=False)
             animations.append(ani)
 
-        print(f"test eps: {i}, mean reward: {np.mean(rewards)}")
+        print(
+            "test eps: {}, mean reward: {:.4f}, lv_crash_rate: {:.4f}, fv_crash_rate: {:.4f}".format(
+                i, np.mean(rewards), lv_crash_rates[-1], fv_crash_rates[-1]
+            )
+        )
     
     print(f"iqm: {compute_interquartile_mean(np.array(maes)):.4f}")
-    print(f"crash rates: {np.mean(crash_rates):.4f}")
+    print(f"lv_crash rates: {np.mean(lv_crash_rates):.4f}")
+    print(f"fv_crash rates: {np.mean(fv_crash_rates):.4f}")
 
     # save results
     if arglist.save_summary or arglist.save_data or arglist.save_video:
@@ -258,7 +272,8 @@ def main(arglist):
         if arglist.save_summary:
             result_dict = {
                 "maes": maes,
-                "crash_rates": crash_rates,
+                "lv_crash_rates": lv_crash_rates,
+                "fv_crash_rates": fv_crash_rates,
                 "test_lanes": test_lanes,
                 "test_posterior": arglist.test_posterior
             }
