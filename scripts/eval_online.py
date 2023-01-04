@@ -24,6 +24,7 @@ from src.agents.rule_based import IDM
 from src.agents.nn_agents import MLPAgent, RNNAgent
 from src.agents.vin_agent import VINAgent
 from src.agents.hyper_vin_agent import HyperVINAgent
+from src.agents.mpc import CEM, RelativeAcceleration, VINReward
 
 # plotting imports
 from src.visualization.utils import set_plotting_style
@@ -63,6 +64,8 @@ def parse_args():
     parser.add_argument("--sample_method", type=str, 
         choices=["bma", "ace", "acm"], default="ace", 
         help="action sampling method, default=ace")
+    parser.add_argument("--run_mpc", type=bool_, default=False, 
+        help="whether to run mpc on vin reward, default=False")
     parser.add_argument("--playback", type=bool_, default=False)
     parser.add_argument("--test_on_train", type=bool_, default=False, 
         help="whether to test on train episode, default=False")
@@ -211,6 +214,13 @@ def main(arglist):
     agent.eval()
     print(agent)
     print(f"num parameters: {count_parameters(agent)}")
+
+    # init mpc
+    if arglist.run_mpc:
+        assert arglist.agent == "vin"
+        model = RelativeAcceleration()
+        reward = VINReward(agent)
+        agent = CEM(model, reward)
     
     # sample eval episodes
     if len(arglist.eps_ids) > 0:
